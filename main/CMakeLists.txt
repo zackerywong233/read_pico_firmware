@@ -32,6 +32,7 @@ idf_component_register(
         "ui/datamatrix.c"
         "ui/ui_menu.c"
         "apps/app_home.c"
+        "apps/app_pico_home.c"
         "apps/app_refresh.c"
         "apps/app_reading.c"
         "apps/app_book.c"
