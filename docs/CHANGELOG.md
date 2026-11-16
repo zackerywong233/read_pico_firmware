@@ -1,5 +1,10 @@
 # 版本变更 / Changelog
 
+## 2026-11-16 · Pico OS
+
+- 新增 Pico OS 桌面入口与第一阶段产品/视觉基线；保留原厂硬件驱动、图书、传输及诊断页面。
+  Add the Pico OS launcher and Phase 1 product/visual baseline while retaining factory drivers, books, transfer and diagnostics.
+
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
