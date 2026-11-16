@@ -17,6 +17,10 @@
 #include "ui_menu.h"
 #include "ttf_font.h"
 
+extern const app_desc_t app_home;
+extern const app_desc_t app_book;
+extern const app_desc_t app_transfer;
+
 #define HOME_TITLE "小纸 Pico"
 #define HOME_SUBTITLE "Pico OS  ·  轻量、专注、联网"
 #define HOME_TILE_COUNT 4
@@ -67,16 +71,16 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
             "早上好  ·  选择要继续的事情", EPD_DRAW_ALIGN_LEFT, false);
     for (int i = 0; i < HOME_TILE_COUNT; i++) draw_tile(fb, i);
     ui_text(fb, UI_MARGIN, UI_CONTENT_BOTTOM - 44, UI_PX_CAPTION,
-            "触控选择  ·  KEY1 / KEY3 移动  ·  KEY2 确认",
+            "触控选择  ·  KEY1 移动  ·  KEY2 确认  ·  KEY3 菜单",
             EPD_DRAW_ALIGN_LEFT, false);
     ui_draw_menu_handle(fb, false);
 }
 
 static void activate(app_ctx_t* ctx, int index) {
     switch (index) {
-        case TILE_BOOKS: ctx->request_app = app_at(14); break;
-        case TILE_TRANSFER: ctx->request_app = app_at(15); break;
-        case TILE_DEVICE: ctx->request_app = app_home_page(); break;
+        case TILE_BOOKS: ctx->request_app = &app_book; break;
+        case TILE_TRANSFER: ctx->request_app = &app_transfer; break;
+        case TILE_DEVICE: ctx->request_app = &app_home; break;
         case TILE_APPS: ctx->request_menu = true; break;
         default: break;
     }
@@ -94,15 +98,15 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
 
 static app_redraw_t on_key(app_ctx_t* ctx, int key) {
     if (key == UI_KEY_1) {
-        s_focus = (s_focus + HOME_TILE_COUNT - 1) % HOME_TILE_COUNT;
-        return APP_REDRAW_PAGE;
-    }
-    if (key == UI_KEY_3) {
         s_focus = (s_focus + 1) % HOME_TILE_COUNT;
         return APP_REDRAW_PAGE;
     }
     if (key == UI_KEY_2) {
         activate(ctx, s_focus);
+        return APP_REDRAW_PAGE;
+    }
+    if (key == UI_KEY_3) {
+        ctx->request_menu = true;
         return APP_REDRAW_PAGE;
     }
     return APP_REDRAW_NONE;
@@ -116,6 +120,7 @@ const app_desc_t app_pico_home = {
     .title = "小纸 Pico",
     .detail = "Pico OS 桌面",
     .enter_full = true,
+    .owns_keys = true,
     .render = render,
     .on_enter = on_enter,
     .on_touch = on_touch,
