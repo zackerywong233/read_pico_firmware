@@ -10,6 +10,7 @@
 #include "app_registry.h"
 
 extern const app_desc_t app_home;
+extern const app_desc_t app_pico_home;
 extern const app_desc_t app_refresh;
 extern const app_desc_t app_reading;
 extern const app_desc_t app_touch;
@@ -28,6 +29,7 @@ extern const app_desc_t app_transfer;
 
 // 一份菜单，相近的页挨着排，由 ui_menu 按页翻。/ One menu, similar pages together; ui_menu pages through it.
 static const app_desc_t* const s_apps[] = {
+    &app_pico_home,
     &app_home,
     &app_refresh,
     &app_reading,
@@ -65,7 +67,7 @@ int app_index_of(const app_desc_t* app) {
 }
 
 const app_desc_t* app_home_page(void) {
-    return &app_home;
+    return &app_pico_home;
 }
 
 const app_desc_t* app_selftest_page(void) {
