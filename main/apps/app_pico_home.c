@@ -24,8 +24,8 @@ extern const app_desc_t app_transfer;
 #define HOME_TITLE "小纸 Pico"
 #define HOME_SUBTITLE "Pico OS  ·  轻量、专注、联网"
 #define HOME_TILE_COUNT 4
-#define HOME_TILE_Y (UI_CONTENT_TOP + 104)
-#define HOME_TILE_H 212
+#define HOME_TILE_Y (UI_CONTENT_TOP + 48)
+#define HOME_TILE_H 340
 
 enum { TILE_BOOKS = 0, TILE_TRANSFER, TILE_DEVICE, TILE_APPS };
 static int s_focus;
@@ -61,6 +61,7 @@ static void draw_tile(uint8_t* fb, int index) {
 }
 
 static void render(app_ctx_t* ctx, uint8_t* fb) {
+    (void)ctx;
     if (!ttf_font_ready()) {
         ui_draw_no_font_page(fb, false, false);
         return;
@@ -68,7 +69,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_clear_page(fb);
     ui_draw_header(fb, HOME_TITLE, HOME_SUBTITLE);
     ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 12, UI_PX_CAPTION,
-            "早上好  ·  选择要继续的事情", EPD_DRAW_ALIGN_LEFT, false);
+            "今天想做什么？", EPD_DRAW_ALIGN_LEFT, false);
     for (int i = 0; i < HOME_TILE_COUNT; i++) draw_tile(fb, i);
     ui_text(fb, UI_MARGIN, UI_CONTENT_BOTTOM - 44, UI_PX_CAPTION,
             "触控选择  ·  KEY1 移动  ·  KEY2 确认  ·  KEY3 菜单",
@@ -112,7 +113,15 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
     return APP_REDRAW_NONE;
 }
 
+static app_redraw_t on_key_long(app_ctx_t* ctx, int key) {
+    (void)ctx;
+    // 长按 KEY2 保留原厂约定的整屏 GC16 强刷出口。
+    // Long-press KEY2 preserves the factory full-screen GC16 refresh exit.
+    return key == UI_KEY_2 ? APP_REDRAW_FULL : APP_REDRAW_NONE;
+}
+
 static void on_enter(app_ctx_t* ctx) {
+    (void)ctx;
     if (s_focus < 0 || s_focus >= HOME_TILE_COUNT) s_focus = 0;
 }
 
@@ -125,4 +134,5 @@ const app_desc_t app_pico_home = {
     .on_enter = on_enter,
     .on_touch = on_touch,
     .on_key = on_key,
+    .on_key_long = on_key_long,
 };
