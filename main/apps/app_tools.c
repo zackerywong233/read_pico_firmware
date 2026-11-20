@@ -41,8 +41,8 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     int page = clamp_page(ctx->leaf);
     ctx->leaf = page;
     ui_clear_page(fb);
-    char subtitle[48];
-    snprintf(subtitle, sizeof(subtitle), "第 %d / %d 页  ·  底层诊断与演示", page + 1, page_count());
+    char subtitle[40];
+    snprintf(subtitle, sizeof(subtitle), "第 %d / %d 页", page + 1, page_count());
     ui_draw_header(fb, "开发者工具", subtitle);
     int first = page * TOOL_ROWS;
     int count = app_tool_count() - first;
