@@ -21,6 +21,20 @@ typedef enum {
     APP_SLEEP_OFF = 2,
 } app_sleep_mode_t;
 
+/// 锁屏内容：默认图、TF 卡摘录、TF 卡图片。/ Lock content: built-in art, SD excerpt, or SD image.
+typedef enum {
+    APP_SAVER_BUILTIN = 0,
+    APP_SAVER_QUOTE = 1,
+    APP_SAVER_IMAGE = 2,
+} app_saver_style_t;
+
+typedef enum {
+    APP_DASH_TIME = 1u << 0,
+    APP_DASH_BATTERY = 1u << 1,
+    APP_DASH_LAST_BOOK = 1u << 2,
+    APP_DASH_NOTE = 1u << 3,
+} app_dashboard_item_t;
+
 void app_settings_init(void);
 app_sleep_mode_t app_settings_sleep_mode(void);
 void app_settings_set_sleep_mode(app_sleep_mode_t mode);
@@ -45,3 +59,7 @@ void app_settings_set_book_px(uint8_t px);
 bool app_settings_book_shake(void);
 /// 保存实验性晃动翻页开关。/ Persist the experimental shake page-turn switch.
 void app_settings_set_book_shake(bool on);
+app_saver_style_t app_settings_saver_style(void);
+void app_settings_set_saver_style(app_saver_style_t style);
+uint8_t app_settings_dashboard_items(void);
+void app_settings_set_dashboard_items(uint8_t items);
