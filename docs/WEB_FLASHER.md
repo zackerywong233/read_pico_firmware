@@ -6,12 +6,12 @@ The browser installer uses ESP Web Tools and Web Serial over HTTPS to write one 
 
 ## 发布流程 / Release flow
 
-1. 合并固件分支后，在 `main` 上创建并推送版本标签，例如 `v1.0.0`。
+1. 在准备发布的固件提交上创建并推送版本标签，例如 `v0.1.0`。标签可直接指向 `pico-os` 分支的提交，不要求先合并 PR。
 2. `release-firmware.yml` 使用 ESP-IDF v6.1 和 `sdkconfig.defaults` 构建产品固件，再用 `idf.py merge-bin` 生成合并镜像。
 3. 工作流将镜像附加到 GitHub Release，并把同一镜像与刷写网页一起部署到 GitHub Pages。
 4. 首次使用 Pages 时，需在仓库 Settings → Pages 将 Build and deployment source 设为 GitHub Actions。
 
-After merging the firmware branch, push a version tag such as `v1.0.0` on `main`. The workflow builds with ESP-IDF v6.1 and the product `sdkconfig.defaults`, creates a merged image, attaches it to the GitHub Release, and deploys the page and image to GitHub Pages. For the first deployment, set Settings → Pages → Build and deployment source to GitHub Actions.
+Create and push a version tag such as `v0.1.0` on the firmware commit you intend to publish. The tag may point directly to a `pico-os` commit; merging the PR first is optional. The workflow builds with ESP-IDF v6.1 and the product `sdkconfig.defaults`, creates a merged image, attaches it to the GitHub Release, and deploys the page and image to GitHub Pages. For the first deployment, set Settings → Pages → Build and deployment source to GitHub Actions.
 
 ## 使用方式 / Install
 
