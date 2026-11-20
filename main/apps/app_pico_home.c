@@ -97,7 +97,7 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
         if (!ui_rect_hit(tile_rect(i), touch->x, touch->y)) continue;
         s_focus = i;
         activate(ctx, i);
-        return APP_REDRAW_PAGE;
+        return APP_REDRAW_NONE;
     }
     return APP_REDRAW_NONE;
 }
@@ -109,11 +109,11 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
     }
     if (key == UI_KEY_2) {
         activate(ctx, s_focus);
-        return APP_REDRAW_PAGE;
+        return APP_REDRAW_NONE;
     }
     if (key == UI_KEY_3) {
         ctx->request_menu = true;
-        return APP_REDRAW_PAGE;
+        return APP_REDRAW_NONE;
     }
     return APP_REDRAW_NONE;
 }

@@ -130,19 +130,9 @@ static void make_legacy_key(const char *path, char key[11]) {
 
 static bool legacy_position_valid(const uint8_t *p) { return p[6] <= 100; }
 
-static esp_err_t legacy_load(const char *path, uint32_t file_size, book_notes_t *out) {
-    char key[11];
-    make_legacy_key(path, key);
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(LEGACY_NS, NVS_READONLY, &handle);
-    if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_ERR_NOT_FOUND;
-    if (err != ESP_OK) return err;
-    uint8_t blob[LEGACY_BLOB_MAX];
-    size_t size = sizeof(blob);
-    err = nvs_get_blob(handle, key, blob, &size);
-    nvs_close(handle);
-    if (err != ESP_OK) return err == ESP_ERR_NVS_NOT_FOUND ? ESP_ERR_NOT_FOUND : err;
-    if (size < LEGACY_HEADER_SIZE + 2 || size > sizeof(blob) || memcmp(blob, "RBN", 3) || blob[3] != 1)
+static esp_err_t legacy_parse(const char *path, uint32_t file_size, book_notes_t *out,
+                              const uint8_t *blob, size_t size) {
+    if (size < LEGACY_HEADER_SIZE + 2 || size > LEGACY_BLOB_MAX || memcmp(blob, "RBN", 3) || blob[3] != 1)
         return ESP_ERR_INVALID_RESPONSE;
     size_t path_len = get16(blob + 4);
     uint8_t bookmarks = blob[6], excerpts = blob[7];
@@ -201,6 +191,24 @@ static esp_err_t legacy_load(const char *path, uint32_t file_size, book_notes_t 
     return ESP_OK;
 }
 
+static esp_err_t legacy_load(const char *path, uint32_t file_size, book_notes_t *out) {
+    char key[11];
+    make_legacy_key(path, key);
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(LEGACY_NS, NVS_READONLY, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_ERR_NOT_FOUND;
+    if (err != ESP_OK) return err;
+    size_t size = LEGACY_BLOB_MAX;
+    uint8_t *blob = malloc(size);
+    if (!blob) { nvs_close(handle); return ESP_ERR_NO_MEM; }
+    err = nvs_get_blob(handle, key, blob, &size);
+    nvs_close(handle);
+    if (err == ESP_OK) err = legacy_parse(path, file_size, out, blob, size);
+    else if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_ERR_NOT_FOUND;
+    free(blob);
+    return err;
+}
+
 static esp_err_t legacy_forget(const char *path) {
     char key[11];
     make_legacy_key(path, key);
@@ -208,12 +216,13 @@ static esp_err_t legacy_forget(const char *path) {
     esp_err_t err = nvs_open(LEGACY_NS, NVS_READWRITE, &handle);
     if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
     if (err != ESP_OK) return err;
-    uint8_t blob[LEGACY_BLOB_MAX];
-    size_t size = sizeof(blob);
+    size_t size = LEGACY_BLOB_MAX;
+    uint8_t *blob = malloc(size);
+    if (!blob) { nvs_close(handle); return ESP_ERR_NO_MEM; }
     err = nvs_get_blob(handle, key, blob, &size);
     if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
     else if (err == ESP_OK) {
-        if (size < LEGACY_HEADER_SIZE + 2 || size > sizeof(blob) || memcmp(blob, "RBN", 3) || blob[3] != 1)
+        if (size < LEGACY_HEADER_SIZE + 2 || size > LEGACY_BLOB_MAX || memcmp(blob, "RBN", 3) || blob[3] != 1)
             err = ESP_ERR_INVALID_STATE;
         else {
             size_t path_len = get16(blob + 4);
@@ -225,6 +234,7 @@ static esp_err_t legacy_forget(const char *path) {
     }
     if (err == ESP_OK) err = nvs_commit(handle);
     nvs_close(handle);
+    free(blob);
     return err;
 }
 
@@ -239,12 +249,14 @@ void book_notes_free(book_notes_t *notes) {
 esp_err_t book_notes_load(const char *path, uint32_t file_size, book_notes_t *out) {
     if (!valid_path(path) || !out) return ESP_ERR_INVALID_ARG;
     memset(out, 0, sizeof(*out));
-    note_paths_t paths;
-    if (!make_paths(path, &paths)) return ESP_ERR_INVALID_ARG;
-    esp_err_t err = recover_backup(&paths, path);
-    if (err != ESP_OK) return err;
-    FILE *file = fopen(paths.data, "rb");
+    note_paths_t *paths = calloc(1, sizeof(*paths));
+    if (!paths) return ESP_ERR_NO_MEM;
+    if (!make_paths(path, paths)) { free(paths); return ESP_ERR_INVALID_ARG; }
+    esp_err_t err = recover_backup(paths, path);
+    if (err != ESP_OK) { free(paths); return err; }
+    FILE *file = fopen(paths->data, "rb");
     if (!file) {
+        free(paths);
         if (errno != ENOENT) return ESP_FAIL;
         book_notes_t legacy = {0};
         err = legacy_load(path, file_size, &legacy);
@@ -256,6 +268,7 @@ esp_err_t book_notes_load(const char *path, uint32_t file_size, book_notes_t *ou
         else *out = legacy;
         return err;
     }
+    free(paths);
 
     uint8_t header[NOTES_HEADER_SIZE];
     if (fread(header, 1, sizeof(header), file) != sizeof(header) || memcmp(header, "RBNF", 4) ||
@@ -343,20 +356,17 @@ static esp_err_t write_position(FILE *file, uint8_t kind, const book_note_positi
     return fwrite(record, 1, sizeof(record), file) == sizeof(record) ? ESP_OK : ESP_FAIL;
 }
 
-esp_err_t book_notes_save(const char *path, uint32_t file_size, const book_notes_t *notes) {
-    if (!valid_path(path) || !notes || (notes->bookmark_count && !notes->bookmarks) ||
-        (notes->excerpt_count && !notes->excerpts)) return ESP_ERR_INVALID_ARG;
-    note_paths_t paths;
-    if (!make_paths(path, &paths)) return ESP_ERR_INVALID_ARG;
-    esp_err_t err = ensure_directory(paths.directory);
+static esp_err_t save_with_paths(const char *path, uint32_t file_size,
+                                 const book_notes_t *notes, note_paths_t *paths) {
+    esp_err_t err = ensure_directory(paths->directory);
     if (err != ESP_OK) return err;
-    err = recover_backup(&paths, path);
+    err = recover_backup(paths, path);
     if (err != ESP_OK) return err;
     uint8_t header[NOTES_HEADER_SIZE] = {'R', 'B', 'N', 'F', NOTES_FORMAT_VERSION, 0, 0, 0, 0, 0, 0, 0};
     size_t path_len = strlen(path) + 1;
     put16(header + 5, (uint16_t)path_len);
     put32(header + 8, file_size);
-    FILE *file = fopen(paths.temporary, "wb");
+    FILE *file = fopen(paths->temporary, "wb");
     if (!file) return ESP_FAIL;
     bool ok = fwrite(header, 1, sizeof(header), file) == sizeof(header) &&
               fwrite(path, 1, path_len, file) == path_len;
@@ -380,39 +390,57 @@ esp_err_t book_notes_save(const char *path, uint32_t file_size, const book_notes
     if (ok && fflush(file) != 0) ok = false;
     if (ok && fsync(fileno(file)) != 0) ok = false;
     if (fclose(file) != 0) ok = false;
-    if (!ok) { unlink(paths.temporary); return ESP_FAIL; }
+    if (!ok) { unlink(paths->temporary); return ESP_FAIL; }
 
     struct stat st;
-    if (stat(paths.data, &st) == 0) {
-        if (unlink(paths.backup) != 0 && errno != ENOENT) { unlink(paths.temporary); return ESP_FAIL; }
-        if (rename(paths.data, paths.backup) != 0) { unlink(paths.temporary); return ESP_FAIL; }
+    if (stat(paths->data, &st) == 0) {
+        if (unlink(paths->backup) != 0 && errno != ENOENT) { unlink(paths->temporary); return ESP_FAIL; }
+        if (rename(paths->data, paths->backup) != 0) { unlink(paths->temporary); return ESP_FAIL; }
     } else if (errno != ENOENT) {
-        unlink(paths.temporary);
+        unlink(paths->temporary);
         return ESP_FAIL;
     }
-    if (rename(paths.temporary, paths.data) != 0) {
-        (void)rename(paths.backup, paths.data);
-        unlink(paths.temporary);
+    if (rename(paths->temporary, paths->data) != 0) {
+        (void)rename(paths->backup, paths->data);
+        unlink(paths->temporary);
         return ESP_FAIL;
     }
-    (void)unlink(paths.backup);
+    (void)unlink(paths->backup);
     (void)legacy_forget(path);
     return ESP_OK;
 }
 
-esp_err_t book_notes_forget(const char *path) {
-    if (!valid_path(path)) return ESP_ERR_INVALID_ARG;
-    note_paths_t paths;
-    if (!make_paths(path, &paths)) return ESP_ERR_INVALID_ARG;
+esp_err_t book_notes_save(const char *path, uint32_t file_size, const book_notes_t *notes) {
+    if (!valid_path(path) || !notes || (notes->bookmark_count && !notes->bookmarks) ||
+        (notes->excerpt_count && !notes->excerpts)) return ESP_ERR_INVALID_ARG;
+    note_paths_t *paths = calloc(1, sizeof(*paths));
+    if (!paths) return ESP_ERR_NO_MEM;
+    if (!make_paths(path, paths)) { free(paths); return ESP_ERR_INVALID_ARG; }
+    esp_err_t err = save_with_paths(path, file_size, notes, paths);
+    free(paths);
+    return err;
+}
+
+static esp_err_t forget_with_paths(const char *path, note_paths_t *paths) {
     esp_err_t result = ESP_OK;
-    const char *items[] = {paths.data, paths.backup};
+    const char *items[] = {paths->data, paths->backup};
     for (size_t i = 0; i < sizeof(items) / sizeof(items[0]); ++i) {
         bool exists = false;
         esp_err_t owner_err = sidecar_owner(items[i], path, &exists);
         if (owner_err != ESP_OK) { result = owner_err; continue; }
         if (exists && unlink(items[i]) != 0) result = ESP_FAIL;
     }
-    if (unlink(paths.temporary) != 0 && errno != ENOENT) result = ESP_FAIL;
+    if (unlink(paths->temporary) != 0 && errno != ENOENT) result = ESP_FAIL;
     esp_err_t legacy_err = legacy_forget(path);
     return result != ESP_OK ? result : legacy_err;
+}
+
+esp_err_t book_notes_forget(const char *path) {
+    if (!valid_path(path)) return ESP_ERR_INVALID_ARG;
+    note_paths_t *paths = calloc(1, sizeof(*paths));
+    if (!paths) return ESP_ERR_NO_MEM;
+    if (!make_paths(path, paths)) { free(paths); return ESP_ERR_INVALID_ARG; }
+    esp_err_t err = forget_with_paths(path, paths);
+    free(paths);
+    return err;
 }

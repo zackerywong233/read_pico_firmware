@@ -25,6 +25,8 @@ int app_index_of(const app_desc_t* app);
 const app_desc_t* app_home_page(void);
 const app_desc_t* app_personal_page(void);
 const app_desc_t* app_selftest_page(void);
+/// 字体管理页，供阅读页快捷跳转。/ Font management page for direct navigation from the reader.
+const app_desc_t* app_font_page(void);
 
 #ifdef __cplusplus
 }

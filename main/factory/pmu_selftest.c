@@ -147,13 +147,28 @@ static void wr32(uint8_t* p, uint32_t v) {
 }
 
 static bool run_ident(void) {
-    if (read_pico_pmu_refresh() != ESP_OK) return false;
+    if (read_pico_pmu_refresh() != ESP_OK) {
+        snprintf(s_detail, sizeof(s_detail), "PMU 读取失败：%s",
+                 esp_err_to_name(read_pico_pmu_get()->last_err));
+        return false;
+    }
     const pmu_snapshot_t* s = read_pico_pmu_get();
-    if (!s->identity_ok || s->device_id != PMU_DEVICE_ID) return false;
-    if (s->proto_major != 1) return false;
-    if (s->fw_major != PMU_FW_MAJOR) return false;
-    if (s->fw_minor != PMU_FW_MINOR) return false;
-    return s->fw_patch >= PMU_FW_PATCH;
+    if (!s->identity_ok || s->device_id != PMU_DEVICE_ID) {
+        strlcpy(s_detail, "设备 ID 不匹配", sizeof(s_detail));
+        return false;
+    }
+    if (s->proto_major != 1) {
+        snprintf(s_detail, sizeof(s_detail), "协议版本不匹配：%u.%u",
+                 s->proto_major, s->proto_minor);
+        return false;
+    }
+    if (s->fw_major != PMU_FW_MAJOR || s->fw_minor != PMU_FW_MINOR
+        || s->fw_patch < PMU_FW_PATCH) {
+        snprintf(s_detail, sizeof(s_detail), "PMU 固件版本不兼容：%u.%u.%u",
+                 s->fw_major, s->fw_minor, s->fw_patch);
+        return false;
+    }
+    return true;
 }
 
 static bool run_handshake(void) {
@@ -354,7 +369,7 @@ void pmu_selftest_run_probe(void) {
     if (!read_pico_pmu_ready()) {
         const pmu_snapshot_t* snap = read_pico_pmu_get();
         const char* reason = snap->last_err != ESP_OK
-            ? esp_err_to_name(snap->last_err) : "PMU 未就绪";
+            ? esp_err_to_name(snap->last_err) : "PMU 未就绪，请检查连接或固件";
         mark(PMU_ST_IDENT, PMU_ST_RES_FAIL, reason);
         for (int i = PMU_ST_IDENT + 1; i < PMU_ST_CMD_END; i++)
             mark(i, PMU_ST_RES_SKIP, NULL);
@@ -408,7 +423,7 @@ void pmu_selftest_run_probe(void) {
     save_blob();
     if (s_view.fail_n) {
         hint("探活失败");
-        note("探活失败");
+        if (!s_view.last_msg[0]) note("探活失败");
     } else {
         hint("探活通过");
         note("探活通过");

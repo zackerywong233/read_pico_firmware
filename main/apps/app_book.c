@@ -203,8 +203,9 @@ static EpdRect tool_rect(int i) {
 }
 static EpdRect note_row_rect(int row) {
     int bottom = UI_CONTENT_BOTTOM - 144;
-    int height = (bottom - UI_CONTENT_TOP) / BOOK_NOTE_ROWS;
-    return (EpdRect){UI_MARGIN, UI_CONTENT_TOP + row * height, ui_content_width(), height - 8};
+    int top = UI_CONTENT_TOP + 40;
+    int height = (bottom - top) / BOOK_NOTE_ROWS;
+    return (EpdRect){UI_MARGIN, top + row * height, ui_content_width(), height - 8};
 }
 static EpdRect note_delete_rect(int row) {
     EpdRect row_rect = note_row_rect(row);
@@ -632,6 +633,9 @@ static void draw_note_view(uint8_t *fb, app_ctx_t *ctx) {
         ui_draw_menu_handle(fb, false);
         return;
     }
+    if (s_note_message[0]) {
+        ui_text(fb, UI_MARGIN, UI_CONTENT_TOP, UI_PX_CAPTION, s_note_message, EPD_DRAW_ALIGN_LEFT, false);
+    }
     if (s_notes_error) {
         char hint[] = "本书笔记不可读取或与当前文件版本不匹配";
         fit_text(hint, UI_PX_BODY, ui_content_width());
@@ -642,8 +646,6 @@ static void draw_note_view(uint8_t *fb, app_ctx_t *ctx) {
                  "还没有摘录，阅读到想保存的内容后点下方摘录本页");
         fit_text(hint, UI_PX_BODY, ui_content_width());
         ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 48, UI_PX_BODY, hint, EPD_DRAW_ALIGN_LEFT, false);
-    } else if (s_note_message[0]) {
-        ui_text(fb, UI_MARGIN, UI_CONTENT_TOP - 4, UI_PX_CAPTION, s_note_message, EPD_DRAW_ALIGN_LEFT, false);
     }
     int pages = leaves();
     char page_hint[64];
@@ -655,7 +657,7 @@ static void draw_note_view(uint8_t *fb, app_ctx_t *ctx) {
         if (index >= count) break;
         EpdRect rect = note_row_rect(row);
         EpdRect remove = note_delete_rect(row);
-        if (s_pressed_control == 800 + row) ui_draw_pressed_round_rect(fb, rect, UI_BTN_RADIUS);
+        if (s_pressed_control == 800 + row) ui_draw_pressed_round_rect(fb, remove, UI_BTN_RADIUS);
         ui_draw_round_rect(fb, rect, UI_BTN_RADIUS, UI_GRAY_BLACK);
         char first[224], second[224] = {0};
         if (bookmarks) {
@@ -1317,11 +1319,8 @@ static app_redraw_t resize_text(app_ctx_t* ctx, int dir) {
     return paint_reading(ctx, MODE_DU);
 }
 static void goto_font(app_ctx_t* ctx) {
-    // 通过注册表查找，不引用另一个页面符号。/ Find via registry without referencing another page symbol.
-    for (int i = 0; i < app_count(); ++i) {
-        const app_desc_t* app = app_at(i);
-        if (strstr(app->title, " Font")) { save_progress(); ctx->request_app = app; break; }
-    }
+    save_progress();
+    ctx->request_app = app_font_page();
 }
 static app_redraw_t manage_action(app_ctx_t* ctx, uint16_t x, uint16_t y) {
     int count = s_clear_confirm || s_file_removed ? 2 : 3;

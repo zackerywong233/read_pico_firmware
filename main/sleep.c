@@ -12,6 +12,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 
 #include "app.h"
 #include "book_image.h"
@@ -291,13 +292,28 @@ esp_err_t app_enter_host_sleep(app_sleep_mode_t mode) {
 
 static uint8_t* load_saver_image(size_t* length) {
     read_pico_sd_info_t sd = {0};
-    if (read_pico_sd_get_info(&sd) != ESP_OK || !sd.mounted) return NULL;
+    esp_err_t sd_err = read_pico_sd_get_info(&sd);
+    if (!sd.mounted) {
+        if (sd_err != ESP_ERR_NOT_FINISHED) (void)read_pico_sd_start_probe();
+        return NULL;
+    }
     static const char* paths[] = {
         "/sdcard/agent_screensaver.jpg", "/sdcard/agent_screensaver.png",
         "/sdcard/screensaver.jpg", "/sdcard/screensaver.png"
     };
-    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
-        FILE* f = fopen(paths[i], "rb");
+    struct stat stats[sizeof(paths) / sizeof(paths[0])];
+    bool exists[sizeof(paths) / sizeof(paths[0])] = {0};
+    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i)
+        exists[i] = stat(paths[i], &stats[i]) == 0;
+    for (size_t tried = 0; tried < sizeof(paths) / sizeof(paths[0]); ++tried) {
+        size_t best = sizeof(paths) / sizeof(paths[0]);
+        for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+            if (exists[i] && (best == sizeof(paths) / sizeof(paths[0])
+                || stats[i].st_mtime > stats[best].st_mtime)) best = i;
+        }
+        if (best == sizeof(paths) / sizeof(paths[0])) break;
+        exists[best] = false;
+        FILE* f = fopen(paths[best], "rb");
         if (!f) continue;
         if (fseek(f, 0, SEEK_END) != 0) { fclose(f); continue; }
         long size = ftell(f);
@@ -309,7 +325,14 @@ static uint8_t* load_saver_image(size_t* length) {
         if (!data) { fclose(f); return NULL; }
         size_t got = fread(data, 1, (size_t)size, f);
         fclose(f);
-        if (got == (size_t)size) { *length = got; return data; }
+        if (got == (size_t)size) {
+            uint8_t* pixels = NULL;
+            uint16_t width = 0, height = 0;
+            bool valid = book_image_decode(data, got, 2 * 1024 * 1024,
+                                           &pixels, &width, &height);
+            free(pixels);
+            if (valid && width && height) { *length = got; return data; }
+        }
         heap_caps_free(data);
     }
     return NULL;
@@ -331,6 +354,8 @@ static bool draw_saver_image(uint8_t* framebuffer) {
     int draw_w = image_w, draw_h = image_h;
     if (draw_w > screen_w) { draw_h = draw_h * screen_w / draw_w; draw_w = screen_w; }
     if (draw_h > screen_h) { draw_w = draw_w * screen_h / draw_h; draw_h = screen_h; }
+    if (draw_w < 1) draw_w = 1;
+    if (draw_h < 1) draw_h = 1;
     int left = (screen_w - draw_w) / 2;
     int top = (screen_h - draw_h) / 2;
     for (int y = 0; y < draw_h; ++y) for (int x = 0; x < draw_w; ++x) {
@@ -355,11 +380,24 @@ static bool draw_saver_quote(uint8_t* framebuffer) {
     int y = 470;
     char wrapped[160];
     while (*start && y < UI_LOCK_HEIGHT - 220) {
+        if (*start == '\r' || *start == '\n') {
+            if (*start == '\r' && start[1] == '\n') start += 2;
+            else ++start;
+            y += UI_PX_BODY + 18;
+            continue;
+        }
         const char* p = start;
         const char* end = start;
-        while (*p) {
+        size_t remaining = strlen(start);
+        while (remaining && *p != '\r' && *p != '\n') {
             const unsigned char c = (unsigned char)*p;
-            const char* next = p + (c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4);
+            size_t char_len = c < 0x80 ? 1 : c >= 0xc2 && c <= 0xdf ? 2
+                : c >= 0xe0 && c <= 0xef ? 3 : c >= 0xf0 && c <= 0xf4 ? 4 : 1;
+            if (char_len > remaining) char_len = 1;
+            for (size_t i = 1; i < char_len; ++i) {
+                if (((unsigned char)p[i] & 0xc0) != 0x80) { char_len = 1; break; }
+            }
+            const char* next = p + char_len;
             size_t n = (size_t)(next - start);
             if (n >= sizeof(wrapped)) break;
             memcpy(wrapped, start, n);
@@ -367,14 +405,24 @@ static bool draw_saver_quote(uint8_t* framebuffer) {
             if (ttf_text_width_px(UI_PX_BODY, wrapped) > ui_content_width() && end != start) break;
             end = next;
             p = next;
+            remaining -= char_len;
         }
-        if (end == start) break;
+        if (end == start) {
+            const unsigned char c = (unsigned char)*start;
+            size_t char_len = c < 0x80 ? 1 : c >= 0xc2 && c <= 0xdf ? 2
+                : c >= 0xe0 && c <= 0xef ? 3 : c >= 0xf0 && c <= 0xf4 ? 4 : 1;
+            size_t remaining_start = strlen(start);
+            if (char_len > remaining_start) char_len = 1;
+            end = start + char_len;
+        }
         size_t n = (size_t)(end - start);
         memcpy(wrapped, start, n);
         wrapped[n] = '\0';
         ui_text(framebuffer, UI_MARGIN, y, UI_PX_BODY, wrapped, EPD_DRAW_ALIGN_LEFT, false);
         y += UI_PX_BODY + 18;
         start = end;
+        if (*start == '\r' && start[1] == '\n') start += 2;
+        else if (*start == '\r' || *start == '\n') ++start;
     }
     char line[64];
     snprintf(line, sizeof(line), "累计阅读 %lu 分钟",

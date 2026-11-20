@@ -25,6 +25,7 @@ jobs:
           idf.py merge-bin -o pico-os-merged.bin
           mkdir -p public
           cp -R web/. public/
+          python3 -c 'import json,sys; p="public/manifest.json"; d=json.load(open(p)); d["version"]=sys.argv[1]; json.dump(d,open(p,"w"),ensure_ascii=False,indent=2); print()' "$GITHUB_REF_NAME"
           cp build/pico-os-merged.bin public/pico-os-merged.bin
 
       - name: Publish firmware asset

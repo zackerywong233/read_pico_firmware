@@ -41,6 +41,9 @@ typedef struct {
     uint64_t (*free_bytes_cb)(void *ctx); ///< 查询可用字节 / Query available bytes
     void *free_bytes_ctx; ///< 回调上下文，stop 前有效 / Callback context valid until stop
     esp_err_t (*file_changed_cb)(const char *path); ///< 文件提交或删除后清除进度；失败不回滚文件 / Clear progress after commit or deletion; failure never rolls back the file
+    void (*sta_ip_cb)(void); ///< STA 首次取得 IP 后调用 / Called after STA receives an IP address
+    void (*service_poll_cb)(void); ///< 传输服务轮询时调用 / Called during transfer service polling
+    void (*network_stop_cb)(void); ///< 停止网络前调用 / Called before stopping networking
 } read_pico_transfer_cfg_t;
 
 typedef struct {
@@ -84,8 +87,10 @@ void read_pico_transfer_get_status(read_pico_transfer_status_t *out);
 void read_pico_transfer_service_poll(void);
 /// 只读已保存SSID；未配置仍返回ESP_OK。/ Read only the saved SSID; unconfigured still returns ESP_OK.
 esp_err_t read_pico_transfer_get_saved_wifi(char ssid[33], bool *configured);
-/// 传书服务运行期间读取当前存储根里的 Agent 配置；缺失返回 ESP_ERR_NOT_FOUND。/ Read Agent config from the active storage root while service runs; missing file returns ESP_ERR_NOT_FOUND.
+/// 读取独立 NVS 中的 Agent 配置；首次读取时兼容迁移旧文件。/ Read Agent configuration from dedicated NVS, migrating the legacy file on first access.
 esp_err_t read_pico_transfer_get_agent_config(read_pico_agent_config_t *out);
+/// 配置变更计数，用于运行中的 Agent 页面发现网页更新。/ Configuration revision for live Agent pages to detect browser updates.
+uint32_t read_pico_transfer_agent_config_version(void);
 /// 仅热点或停止状态可遗忘；上传中拒绝。/ Forget only while AP or stopped; rejected during upload.
 esp_err_t read_pico_transfer_forget_wifi(void);
 /// 停服后同步扫描2.4GHz网络；最多16个去重SSID，按信号降序，所有临时资源均释放。/ Scan synchronously while stopped; up to 16 unique SSIDs by descending RSSI; release all temporary resources.

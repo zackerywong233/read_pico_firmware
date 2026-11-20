@@ -31,6 +31,7 @@ idf_component_register(
         "sleep.c"
         "settings.c"
         "reading_stats.c"
+        "time_sync.c"
         "app/app_loop.c"
         "app/app_registry.c"
         "ui/ui_kit.c"

@@ -7,11 +7,14 @@
  *
  * 冻结：只提取 HTML 正文，不执行脚本或 CSS；Wi-Fi 使用已保存的 STA 配置，离页停服。
  * 剪藏只允许同网设备持本次开机口令写入 TXT 书架。
+ * 决策变更：联网等待期间阻止空闲睡眠；离页或电源键锁屏会取消请求并停网。
+ * Decision change: Block idle sleep while fetching or awaiting clips; exit or power-key lock cancels requests and stops networking.
  * Frozen: Extract HTML text without executing scripts or CSS; use saved STA credentials and stop networking on exit.
  * Browser clips require the current boot token and are stored as TXT books.
  */
 
 #include "app.h"
+#include "time_sync.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -27,6 +30,7 @@
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -68,6 +72,7 @@ typedef struct {
     esp_err_t err;
     char url[WEB_URL_MAX];
     html_text_t article;
+    bool truncated;
 } web_result_t;
 
 typedef struct {
@@ -100,6 +105,9 @@ static html_text_t s_article;
 static size_t s_page;
 static QueueHandle_t s_result_queue;
 static volatile bool s_fetch_running;
+static volatile bool s_fetch_cancel;
+static TaskHandle_t s_fetch_task;
+static bool s_article_truncated;
 
 static const char *const s_url_keys =
     "1234567890" "qwertyuiop" "asdfghjkl-" "zxcvbnm._'";
@@ -119,14 +127,15 @@ static EpdRect key_rect(int id) {
 }
 
 static EpdRect special_rect(int id) {
-    const int cols = 10;
-    const int width = (ui_content_width() - (cols - 1) * 5) / cols;
-    return (EpdRect){
-        .x = UI_MARGIN + id * (width + 5),
-        .y = 730,
-        .width = width,
-        .height = 64,
-    };
+    if (id < 7) {
+        const int cols = 7;
+        const int width = (ui_content_width() - (cols - 1) * 6) / cols;
+        return (EpdRect){UI_MARGIN + id * (width + 6), 730, width, 64};
+    }
+    const int cols = 3;
+    const int local = id - 7;
+    const int width = (ui_content_width() - (cols - 1) * 12) / cols;
+    return (EpdRect){UI_MARGIN + local * (width + 12), 810, width, 72};
 }
 
 static web_geom_t web_geom(void) {
@@ -134,8 +143,8 @@ static web_geom_t web_geom(void) {
     const int button_w = (width - UI_GAP) / 2;
     return (web_geom_t){
         .url_field = {UI_MARGIN, 210, width, 112},
-        .open = {UI_MARGIN, 890, button_w, 80},
-        .home = {UI_MARGIN + button_w + UI_GAP, 890, button_w, 80},
+        .open = {UI_MARGIN, 330, button_w, 80},
+        .home = {UI_MARGIN + button_w + UI_GAP, 330, button_w, 80},
         .back = ui_bar_rect(0, 3),
         .prev = ui_bar_rect(1, 3),
         .next = ui_bar_rect(2, 3),
@@ -176,15 +185,13 @@ static bool valid_web_url(const char *url) {
     return (end ? end : host + strlen(host)) > host;
 }
 
-static esp_err_t web_http_event(esp_http_client_event_t *event) {
-    if (event->event_id != HTTP_EVENT_ON_DATA || !event->data || event->data_len <= 0)
-        return ESP_OK;
-    web_download_t *download = event->user_data;
-    size_t add = (size_t)event->data_len;
-    if (!download || download->len > WEB_FETCH_MAX || add > WEB_FETCH_MAX - download->len) {
-        if (download) download->too_large = true;
-        return ESP_FAIL;
+static esp_err_t append_download(web_download_t *download, const char *data, size_t add) {
+    if (!download || !data || !add) return ESP_OK;
+    if (download->len > WEB_FETCH_MAX || add > WEB_FETCH_MAX - download->len) {
+        download->too_large = true;
+        add = WEB_FETCH_MAX - download->len;
     }
+    if (!add) return ESP_OK;
     size_t need = download->len + add + 1;
     if (need > download->cap) {
         size_t cap = download->cap ? download->cap : 8192;
@@ -195,32 +202,43 @@ static esp_err_t web_http_event(esp_http_client_event_t *event) {
         download->bytes = next;
         download->cap = cap;
     }
-    memcpy(download->bytes + download->len, event->data, add);
+    memcpy(download->bytes + download->len, data, add);
     download->len += add;
     download->bytes[download->len] = 0;
     return ESP_OK;
 }
 
-static esp_err_t fetch_web_page(const char *url, html_text_t *out) {
+static esp_err_t fetch_web_page(const char *url, html_text_t *out, bool *truncated) {
     web_download_t download = {0};
     esp_http_client_config_t config = {
         .url = url,
-        .timeout_ms = WEB_FETCH_TIMEOUT_MS,
+        .timeout_ms = 1000,
         .buffer_size = 4096,
-        .event_handler = web_http_event,
-        .user_data = &download,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .disable_auto_redirect = false,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) return ESP_ERR_NO_MEM;
-    esp_err_t err = esp_http_client_perform(client);
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err == ESP_OK) (void)esp_http_client_fetch_headers(client);
     int status = esp_http_client_get_status_code(client);
+    int64_t deadline = esp_timer_get_time() + (int64_t)WEB_FETCH_TIMEOUT_MS * 1000;
+    char chunk[4096];
+    while (err == ESP_OK && !s_fetch_cancel && !download.too_large
+           && esp_timer_get_time() < deadline) {
+        int n = esp_http_client_read(client, chunk, sizeof(chunk));
+        if (n == 0) break;
+        if (n < 0) { err = ESP_FAIL; break; }
+        err = append_download(&download, chunk, (size_t)n);
+    }
+    if (s_fetch_cancel) err = ESP_ERR_INVALID_STATE;
+    else if (err == ESP_OK && esp_timer_get_time() >= deadline) err = ESP_ERR_TIMEOUT;
+    esp_http_client_close(client);
     esp_http_client_cleanup(client);
     if (err == ESP_OK && (status < 200 || status >= 300)) err = ESP_ERR_INVALID_RESPONSE;
     if (err == ESP_OK && (!download.bytes || !download.len)) err = ESP_ERR_INVALID_RESPONSE;
-    if (download.too_large) err = ESP_ERR_INVALID_SIZE;
-    if (err == ESP_OK) err = html_to_blocks(download.bytes, download.len, out);
+    if (err == ESP_OK) err = html_to_web_blocks(download.bytes, download.len, out);
+    if (truncated) *truncated = download.too_large;
     free(download.bytes);
     return err;
 }
@@ -231,14 +249,16 @@ static void web_fetch_task(void *arg) {
     if (!result) result = calloc(1, sizeof(*result));
     if (result) {
         snprintf(result->url, sizeof(result->url), "%s", request->url);
-        result->err = fetch_web_page(request->url, &result->article);
-        xQueueSend(s_result_queue, &result, portMAX_DELAY);
+        result->err = fetch_web_page(request->url, &result->article, &result->truncated);
+        if (!s_fetch_cancel && xQueueSend(s_result_queue, &result, 0) == pdTRUE) result = NULL;
     } else {
         web_result_t *empty = NULL;
-        xQueueSend(s_result_queue, &empty, portMAX_DELAY);
+        if (!s_fetch_cancel) (void)xQueueSend(s_result_queue, &empty, 0);
     }
+    free_result(result);
     free(request);
     s_fetch_running = false;
+    s_fetch_task = NULL;
     vTaskDelete(NULL);
 }
 
@@ -249,7 +269,8 @@ static bool start_fetch(void) {
     snprintf(request->url, sizeof(request->url), "%s", s_draft);
     snprintf(s_url, sizeof(s_url), "%s", s_draft);
     s_fetch_running = true;
-    if (xTaskCreatePinnedToCore(web_fetch_task, "web_fetch", 12 * 1024, request, 4, NULL, 1) != pdPASS) {
+    s_fetch_cancel = false;
+    if (xTaskCreatePinnedToCore(web_fetch_task, "web_fetch", 12 * 1024, request, 4, &s_fetch_task, 1) != pdPASS) {
         s_fetch_running = false;
         free(request);
         return false;
@@ -261,6 +282,7 @@ static bool start_fetch(void) {
 
 static void accept_result(web_result_t *result) {
     free_article();
+    s_article_truncated = false;
     if (!result || result->err != ESP_OK) {
         s_view = WEB_ERROR;
         snprintf(s_notice, sizeof(s_notice), "%s", result && result->err == ESP_ERR_INVALID_SIZE
@@ -269,6 +291,7 @@ static void accept_result(web_result_t *result) {
         return;
     }
     s_article = result->article;
+    s_article_truncated = result->truncated;
     result->article = (html_text_t){0};
     if (!book_layout_begin_blocks(
             s_article.utf8, s_article.len, s_article.blocks, s_article.count,
@@ -282,7 +305,8 @@ static void accept_result(web_result_t *result) {
     snprintf(s_url, sizeof(s_url), "%s", result->url);
     s_page = 0;
     s_view = WEB_READING;
-    snprintf(s_notice, sizeof(s_notice), "网页已加载");
+    snprintf(s_notice, sizeof(s_notice), "%s", s_article_truncated
+        ? "网页较大，已截断前 512 KiB" : "网页已加载");
     free_result(result);
 }
 
@@ -318,6 +342,9 @@ static void network_start(void) {
         .free_bytes_cb = web_free_bytes,
         .free_bytes_ctx = &s_root,
         .file_changed_cb = web_file_changed,
+        .sta_ip_cb = app_time_sync_sta_ip,
+        .service_poll_cb = app_time_sync_poll,
+        .network_stop_cb = app_time_sync_stop,
     };
     err = read_pico_transfer_start(&cfg);
     if (err != ESP_OK) {
@@ -333,6 +360,7 @@ static void network_start(void) {
 }
 
 static void network_stop(void) {
+    s_net_start_pending = false;
     if (!s_net_started) return;
     read_pico_transfer_stop();
     read_pico_transfer_get_status(&s_net);
@@ -400,9 +428,9 @@ static void draw_keyboard(uint8_t *fb) {
         draw_button(fb, key_rect(i), label, false);
     }
     for (int i = 0; i < 10; ++i) draw_button(fb, special_rect(i), s_special_labels[s_symbols_more ? 1 : 0][i], false);
-    draw_button(fb, ui_row_rect(0, 2, 830, 72), "https://", false);
-    draw_button(fb, ui_row_rect(1, 2, 830, 72), s_uppercase ? "abc" : "ABC", s_uppercase);
-    ui_text(fb, UI_MARGIN, 930, UI_PX_CAPTION,
+    draw_button(fb, ui_row_rect(0, 2, 900, 72), "https://", false);
+    draw_button(fb, ui_row_rect(1, 2, 900, 72), s_uppercase ? "abc" : "ABC", s_uppercase);
+    ui_text(fb, UI_MARGIN, 990, UI_PX_CAPTION,
             s_notice[0] ? s_notice : "需先连接已有 WiFi · 网页最多 512 KiB · KEY3 菜单",
             EPD_DRAW_ALIGN_LEFT, false);
     draw_button(fb, ui_bar_rect(0, 2), "取消", false);
@@ -439,9 +467,11 @@ static void draw_home(uint8_t *fb) {
 
 static void draw_article(uint8_t *fb) {
     ui_clear_page(fb);
-    const char *url_tail = s_url;
-    while (*url_tail && ttf_text_width_px(UI_PX_SUB, url_tail) > ui_content_width()) ++url_tail;
-    ui_draw_header(fb, "网页阅读 Web", url_tail);
+    char page[64];
+    snprintf(page, sizeof(page), "%s第 %u / %u 页",
+             s_article_truncated ? "已截断 · " : "",
+             (unsigned)s_page + 1, (unsigned)book_layout_page_count());
+    ui_draw_header(fb, "网页阅读 Web", page);
     book_layout_draw_page(fb, s_page, web_body_rect(), WEB_BODY_PX);
     draw_button(fb, web_geom().back, "网址", false);
     draw_button(fb, web_geom().prev, "上一页", false);
@@ -465,6 +495,9 @@ static void on_enter(app_ctx_t *ctx) {
     s_net_started = false;
     s_net_start_pending = false;
     s_net_ready = false;
+    s_net_poll_ms = 0;
+    s_fetch_cancel = false;
+    s_article_truncated = false;
     memset(&s_net, 0, sizeof(s_net));
     free_article();
     if (!s_result_queue) {
@@ -477,6 +510,7 @@ static void on_enter(app_ctx_t *ctx) {
 
 static void web_on_exit(app_ctx_t *ctx) {
     (void)ctx;
+    s_fetch_cancel = true;
     while (s_fetch_running) vTaskDelay(pdMS_TO_TICKS(20));
     web_result_t *result = NULL;
     while (s_result_queue && xQueueReceive(s_result_queue, &result, 0) == pdTRUE) free_result(result);
@@ -491,6 +525,8 @@ static void web_on_exit(app_ctx_t *ctx) {
 static void on_media_lost(app_ctx_t *ctx) {
     (void)ctx;
     if (s_root.is_flash) return;
+    s_fetch_cancel = true;
+    while (s_fetch_running) vTaskDelay(pdMS_TO_TICKS(20));
     network_stop();
     memset(&s_root, 0, sizeof(s_root));
     s_view = WEB_ERROR;
@@ -539,78 +575,116 @@ static void open_address_editor(void) {
     s_view = WEB_EDIT_URL;
 }
 
-static void home_touch(uint16_t x, uint16_t y) {
+static bool home_touch(uint16_t x, uint16_t y) {
+    if (s_view == WEB_LOADING) return false;
     const web_geom_t g = web_geom();
     EpdRect field = {UI_MARGIN, UI_CONTENT_TOP + UI_SEC_HEAD, ui_content_width(), 86};
     if (ui_rect_hit(field, x, y) || ui_rect_hit(g.open, x, y)) {
         open_address_editor();
+        return true;
     } else if (ui_rect_hit(g.home, x, y)) {
         network_stop();
         network_start();
+        return true;
     }
+    return false;
 }
 
-static void keyboard_touch(uint16_t x, uint16_t y) {
+static bool keyboard_touch(uint16_t x, uint16_t y) {
+    char old_draft[sizeof(s_draft)];
+    snprintf(old_draft, sizeof(old_draft), "%s", s_draft);
+    bool old_uppercase = s_uppercase;
+    bool old_symbols = s_symbols_more;
+    web_view_t old_view = s_view;
+    char old_notice[sizeof(s_notice)];
+    snprintf(old_notice, sizeof(old_notice), "%s", s_notice);
     for (int i = 0; i < WEB_KEY_COUNT; ++i) {
-        if (ui_rect_hit(key_rect(i), x, y)) { url_key(WEB_KEY_BASE + i); return; }
+        if (ui_rect_hit(key_rect(i), x, y)) { url_key(WEB_KEY_BASE + i); goto done; }
     }
     for (int i = 0; i < 10; ++i) {
-        if (ui_rect_hit(special_rect(i), x, y)) { url_key(WEB_SPECIAL_BASE + i); return; }
+        if (ui_rect_hit(special_rect(i), x, y)) { url_key(WEB_SPECIAL_BASE + i); goto done; }
     }
-    if (ui_rect_hit(ui_row_rect(0, 2, 830, 72), x, y)) append_url("https://");
-    else if (ui_rect_hit(ui_row_rect(1, 2, 830, 72), x, y)) s_uppercase = !s_uppercase;
+    if (ui_rect_hit(ui_row_rect(0, 2, 900, 72), x, y)) append_url("https://");
+    else if (ui_rect_hit(ui_row_rect(1, 2, 900, 72), x, y)) s_uppercase = !s_uppercase;
     else if (ui_rect_hit(ui_bar_rect(0, 2), x, y)) s_view = WEB_HOME;
     else if (ui_rect_hit(ui_bar_rect(1, 2), x, y)) {
         if (!s_net_ready) snprintf(s_notice, sizeof(s_notice), "WiFi 尚未连接");
         else if (!valid_web_url(s_draft)) snprintf(s_notice, sizeof(s_notice), "请输入有效的 HTTP 或 HTTPS 网址");
         else if (!start_fetch()) snprintf(s_notice, sizeof(s_notice), "无法开始加载网页");
     }
+done:
+    return old_view != s_view || old_uppercase != s_uppercase || old_symbols != s_symbols_more
+        || strcmp(old_draft, s_draft) != 0 || strcmp(old_notice, s_notice) != 0;
 }
 
-static void article_touch(uint16_t x, uint16_t y) {
+static bool article_touch(uint16_t x, uint16_t y) {
     const web_geom_t g = web_geom();
-    if (ui_rect_hit(g.back, x, y)) { s_view = WEB_HOME; return; }
-    if (ui_rect_hit(g.prev, x, y) && s_page > 0) { --s_page; return; }
+    if (ui_rect_hit(g.back, x, y)) { s_view = WEB_HOME; return true; }
+    if (ui_rect_hit(g.prev, x, y) && s_page > 0) { --s_page; return true; }
     if (ui_rect_hit(g.next, x, y)) {
-        if (s_page + 1 >= book_layout_page_count() && !book_layout_complete())
-            book_layout_extend(2);
-        if (s_page + 1 < book_layout_page_count()) ++s_page;
-        return;
+        if (s_page + 1 >= book_layout_page_count() && !book_layout_complete()
+            && !book_layout_extend(2)) {
+            s_view = WEB_ERROR;
+            snprintf(s_notice, sizeof(s_notice), "网页正文排版失败，请重新加载");
+            return true;
+        }
+        if (s_page + 1 < book_layout_page_count()) { ++s_page; return true; }
+        return false;
     }
-    if (x < epd_rotated_display_width() / 3 && s_page > 0) --s_page;
+    if (x < epd_rotated_display_width() / 3 && s_page > 0) { --s_page; return true; }
     else if (x > epd_rotated_display_width() * 2 / 3) {
-        if (s_page + 1 >= book_layout_page_count() && !book_layout_complete())
-            book_layout_extend(2);
-        if (s_page + 1 < book_layout_page_count()) ++s_page;
+        if (s_page + 1 >= book_layout_page_count() && !book_layout_complete()
+            && !book_layout_extend(2)) {
+            s_view = WEB_ERROR;
+            snprintf(s_notice, sizeof(s_notice), "网页正文排版失败，请重新加载");
+            return true;
+        }
+        if (s_page + 1 < book_layout_page_count()) { ++s_page; return true; }
     }
+    return false;
 }
 
 static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) {
     (void)ctx;
     if (event->type == UI_GESTURE_TAP) {
-        if (s_view == WEB_EDIT_URL) keyboard_touch(event->x, event->y);
-        else if (s_view == WEB_READING) article_touch(event->x, event->y);
-        else home_touch(event->x, event->y);
+        bool changed = false;
+        if (s_view == WEB_EDIT_URL) changed = keyboard_touch(event->x, event->y);
+        else if (s_view == WEB_READING) changed = article_touch(event->x, event->y);
+        else changed = home_touch(event->x, event->y);
+        if (!changed) return APP_REDRAW_NONE;
+        if (s_view == WEB_EDIT_URL && event->x >= UI_MARGIN && event->y >= 200
+            && event->y < 980) {
+            render(ctx, ctx->fb);
+            return APP_REDRAW_AREA;
+        }
         return APP_REDRAW_PAGE;
     }
     if (s_view == WEB_READING && event->type == UI_GESTURE_SWIPE_L) {
-        article_touch(epd_rotated_display_width() - 1, UI_LOCK_HEIGHT / 2);
-        return APP_REDRAW_PAGE;
+        return article_touch(epd_rotated_display_width() - 1, UI_LOCK_HEIGHT / 2)
+            ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
     }
     if (s_view == WEB_READING && event->type == UI_GESTURE_SWIPE_R) {
-        if (s_page > 0) --s_page;
+        if (s_page == 0) return APP_REDRAW_NONE;
+        --s_page;
         return APP_REDRAW_PAGE;
     }
     return APP_REDRAW_NONE;
 }
 
+static EpdRect area_hint(app_ctx_t *ctx) {
+    (void)ctx;
+    return (EpdRect){UI_MARGIN, 200, ui_content_width(), 780};
+}
+
 const app_desc_t app_web = {
     .title = "网页阅读 Web",
     .detail = "在线网页与浏览器剪藏",
+    .blocks_idle_sleep = true,
     .render = render,
     .on_enter = on_enter,
     .on_exit = web_on_exit,
     .on_media_lost = on_media_lost,
     .on_gesture = on_gesture,
     .on_tick = on_tick,
+    .area_hint = area_hint,
 };

@@ -9,6 +9,7 @@
  */
 #include "reading_stats.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "nvs.h"
@@ -20,6 +21,19 @@
 #define KEY_QUOTE_TEXT "quote_text"
 #define KEY_LAST_TITLE "last_title"
 #define KEY_LAST_PERCENT "last_pct"
+#define EXCERPT_MAX_BYTES 300
+
+static size_t utf8_prefix(const char* text, size_t len, size_t limit) {
+    if (limit >= len) return len;
+    size_t end = limit;
+    while (end > 0 && ((uint8_t)text[end] & 0xc0) == 0x80) --end;
+    if (end == limit && end > 0) {
+        uint8_t lead = (uint8_t)text[end - 1];
+        size_t need = lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc2 ? 2 : 1;
+        if (need > limit - (end - 1)) --end;
+    }
+    return end;
+}
 
 uint32_t reading_stats_total_seconds(void) {
     nvs_handle_t h;
@@ -47,9 +61,26 @@ static bool get_string(const char* key, char* out, uint32_t cap) {
     out[0] = '\0';
     nvs_handle_t h;
     if (nvs_open(STATS_NS, NVS_READONLY, &h) != ESP_OK) return false;
-    size_t n = cap;
-    esp_err_t err = nvs_get_str(h, key, out, &n);
+    size_t need = 0;
+    esp_err_t err = nvs_get_str(h, key, NULL, &need);
+    if (err != ESP_OK || need == 0) {
+        nvs_close(h);
+        return false;
+    }
+    char* value = malloc(need);
+    if (!value) {
+        nvs_close(h);
+        return false;
+    }
+    err = nvs_get_str(h, key, value, &need);
     nvs_close(h);
+    if (err == ESP_OK) {
+        size_t len = strlen(value);
+        size_t copied = utf8_prefix(value, len, cap - 1);
+        memcpy(out, value, copied);
+        out[copied] = '\0';
+    }
+    free(value);
     if (err != ESP_OK) out[0] = '\0';
     return err == ESP_OK;
 }
@@ -63,7 +94,18 @@ static void put_string(const char* key, const char* value) {
 
 void reading_stats_save_excerpt(const char* title, const char* text) {
     put_string(KEY_QUOTE_TITLE, title);
-    put_string(KEY_QUOTE_TEXT, text);
+    if (!text) text = "";
+    size_t len = strlen(text);
+    if (len <= EXCERPT_MAX_BYTES) {
+        put_string(KEY_QUOTE_TEXT, text);
+        return;
+    }
+    size_t keep = utf8_prefix(text, len, EXCERPT_MAX_BYTES - 3);
+    char excerpt[EXCERPT_MAX_BYTES + 1];
+    memcpy(excerpt, text, keep);
+    memcpy(excerpt + keep, "…", 3);
+    excerpt[keep + 3] = '\0';
+    put_string(KEY_QUOTE_TEXT, excerpt);
 }
 
 bool reading_stats_get_excerpt(char* title, uint32_t title_cap, char* text, uint32_t text_cap) {

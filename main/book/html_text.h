@@ -38,6 +38,9 @@ typedef struct {
 
 /// 输出须为空；成功交出所有权，失败清空输出；空输入成功且零块。/ Output must be empty; success transfers ownership, failure clears output; empty input succeeds with zero blocks.
 esp_err_t html_to_blocks(const char* html, size_t len, html_text_t* out);
+/// 网页容错提取：替换非法 UTF-8、忽略 noscript/svg，保留不完整尖括号文本且不解析图片资源。
+/// Web extraction replaces invalid UTF-8, skips noscript/svg, preserves stray angle brackets and ignores image resources.
+esp_err_t html_to_web_blocks(const char* html, size_t len, html_text_t* out);
 /// 释放文本与块表并清零；可重复调用。/ Free text and blocks and reset; safe to repeat.
 void html_text_free(html_text_t* text);
 /// 释放块表及其图片，不释放正文；可传 NULL。/ Free blocks and their images without freeing text; NULL is allowed.

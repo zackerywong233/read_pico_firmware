@@ -1,5 +1,20 @@
 # 版本变更 / Changelog
 
+## v0.1.14 · 2026-11-21
+
+- 看板：增加“继续阅读”直达书架和 PMU 设备时间同步操作；概览页明确标注当前固件版本。
+  Dashboard: add a direct Continue Reading entry to the shelf and a PMU clock-sync action; label the current firmware version clearly on Overview.
+- 字体：把字体管理加入一级应用菜单，方便查找和切换 TF 卡字体。
+  Fonts: add Font Management to the root app menu so SD-card fonts are easier to find and switch.
+- 自检：身份检查失败时显示 PMU 读取错误、设备 ID、协议版本或固件版本原因；后续依赖步骤仍显示跳过。
+  Self-test: report PMU read, device ID, protocol version or firmware version details for identity failures; dependent checks remain skipped.
+- 书架、看板与桌面：恢复开机六格桌面，修正阅读页字体入口；看板可继续阅读、显示 UTC+8，并在 STA 联网后校准 PMU 时钟。
+  Shelf, dashboard and launcher: restore the six-tile default home, fix the font page route, add Continue Reading, show UTC+8 and sync the PMU clock after STA connects.
+- 网络阅读与网页剪藏：下载可取消并在退出前完成回收；网页解析容忍常见不规范标记，剪藏折叠 CRLF 并清理控制字符。
+  Web reading and clipping: downloads cancel and join before network teardown; parsing tolerates malformed markup, and clipping folds CRLF and cleans control characters.
+- Agent 与笔记：Agent 配置存入独立 NVS 并支持运行中热更新；图书笔记列表、系统工具导航与安装弹窗翻译修正。
+  Agent and notes: store Agent configuration in dedicated NVS with live updates; fix note list layout, system-tool navigation and installer-dialog localization.
+
 ## 2026-11-20
 
 - 本地内容可靠性：内置存储仅在检测到分区全擦除时自动初始化；已有内容遇到挂载错误时保留数据并报告不可用。TF 卡和内置存储同时可用时，可在传书页点按容量行切换图书上传目标，切换仅在上传空闲时重启服务；字体仍只上传至 TF 卡。Wi-Fi 覆盖遇到已提交文件留下的过期备份时可继续替换；字体配置仅在字体成功加载后更新。

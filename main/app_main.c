@@ -21,6 +21,7 @@
 #include "read_pico_board.h"
 #include "read_pico_init.h"
 #include "read_pico_pmu.h"
+#include "read_pico_sd.h"
 #include "settings.h"
 #include "sleep.h"
 #include "ttf_font.h"
@@ -97,6 +98,10 @@ void app_main(void) {
         vcom_setup_run(&hl, framebuffer, hw.touch);
     }
 
+    if (app_settings_saver_style() == APP_SAVER_IMAGE) {
+        (void)read_pico_sd_start_probe();
+    }
+
     app_loop_run(&(app_loop_config_t){
         .hl = &hl,
         .fb = framebuffer,
@@ -105,6 +110,6 @@ void app_main(void) {
         .sensor_ready = hw.sensor_ready,
         // 自检跑到一半断电的话，重新上电直接回自检页接着跑。
         // Resume the self-test page if a power-cut interrupted it.
-        .first_app = st_resume ? app_selftest_page() : app_personal_page(),
+        .first_app = st_resume ? app_selftest_page() : app_home_page(),
     });
 }

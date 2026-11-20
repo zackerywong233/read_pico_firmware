@@ -350,6 +350,8 @@ static int list_books(const char *root, const char *query, size_t page, transfer
 #include "read_pico_transfer.h"
 #include "transfer_policy.h"
 #include "transfer_credentials_store.h"
+#include "agent_config_store.h"
+#include "clip_text.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
@@ -571,11 +573,15 @@ static void ip_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
         if (s_status.state != READ_PICO_TRANSFER_UPLOADING) s_status.state = READ_PICO_TRANSFER_READY;
     }
     portEXIT_CRITICAL(&s_lock);
-    if (accepted) ESP_LOGI("transfer", "sta ready url=%s", url);
+    if (accepted) {
+        if (s_cfg.sta_ip_cb) s_cfg.sta_ip_cb();
+        ESP_LOGI("transfer", "sta ready url=%s", url);
+    }
 }
 
 void read_pico_transfer_service_poll(void) {
     if (!s_started || s_cfg.mode != READ_PICO_TRANSFER_MODE_STA) return;
+    if (s_cfg.service_poll_cb) s_cfg.service_poll_cb();
     int64_t now = esp_timer_get_time() / 1000;
     portENTER_CRITICAL(&s_lock);
     int action = s_stopping ? 0 : connection_poll(&s_connection, now);
@@ -654,29 +660,71 @@ static esp_err_t agent_config_path(char path[288]) {
     return n > 0 && n < 288 ? ESP_OK : ESP_ERR_INVALID_SIZE;
 }
 
-esp_err_t read_pico_transfer_get_agent_config(read_pico_agent_config_t *out) {
-    if (!out || !s_root[0]) return ESP_ERR_INVALID_STATE;
-    memset(out, 0, sizeof(*out));
+static uint32_t s_agent_config_version;
+
+static esp_err_t store_agent_config(const read_pico_agent_config_t *config) {
+    if (config && !valid_agent_config(config)) return ESP_ERR_INVALID_ARG;
+    esp_err_t err = agent_config_store_write(config);
+    if (err == ESP_OK) {
+        portENTER_CRITICAL(&s_lock);
+        ++s_agent_config_version;
+        portEXIT_CRITICAL(&s_lock);
+    }
+    return err;
+}
+
+static esp_err_t load_agent_nvs(read_pico_agent_config_t *out) {
+    esp_err_t err = agent_config_store_read(out);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return err;
+    if (err != ESP_OK || size != sizeof(*out) || !valid_agent_config(out)) {
+        memset(out, 0, sizeof(*out));
+        return err == ESP_OK ? ESP_ERR_INVALID_STATE : err;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t migrate_legacy_agent_config(read_pico_agent_config_t *out) {
+    if (!s_root[0]) return ESP_ERR_NOT_FOUND;
     char path[288];
     esp_err_t err = agent_config_path(path);
     if (err != ESP_OK) return err;
     FILE *file = fopen(path, "rb");
     if (!file) return errno == ENOENT ? ESP_ERR_NOT_FOUND : ESP_FAIL;
-    char body[768];
-    size_t n = fread(body, 1, sizeof(body) - 1, file);
+    char body[1025];
+    size_t len = fread(body, 1, sizeof(body) - 1, file);
     bool too_long = fgetc(file) != EOF;
-    if (fclose(file) || too_long) return ESP_ERR_INVALID_SIZE;
-    body[n] = 0;
-    cJSON *json = cJSON_ParseWithLength(body, n);
-    if (!json) return ESP_ERR_INVALID_RESPONSE;
-    bool valid = copy_json_string(json, "uri", out->broker_uri, sizeof(out->broker_uri), true)
+    bool read_error = ferror(file) != 0;
+    if (fclose(file) != 0) read_error = true;
+    if (too_long || read_error) return ESP_ERR_INVALID_SIZE;
+    body[len] = '\0';
+    cJSON *json = cJSON_ParseWithLength(body, len);
+    memset(out, 0, sizeof(*out));
+    bool valid = json
+        && copy_json_string(json, "uri", out->broker_uri, sizeof(out->broker_uri), true)
         && copy_json_string(json, "username", out->username, sizeof(out->username), false)
         && copy_json_string(json, "password", out->password, sizeof(out->password), false)
         && copy_json_string(json, "topic", out->topic, sizeof(out->topic), true)
         && valid_agent_config(out);
     cJSON_Delete(json);
+    memset(body, 0, sizeof(body));
     if (!valid) { memset(out, 0, sizeof(*out)); return ESP_ERR_INVALID_RESPONSE; }
-    return ESP_OK;
+    err = store_agent_config(out);
+    if (err == ESP_OK) (void)unlink(path);
+    return err;
+}
+
+esp_err_t read_pico_transfer_get_agent_config(read_pico_agent_config_t *out) {
+    if (!out) return ESP_ERR_INVALID_ARG;
+    esp_err_t err = load_agent_nvs(out);
+    if (err != ESP_ERR_NVS_NOT_FOUND) return err;
+    return migrate_legacy_agent_config(out);
+}
+
+uint32_t read_pico_transfer_agent_config_version(void) {
+    portENTER_CRITICAL(&s_lock);
+    uint32_t version = s_agent_config_version;
+    portEXIT_CRITICAL(&s_lock);
+    return version;
 }
 
 static esp_err_t info_handler(httpd_req_t *req) {
@@ -820,8 +868,6 @@ static esp_err_t send_json(httpd_req_t *req, cJSON *json) {
 static esp_err_t agent_config_handler(httpd_req_t *req) {
     if (!management_request(req))
         return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的网址打开配置页面\"}");
-    char path[288];
-    if (agent_config_path(path) != ESP_OK) return respond_error(req, 500);
     if (req->method == HTTP_GET) {
         read_pico_agent_config_t config = {0};
         esp_err_t err = read_pico_transfer_get_agent_config(&config);
@@ -847,8 +893,11 @@ static esp_err_t agent_config_handler(httpd_req_t *req) {
         bool admitted = admission_begin(s_stopping, &s_upload_active);
         portEXIT_CRITICAL(&s_lock);
         if (!admitted) return wifi_response(req, "503 Service Unavailable", "{\"error\":\"设备正在切换网络，请稍后重试\"}");
-        int result = unlink(path);
-        bool ok = result == 0 || errno == ENOENT;
+        esp_err_t err = store_agent_config(NULL);
+        char path[288];
+        if (agent_config_path(path) == ESP_OK && unlink(path) != 0 && errno != ENOENT
+            && err == ESP_OK) err = ESP_FAIL;
+        bool ok = err == ESP_OK;
         portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
         return wifi_response(req, ok ? "200 OK" : "507 Insufficient Storage",
             ok ? "{\"ok\":true}" : "{\"error\":\"无法清除配置\"}");
@@ -891,36 +940,7 @@ static esp_err_t agent_config_handler(httpd_req_t *req) {
     cJSON_Delete(json);
     memset(body, 0, sizeof(body));
 
-    bool saved = false;
-    if (valid) {
-        cJSON *stored = cJSON_CreateObject();
-        if (stored && cJSON_AddStringToObject(stored, "uri", next.broker_uri) &&
-            cJSON_AddStringToObject(stored, "username", next.username) &&
-            cJSON_AddStringToObject(stored, "password", next.password) &&
-            cJSON_AddStringToObject(stored, "topic", next.topic)) {
-            char *encoded = cJSON_PrintUnformatted(stored);
-            if (encoded) {
-                char part[304];
-                int part_len = snprintf(part, sizeof(part), "%s.part", path);
-                int fd = part_len > 0 && part_len < (int)sizeof(part)
-                    ? open(part, O_WRONLY | O_CREAT | O_TRUNC, 0600) : -1;
-                if (fd >= 0) {
-                    size_t len = strlen(encoded), offset = 0;
-                    while (offset < len) {
-                        ssize_t n = write(fd, encoded + offset, len - offset);
-                        if (n <= 0) break;
-                        offset += (size_t)n;
-                    }
-                    bool ok = offset == len && fsync(fd) == 0;
-                    if (close(fd) != 0) ok = false;
-                    if (ok && commit_file(part, path) >= 0) saved = true;
-                    if (!saved) unlink(part);
-                }
-                cJSON_free(encoded);
-            }
-        }
-        cJSON_Delete(stored);
-    }
+    bool saved = valid && store_agent_config(&next) == ESP_OK;
     memset(&next, 0, sizeof(next));
     portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
     if (!valid) return wifi_response(req, "400 Bad Request", "{\"error\":\"仅支持有效的 mqtts:// 地址、用户名、密码和精确主题\"}");
@@ -1116,16 +1136,9 @@ static esp_err_t clip_reject(httpd_req_t *req, const char *status, const char *b
     return ESP_FAIL;
 }
 
-static bool clip_safe_text(char *text, bool title) {
-    for (unsigned char *p = (unsigned char *)text; *p; ++p) {
-        if (*p == '\r' || *p == '\n') {
-            if (title) *p = ' ';
-            else if (*p == '\r') *p = '\n';
-        } else if (*p < 32 && *p != '\t') {
-            return false;
-        }
-    }
-    return true;
+static void *transfer_alloc(size_t size) {
+    void *ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return ptr ? ptr : malloc(size);
 }
 
 static esp_err_t webclip_handler(httpd_req_t *req) {
@@ -1160,10 +1173,14 @@ static esp_err_t webclip_handler(httpd_req_t *req) {
     }
     body[received] = 0;
 
-    char token[33] = {0}, title[512] = {0}, source[2049] = {0};
+    char token[33] = {0};
+    char *title = transfer_alloc(512);
+    char *source = transfer_alloc(2049);
     char *text = heap_caps_malloc(WEBCLIP_TEXT_MAX + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!text) text = malloc(WEBCLIP_TEXT_MAX + 1);
-    bool valid = text != NULL
+    bool valid = title && source && text;
+    if (valid) { title[0] = '\0'; source[0] = '\0'; }
+    valid = valid
         && form_value(body, "token", token, sizeof(token))
         && form_value(body, "title", title, sizeof(title))
         && form_value(body, "url", source, sizeof(source))
@@ -1175,7 +1192,7 @@ static esp_err_t webclip_handler(httpd_req_t *req) {
         && clip_safe_text(text, false);
     free(body);
     if (!valid) {
-        free(text);
+        free(text); free(title); free(source);
         portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
         return wifi_response(req, "400 Bad Request", "{\"error\":\"剪藏内容无效、过长或设备口令已失效\"}");
     }
@@ -1189,6 +1206,7 @@ static esp_err_t webclip_handler(httpd_req_t *req) {
     portEXIT_CRITICAL(&s_lock);
 
     char path[288], part[296];
+    char *header = transfer_alloc(2600);
     uint64_t nonce = ((uint64_t)esp_random() << 32) | esp_random();
     int path_len = snprintf(path, sizeof(path), "%s/webclip_%016llx.txt", s_root, (unsigned long long)nonce);
     int part_len = path_len > 0 && path_len < (int)sizeof(path)
@@ -1197,14 +1215,13 @@ static esp_err_t webclip_handler(httpd_req_t *req) {
     size_t total_len = strlen(title) + strlen(source) + text_len + 32;
     uint64_t free_bytes = s_cfg.free_bytes_cb(s_cfg.free_bytes_ctx);
     bool committed = false;
-    if (part_len > 0 && part_len < (int)sizeof(part)
+    if (header && part_len > 0 && part_len < (int)sizeof(part)
         && (!s_cfg.file_limit || total_len <= s_cfg.file_limit) && total_len <= free_bytes) {
         int fd = open(part, O_WRONLY | O_CREAT | O_EXCL, 0644);
         if (fd >= 0) {
-            char header[2600];
-            int header_len = snprintf(header, sizeof(header), "%s\n来源：%s\n\n", title, source);
+            int header_len = snprintf(header, 2600, "%s\n来源：%s\n\n", title, source);
             size_t wrote = 0;
-            bool ok = header_len > 0 && header_len < (int)sizeof(header);
+            bool ok = header_len > 0 && header_len < 2600;
             while (ok && wrote < (size_t)header_len) {
                 ssize_t n = write(fd, header + wrote, (size_t)header_len - wrote);
                 if (n <= 0) ok = false;
@@ -1222,7 +1239,7 @@ static esp_err_t webclip_handler(httpd_req_t *req) {
             if (!committed) unlink(part);
         }
     }
-    free(text);
+    free(text); free(title); free(source); free(header);
     if (committed && s_cfg.file_changed_cb) (void)s_cfg.file_changed_cb(path);
     portENTER_CRITICAL(&s_lock);
     s_upload_active = false;
@@ -1271,6 +1288,8 @@ bool read_pico_transfer_try_stop_if_idle(void) {
 
 void read_pico_transfer_stop(void) {
     portENTER_CRITICAL(&s_lock); s_stopping = true; portEXIT_CRITICAL(&s_lock);
+    if (s_cfg.mode == READ_PICO_TRANSFER_MODE_STA && s_cfg.network_stop_cb)
+        s_cfg.network_stop_cb();
     if (s_http) { httpd_stop(s_http); s_http = NULL; }
     if (s_started) { esp_wifi_stop(); s_started = false; }
     if (s_events) { esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, s_events); s_events = NULL; }
@@ -1359,7 +1378,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     err = esp_wifi_start(); if (err != ESP_OK) goto fail;
     s_started = true;
     httpd_config_t http = HTTPD_DEFAULT_CONFIG();
-    http.stack_size = 12288; http.max_uri_handlers = 16; http.recv_wait_timeout = 5;
+    http.stack_size = 16384; http.max_uri_handlers = 16; http.recv_wait_timeout = 5;
     http.lru_purge_enable = true;
     err = httpd_start(&s_http, &http); if (err != ESP_OK) goto fail;
     const httpd_uri_t routes[] = {

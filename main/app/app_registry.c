@@ -46,6 +46,7 @@ static const app_desc_t* const s_apps[] = {
     &app_home,
     &app_personal,
     &app_selftest,
+    &app_font_pick,
     &app_system_tools,
 };
 
@@ -77,4 +78,8 @@ const app_desc_t* app_personal_page(void) {
 
 const app_desc_t* app_selftest_page(void) {
     return &app_selftest;
+}
+
+const app_desc_t* app_font_page(void) {
+    return &app_font_pick;
 }

@@ -34,6 +34,7 @@
 #include <string.h>
 
 #include "app.h"
+#include "time_sync.h"
 #include "book_store.h"
 #include "book_progress.h"
 #include "display.h"
@@ -346,7 +347,7 @@ static app_redraw_t provisioning_action(int id) {
                 s_selected.requires_password ? s_password : "");
             if (err == ESP_OK) { queue_network_start(READ_PICO_TRANSFER_MODE_STA); return APP_REDRAW_PAGE; }
             snprintf(s_network_message, sizeof(s_network_message), "%s", err == ESP_ERR_INVALID_ARG ?
-                     "密码须 8–63 字符或 64 位十六进制" : "保存失败，输入已保留，请重试");
+                     "密码须 8-63 字符或 64 位十六进制" : "保存失败，输入已保留，请重试");
         }
     }
     return APP_REDRAW_AREA;
@@ -566,7 +567,9 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
             }
             read_pico_transfer_cfg_t cfg = {.mode = s_mode, .root_dir = s_root.path, .is_flash = s_root.is_flash,
                 .font_dir = s_root.is_flash ? NULL : "/sdcard/fonts",
-                .file_limit = book_store_file_limit(&s_root), .free_bytes_cb = free_bytes, .free_bytes_ctx = &s_root, .file_changed_cb = book_store_forget_changed_path};
+                .file_limit = book_store_file_limit(&s_root), .free_bytes_cb = free_bytes, .free_bytes_ctx = &s_root, .file_changed_cb = book_store_forget_changed_path,
+                .sta_ip_cb = app_time_sync_sta_ip, .service_poll_cb = app_time_sync_poll,
+                .network_stop_cb = app_time_sync_stop};
             err = read_pico_transfer_start(&cfg);
             s_session_started = err == ESP_OK;
             read_pico_transfer_get_status(&s_status);
