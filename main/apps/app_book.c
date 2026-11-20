@@ -43,6 +43,7 @@
 #include "book_layout.h"
 #include "book_policy.h"
 #include "book_progress.h"
+#include "reading_stats.h"
 #include "book_source.h"
 #include "book_store.h"
 #include "display.h"
@@ -70,8 +71,8 @@
 #define BOOK_SHAKE_THS_MG 192
 #define BOOK_SHAKE_DUR 2
 #define BOOK_SIZE_SETTLE_MS 400
-#define BOOK_TOOL_COUNT 6
-#define BOOK_TOOL_ROWS 2
+#define BOOK_TOOL_COUNT 7
+#define BOOK_TOOL_ROWS 3
 
 typedef enum { SHELF, READING, TOC, MANAGE, BULK, SEARCH } book_view_t;
 typedef struct {
@@ -117,7 +118,7 @@ static int64_t s_save_retry_ms;
 static unsigned s_store_revision;
 static bool s_scan_pending, s_resume_pending, s_toolbar, s_clear_confirm;
 static char s_resume_path[BOOK_STORE_PATH_MAX], s_resume_name[256];
-static char s_message[128], s_storage[128], s_path[BOOK_STORE_PATH_MAX], s_title[128];
+static char s_message[128], s_storage[128], s_path[BOOK_STORE_PATH_MAX], s_title[128], s_book_name[128];
 static char s_font_path[192];
 static char* s_text;
 static blk_t* s_blocks;
@@ -131,6 +132,9 @@ static const char* s_image_error;
 static char s_image_origin[224];
 static uint32_t s_file_size;
 static int s_px, s_turns, s_unsaved;
+static int64_t s_reading_tick_ms;
+static uint32_t s_reading_acc_ms;
+static bool s_excerpt_saved;
 static int64_t s_poll_ms, s_last_turn_ms, s_size_settle_ms, s_sensor_ms;
 static bool s_shake_enabled, s_sensor_on;
 static bool s_sensor_saved;
@@ -494,6 +498,7 @@ static void save_progress(void) {
         .px = (uint8_t)s_px, .pct = (uint8_t)percent(s_page),
         .last_open_s = 0,
     };
+    if (s_book_name[0]) reading_stats_set_last_book(s_book_name, p.pct);
     if (!pending->dirty || pending->value.file_size != p.file_size || pending->value.chapter != p.chapter ||
         pending->value.byte_off != p.byte_off || pending->value.px != p.px || pending->value.pct != p.pct) {
         pending->value = p;
@@ -569,7 +574,7 @@ static void draw_reader(uint8_t* fb, size_t page) {
         ui_text(fb, size_box.x + size_box.width - UI_PAD, size_box.y + 44, UI_PX_CAPTION,
                 size_hint, EPD_DRAW_ALIGN_RIGHT, false);
         const char* labels[] = {"目录", "字号 −", "字号 +", s_shake_enabled ? "晃动 开*" : "晃动 关*",
-                                "强刷", "书架"};
+                                "强刷", "书架", s_excerpt_saved ? "已摘录" : "摘录"};
         for (int i = 0; i < BOOK_TOOL_COUNT; ++i) draw_control(fb, tool_rect(i), labels[i], 200 + i);
     }
     ui_draw_menu_handle(fb, false);
@@ -912,6 +917,9 @@ static bool open_book(app_ctx_t* ctx, const char* path) {
         return false;
     }
     copy_text(s_path, sizeof(s_path), path);
+    const char* book_name = strrchr(path, '/');
+    copy_text(s_book_name, sizeof(s_book_name), book_name ? book_name + 1 : path);
+    s_excerpt_saved = false;
     s_file_size = (uint32_t)st.st_size;
     book_progress_t p = {0};
     bool resume = pending_restore(path, s_file_size, &p) || book_progress_load(path, s_file_size, &p);
@@ -1307,7 +1315,23 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
                 else if (i == 1 || i == 2) return resize_text(ctx, i == 1 ? -1 : 1);
                 else if (i == 3) { s_shake_enabled = !s_shake_enabled; app_settings_set_book_shake(s_shake_enabled); sensor_set(ctx, s_shake_enabled); }
                 else if (i == 4) return APP_REDRAW_FULL;
-                else { save_progress(); free_book(); s_view = SHELF; scan_shelf(ctx); }
+                else if (i == 5) { save_progress(); free_book(); s_view = SHELF; scan_shelf(ctx); }
+                else {
+                    size_t start = book_layout_page_start_offset(s_page);
+                    size_t end = s_page + 1 < book_layout_page_count()
+                        ? book_layout_page_start_offset(s_page + 1) : s_text_len;
+                    if (end > start && start < s_text_len) {
+                        if (end > s_text_len) end = s_text_len;
+                        size_t n = end - start;
+                        if (n > 300) n = 300;
+                        while (n && ((unsigned char)s_text[start + n] & 0xc0) == 0x80) --n;
+                        char excerpt[304];
+                        memcpy(excerpt, s_text + start, n);
+                        excerpt[n] = '\0';
+                        reading_stats_save_excerpt(s_book_name, excerpt);
+                        s_excerpt_saved = true;
+                    }
+                }
                 return APP_REDRAW_PAGE;
             }
             EpdRect track = progress_rect();
@@ -1387,6 +1411,9 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
 }
 static void on_enter(app_ctx_t* ctx) {
     s_resume_path[0] = 0;
+    s_reading_tick_ms = ctx->now_ms;
+    s_reading_acc_ms = 0;
+    s_excerpt_saved = false;
     ensure_prep();
     s_view = SHELF;
     ctx->leaf = 0;
@@ -1414,6 +1441,8 @@ static void book_on_exit(app_ctx_t* ctx) {
     s_resume_path[0] = 0;
     s_pressed_control = -1;
     save_progress();
+    reading_stats_add_seconds(s_reading_acc_ms / 1000);
+    s_reading_acc_ms = 0;
     sensor_set(ctx, false);
     free_book();
     free(s_shelf);
@@ -1617,6 +1646,17 @@ static app_redraw_t on_key_long(app_ctx_t* ctx, int key) {
 }
 static app_redraw_t on_tick(app_ctx_t* ctx) {
     if (ctx->consumed) return APP_REDRAW_NONE;
+    if (s_reading_tick_ms == 0) s_reading_tick_ms = ctx->now_ms;
+    int64_t elapsed = ctx->now_ms - s_reading_tick_ms;
+    s_reading_tick_ms = ctx->now_ms;
+    if (s_view == READING && s_text && elapsed > 0 && elapsed <= 5000) {
+        s_reading_acc_ms += (uint32_t)elapsed;
+        if (s_reading_acc_ms >= 60000) {
+            uint32_t minutes = s_reading_acc_ms / 60000;
+            reading_stats_add_seconds(minutes * 60);
+            s_reading_acc_ms -= minutes * 60000;
+        }
+    }
     if (s_save_failed && ctx->now_ms - s_save_retry_ms >= 15000) {
         s_save_retry_ms = ctx->now_ms;
         bool failed = s_save_failed;
