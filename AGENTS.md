@@ -46,8 +46,11 @@ idf.py build
 | `components/e0470_epaper_waveform/` | 面板波形与裁剪。`waveforms/*.h` 是数据表。/ Panel waveforms. |
 | `components/pwm_audio/` | PWM 音频（蜂鸣器底层之一）。/ PWM audio helper. |
 | `docs/CHANGELOG.md` | 按版本简述对用户可见的功能变化与修复。/ Brief user-visible changes and fixes by version. |
+| `docs/WEB_FLASHER.md` | 浏览器刷写的发布、部署、使用与排障说明。/ Browser flashing release, deployment, use and troubleshooting. |
+| `web/` | ESP Web Tools 安装页与固件清单；固件镜像和页面同源部署。/ ESP Web Tools installer and manifest; deploy the firmware image on the same origin as the page. |
+| `.github/workflows/release-firmware.yml` | 版本标签触发产品配置构建、合并镜像、GitHub Release 与 Pages 发布。/ Tag-triggered product build, merged image, GitHub Release and Pages deployment. |
 
-功能操作见三份 README；页面契约以本文及 `main/app/app.h` 为准。/ See the READMEs for feature usage; this file and `main/app/app.h` define the page contract.
+功能操作见三份 README；浏览器刷写流程见 `docs/WEB_FLASHER.md`；页面契约以本文及 `main/app/app.h` 为准。/ See the READMEs for feature usage and `docs/WEB_FLASHER.md` for browser flashing; this file and `main/app/app.h` define the page contract.
 
 ### 文档交付边界 / Documentation delivery boundary
 
@@ -151,6 +154,7 @@ A `冻结 / Frozen:` block is a decision, not a hint. Change the behavior only a
 - 面板 VCOM 存在 PMU 里。主机开机读一次，不写 ESP NVS，产品页不提供修改入口。标定页（`vcom_setup.c`）是未标定时的出厂拦住路径。/ VCOM lives in the PMU. Host reads once. No NVS copy. No product UI to edit it. `vcom_setup.c` is the factory gate when unset.
 - 不要写 SY7636A 的 VCOM / VLDO / 放电 / 延时 / VCOMCTL。电源页只读。/ Do not write SY7636A VCOM / VLDO / discharge / delay / VCOMCTL. Power page is read-only.
 - `sdkconfig.defaults` 的 120 MHz 时序依赖真机 Zbit flash。覆盖 HPM 表见 `read_pico_flash_hpm.c`。/ 120 MHz timing needs the onboard Zbit part. HPM override is `read_pico_flash_hpm.c`.
+- 浏览器发布固件必须使用 `sdkconfig.defaults`，不得使用仅编译检查的 `sdkconfig.ci`；`web/manifest.json` 的 ESP32-S3 合并镜像路径须与部署产物保持一致。/ Browser releases must use `sdkconfig.defaults`, never compile-only `sdkconfig.ci`; keep the ESP32-S3 merged image path in `web/manifest.json` aligned with the deployed artifact.
 - 不要改 `components/epdiy/**` 来“整理注释”。/ Do not touch `components/epdiy/**` for comment cleanup.
 - 不要手改 `main/font/fallback.h`、`main/font/stb_truetype.h`、`components/e0470_epaper_waveform/waveforms/*.h`。/ Do not hand-edit generated or vendored tables.
 - 不改 UI 字面量或日志字符串，除非任务明确要求。/ Do not change UI strings or log text unless asked.
