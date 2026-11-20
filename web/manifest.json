@@ -1,0 +1,16 @@
+{
+  "name": "小纸慢读 · Pico OS",
+  "version": "latest",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "./pico-os-merged.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}
