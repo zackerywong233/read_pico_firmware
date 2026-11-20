@@ -35,6 +35,7 @@ idf_component_register(
         "apps/app_home.c"
         "apps/app_personal.c"
         "apps/app_pico_home.c"
+        "apps/app_system_tools.c"
         "apps/app_refresh.c"
         "apps/app_reading.c"
         "apps/app_book.c"

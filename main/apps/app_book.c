@@ -5,22 +5,22 @@
  * 图书书架、阅读、目录与页内进度；文件解析和排版由book模块负责。
  * Book shelf, reader, TOC and progress; book modules own parsing and pagination.
  *
- * 冻结：Phase4b统一手势入口并接管三键为上页/工具条/下页；工具条保留强刷，长按中键或把手打开演示菜单。屏幕翻页在抬起提交，不画按下态。
+ * 冻结：Phase4b统一手势入口并接管三键为上页/工具条/下页；工具条保留强刷，长按中键或把手打开应用菜单。屏幕翻页在抬起提交，不画按下态。
  * 晃动实验默认关，只翻下一页；离页关闭AOI2并休眠。render只绘图。
  * 预渲染回调返回前收齐，避免菜单/锁屏绕过页内TTF锁。
  * 普通翻页每次整屏 GC16 定稿，清除上一页残影；其余局部交互仍可分区刷新。
- * 中键按下切工具条，持续按住500ms返回演示菜单（用户新增快捷出口）。
+ * 中键按下切工具条，持续按住500ms返回应用菜单（用户新增快捷出口）。
  * 用户授权基础管理：长按书架先看完整详情，清进度与删文件分别确认；失败保留待重试记录，不自动回收其他书进度。
  * 用户修订：单本管理为书架弹窗；管理页用于批量操作。分页和排序保留勾选，筛选/应用搜索及重扫清除勾选。
  * 失败进度仅按变更路径失效；删除后的清理重试保留到本次开机结束，不随切页释放。
  * 卡失效时先保存进度并关闭阅读资源，再由主循环回退字体；禁止自动续读失效挂载。
  * 用户修订：进入书架只询问续读，确认前不打开上次图书，避免大书阻塞书架。
  * 用户修订：图片点击后才加载，预览返回不改变正文分页；只缓存当前章节最近查看的一幅图，已读重复位置不冒充全书首次位置。
- * Frozen: Phase4b uses the shared gesture entry and owns previous/tools/next keys; the toolbar keeps full refresh and the middle-key hold or handle opens the demo menu. Screen turns commit on release without pressed decoration.
+ * Frozen: Phase4b uses the shared gesture entry and owns previous/tools/next keys; the toolbar keeps full refresh and the middle-key hold or handle opens the app menu. Screen turns commit on release without pressed decoration.
  * Shake is experimental, off by default, forward only; exit disables AOI2 and sleeps it. Render only paints.
  * Join preparation before returning callbacks so menus/lock cannot race the page-local TTF lock.
  * Every ordinary page turn settles the whole screen with GC16 to clear page ghosting; other local interactions may still refresh regions.
- * Middle-key press toggles tools; holding for 500ms opens the demo menu, as requested.
+ * Middle-key press toggles tools; holding for 500ms opens the app menu, as requested.
  * User-authorized management shows full details before separate clear/delete confirmations; retain failed saves for retry without pruning other books.
  * User revision: single-book actions use a shelf dialog; full management is for batches. Paging/sorting preserve selection; filtering/applied search and rescanning clear it.
  * Invalidate failed progress only for changed paths; retain deletion cleanup retries across page exits for this boot.
@@ -564,7 +564,7 @@ static void draw_reader(uint8_t* fb, size_t page) {
         ui_text(fb, UI_MARGIN, panel.y + 40, UI_PX_CAPTION,
                 "左右点按/滑动 · 正文长按目录", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, UI_MARGIN, panel.y + 72, UI_PX_CAPTION,
-                "中键长按：演示菜单", EPD_DRAW_ALIGN_LEFT, false);
+                "中键长按：应用菜单", EPD_DRAW_ALIGN_LEFT, false);
         EpdRect size_box = {ui_content_right() - 180, panel.y + 8, 180, 84};
         ui_draw_round_rect(fb, size_box, UI_CHIP_RADIUS, UI_GRAY_BLACK);
         ui_text(fb, size_box.x + size_box.width - UI_PAD, size_box.y + 8, UI_PX_CAPTION,

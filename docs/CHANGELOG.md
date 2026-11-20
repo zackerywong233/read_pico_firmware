@@ -2,6 +2,8 @@
 
 ## 2026-11-20
 
+- Pico OS 一级菜单现在突出图书、传书、看板、设备状态和自检；刷新、传感器、存储等开发诊断统一收进“系统工具”，不再把 Pico OS 桌面与硬件演示页并列呈现。
+  The Pico OS root menu now foregrounds books, transfer, dashboard, device status and self-test. Refresh, sensor, storage and other development diagnostics are grouped under System Tools instead of appearing beside the launcher as peer demo pages.
 - 锁屏默认改为 PMU 软睡眠，短按侧边电源键即可开机；显式关机档仍需长按开机。图书每次翻页及应用/菜单切换使用整屏 GC16，减少上一页残影。
   Default lock now uses PMU soft sleep, so a short power-key press boots the device; explicit power-off still requires a long press. Book turns and app/menu transitions use full-screen GC16 to reduce prior-page ghosting.
 - 修正浏览器刷机页的连接排查说明，移除 Read Pico 上不存在的 BOOT 键操作。

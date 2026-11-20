@@ -28,10 +28,9 @@ This document is for **first-time human developers and AI agents**. After readin
 ## 1. 项目定位 / What this is
 
 - **产品**：小纸 Pico（英文/日文文案：Read Pico；型号 RDP-G01-W；内部代号 Read/0，仅限内部使用，不得出现在对外文案）。深圳 MindReset 出品的 4.7 英寸墨水屏开发板。
-- **本仓库**：随板出厂的**官方示例 / 出厂演示固件**。它有两个角色：
-  1. 用户通过功能菜单逐项检查硬件（屏、触摸、传感器、电源、TF 卡、蜂鸣器）。
-  2. 开发者以它的板级支持包（BSP）与芯片驱动为起点写自己的固件。
-- **不是**：通用阅读器产品固件。页面是"演示 + 自检"，不追求功能完备。
+- **本仓库**：随板运行的 Pico OS 固件，提供图书、传书、看板、设备状态与设备自检等原生应用。
+- **系统工具**：硬件演示和开发诊断页统一收纳在二级入口，帮助检查屏、触摸、传感器、电源、TF 卡和蜂鸣器；BSP 与芯片驱动也可独立复用。
+- **产品边界**：这是面向小纸 Pico 开发板的固件，不声称是通用电子书阅读器平台；功能与硬件支持以 README 和应用说明为准。
 - **许可**：主体 Apache-2.0；`components/epdiy` 为 LGPL-3.0-or-later（上游 epdiy v2.0.0 的裁剪 fork）；内置字体 ChillDuanSans 为 SIL OFL-1.1。复用/分发前看各组件 `LICENSE`。
 - **仓库关系**：上游为 `MindReset/read_pico_firmware`。在 fork 上工作时把上游加为 `upstream` 远端；向上游提 PR 前请阅读 [CONTRIBUTING.md](../CONTRIBUTING.md)。
 - **配套生态**：Dot Open Platform <https://github.com/MindReset/dot_open_platform>。
@@ -208,7 +207,7 @@ idf.py size
 
 | 我想… | 去这里 |
 | --- | --- |
-| 加一个演示页 | `main/apps/app_xxx.c` + [main/app/app_registry.c](../main/app/app_registry.c) `s_apps[]` + [main/CMakeLists.txt](../main/CMakeLists.txt) `SRCS` |
+| 加一个一级应用 | `main/apps/app_xxx.c` + [main/app/app_registry.c](../main/app/app_registry.c) `s_apps[]` + [main/CMakeLists.txt](../main/CMakeLists.txt) `SRCS` |
 | 改菜单顺序 | [main/app/app_registry.c](../main/app/app_registry.c) |
 | 改刷新档位（GL16/GC16/DU、多少次软刷后压一次 GC16） | [main/app/app_config.h](../main/app/app_config.h) |
 | 改推屏、pclk、轨道空闲断电 | [main/display.c](../main/display.c) |
@@ -321,7 +320,7 @@ flowchart TD
 
 ---
 
-## 7. 演示页与冻结决策速查 / Demo pages & Frozen decisions
+## 7. 应用页与冻结决策速查 / App pages & Frozen decisions
 
 菜单顺序 = [main/app/app_registry.c](../main/app/app_registry.c) `s_apps[]`。每页文件头都有 `冻结 / Frozen:` 段，**改行为前必须先改那段并说明决策为何变化**。摘要（以文件头为准）：
 
@@ -346,7 +345,7 @@ flowchart TD
 
 ## 8. 常见任务操作手册 / Playbooks
 
-### 8.1 加一个演示页
+### 8.1 加一个应用页
 
 1. 复制一个结构相近的页（读数类抄 `app_power.c`，交互类抄 `app_sd.c`）到 `main/apps/app_xxx.c`。
 2. 写文件头（SPDX + 中文/English 职责 + 冻结/Frozen），只实现需要的回调，末尾导出一个 `const app_desc_t app_xxx`。
@@ -599,8 +598,8 @@ Read AGENTS.md, then docs/ONBOARDING.md, then docs/HANDOFF.md. Do not duplicate 
 
 ### 图书与传书的契约扩展 / Book and transfer contract extensions
 
-`owns_keys` 只在菜单关闭时接管三键；图书工具条提供强刷，中键长按或把手打开演示菜单。传书组件不依赖页面；由 `app_transfer` 注入存储根、限额、容量回调。文件提交、删除或进度清理重试后通过书源 revision 请求下次进图书时重扫；文件变更回调只清对应路径进度。传书与阅读互斥，停止HTTP并等待退出后才切图书页，进度API由调用端串行化。
-`owns_keys` captures three keys outside the menu; Books provides toolbar refresh; holding the middle key or using the handle opens the demo menu. Transfer receives storage policy from its page. File commits, deletions and metadata retries invalidate the shelf through a storage revision; an injected callback clears progress only for the affected path. Transfer and reading are exclusive; HTTP is stopped and joined before entering Books, serializing progress API callers.
+`owns_keys` 只在菜单关闭时接管三键；图书工具条提供强刷，中键长按或把手打开应用菜单。传书组件不依赖页面；由 `app_transfer` 注入存储根、限额、容量回调。文件提交、删除或进度清理重试后通过书源 revision 请求下次进图书时重扫；文件变更回调只清对应路径进度。传书与阅读互斥，停止HTTP并等待退出后才切图书页，进度API由调用端串行化。
+`owns_keys` captures three keys outside the menu; Books provides toolbar refresh; holding the middle key or using the handle opens the app menu. Transfer receives storage policy from its page. File commits, deletions and metadata retries invalidate the shelf through a storage revision; an injected callback clears progress only for the affected path. Transfer and reading are exclusive; HTTP is stopped and joined before entering Books, serializing progress API callers.
 
 
 传书页通过 `display_set_bulk_io` 在页内提高扫描预填余量，退出恢复默认；大文件进度用低频FOLLOW DU，结束/离页清残影。欠载恢复必须保留目标前缓冲，不能调用 `epd_hl_set_all_white` 丢掉整页。相关回归：`tools/run_display_host_test.sh`。

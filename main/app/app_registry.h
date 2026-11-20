@@ -2,10 +2,10 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * 全部 demo 页的清单。菜单、主循环、开机页都从这里取，不再有 UI_PAGE_* 数字常量。
+ * Pico OS 一级应用的清单。菜单与主循环从这里取；系统工具单独收纳底层诊断页。
  *
- * Table of every demo page. Menu, loop, and boot page all read from here;
- * there are no UI_PAGE_* numeric constants.
+ * Pico OS root app table. Menu and loop read from here; system tools group
+ * low-level diagnostic pages separately.
  */
 
 #pragma once

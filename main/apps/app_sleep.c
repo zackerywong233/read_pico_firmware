@@ -230,7 +230,7 @@ static bool sleep_ui_same(const sleep_ui_t* a, const sleep_ui_t* b) {
         && a->wake_on_charge == b->wake_on_charge && a->pmu_ok == b->pmu_ok;
 }
 
-// 试睡先整屏定稿，避免客人把静止的演示页当成死机。/ Settle the whole screen before a trial sleep so a still demo page is not taken for a hang.
+// 试睡先整屏定稿，避免客人把静止的诊断页当成死机。/ Settle the whole screen before a trial sleep so a still diagnostic page is not taken for a hang.
 static void sleep_show_notice(app_ctx_t* ctx, app_sleep_mode_t mode) {
     const char* zh;
     const char* en;

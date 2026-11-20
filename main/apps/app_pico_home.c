@@ -36,7 +36,7 @@ static EpdRect tile_rect(int index) {
 
 static const char* tile_title(int index) {
     static const char* const titles[HOME_TILE_COUNT] = {
-        "图书", "Wi-Fi 传输", "设备状态", "全部应用"
+        "图书", "Wi-Fi 传输", "设备状态", "应用与工具"
     };
     return titles[index];
 }
@@ -44,7 +44,7 @@ static const char* tile_title(int index) {
 static const char* tile_detail(int index) {
     static const char* const details[HOME_TILE_COUNT] = {
         "继续阅读 TXT / EPUB", "连接网络，同步文件",
-        "电量、存储与系统信息", "打开应用与工具列表"
+        "电量、存储与系统信息", "打开 Pico OS 应用菜单"
     };
     return details[index];
 }

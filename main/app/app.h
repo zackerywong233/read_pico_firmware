@@ -2,17 +2,17 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * demo 页的统一接口。每个页面是一个 app_desc_t，放在 main/apps/ 下自己的文件里，
+ * 固件应用页的统一接口。每个页面是一个 app_desc_t，放在 main/apps/ 下自己的文件里，
  * 绘制、命中、轮询和页内状态都封在那一个文件中；app_loop.c 只按这套回调调度，
  * 加一个页面不必再改主循环。
  *
- * Shared page contract. Each page is an app_desc_t in its own main/apps/ file.
+ * Shared firmware app contract. Each page is an app_desc_t in its own main/apps/ file.
  * Draw, hit-test, poll and page state stay there. app_loop.c only dispatches
  * these callbacks; adding a page does not touch the loop.
  *
  * 冻结：手势回调替代旧触摸回调；三键接管页须保留强刷与菜单出口。
  * Frozen: Gesture callbacks replace legacy touch callbacks. Pages owning keys
- * must retain full refresh and menu exits.
+ * must retain full refresh and app-menu exits.
  * 冻结：返回恢复最近切页来源，菜单来源保留菜单位置。
  * Frozen: Return restores the latest page origin, preserving its menu position.
  */

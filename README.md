@@ -1,4 +1,4 @@
-# Read Pico Demo Firmware
+# Read Pico Firmware · Pico OS
 
 **Languages:** [English](./README.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja-JP.md)
 
@@ -10,15 +10,12 @@
 ![Target](https://img.shields.io/badge/target-ESP32--S3-E7352C?style=for-the-badge&logo=espressif&logoColor=white)
 
 Read Pico is an ESP32-S3 development board in the Read series with a 4.7" monochrome e-paper panel,
-made by Shenzhen MindReset Technology Co., Ltd. for developers building open-source
-e-paper firmware. This repository contains the factory firmware shipped with the board.
+made by Shenzhen MindReset Technology Co., Ltd. This repository provides Pico OS, the firmware
+that runs on the board, with native apps for books, WiFi transfer, the device dashboard and system status.
 
-The firmware provides separate demo and diagnostic pages for the display, touch,
-accelerometer, power, keys, TF card, fonts, sleep and wake. Use them to check the
-hardware and as reference implementations for your own firmware.
-
-The board support, PMU protocol host and chip drivers are independent components
-that can be reused. This is a hardware demo, not a finished reader product.
+Device self-test stays in the root app menu. Lower-level display, touch, sensor, power, key,
+storage, font and sleep diagnostics are grouped under System Tools. The board support package,
+PMU protocol host and chip drivers remain reusable foundations for extending Pico OS.
 
 Agent-facing layout, `app_desc_t` contract, glossary and comment style are in
 [AGENTS.md](AGENTS.md).
@@ -68,31 +65,28 @@ The panel VCOM is calibrated at the factory and stored in the PMU. The firmware
 reads it once at boot to configure the driver; it is neither stored locally nor
 user-editable.
 
-## Pages
+## Pico OS Apps
 
-The function menu lists pages in the order defined in
-[main/app/app_registry.c](main/app/app_registry.c).
+Pico OS boots to its launcher. The root app menu presents daily features, device status,
+self-test and a System Tools entry; hardware diagnostics are one level deeper.
 
-| Page | Content |
+| Root app | Content |
 | --- | --- |
-| Overview | Boot I2C scan, IDs, battery and charging status, build time |
-| EPD Refresh | Full-screen GC16, partial DU, 16-gray and fast 8-gray ladders, each with measured refresh time |
-| Reading | Built-in text, DU / GL16 / GC16 page turns, font size adjustment in the header |
-| Touch | Two-point tracking with continuous DU, full-page settle on lift, deep sleep and automatic wake |
-| Accel | Live three-axis readings and tilt, tap count, orientation |
-| IMU Lab | Sampling parameters and self-test |
-| Power | Battery voltage, level and charging status; EPD rails, temperature, faults and read-only SY7636A configuration |
-| PMU | Protocol status, events, configuration and commands |
-| Power Key | `key_raw_events`, press/release levels and DOWN/UP/SHORT/LONG events |
-| Sleep | Default lock uses soft sleep and wakes on a short power-key press; light sleep can wake by key or pickup, while explicit power-off requires a long press to boot |
-| Storage | TF card capacity and mount status, remount, format and buzzer |
-| Font | Select TTF files from the card, preview typesetting and cycle font weight |
-| IOE | Port-0 levels and interrupts, touch-reset pulse from the bottom bar |
-| Device | Device probes and command ACKs; power-cut items are recorded in the backend only |
-| Books | UTF-8 / GBK TXT and EPUB from TF or internal storage, chapters, font size and per-book progress; every page turn uses full-screen GC16 to clear ghosting; swipe to turn, hold text for TOC and hold a shelf row for details, progress reset or confirmed deletion; filter storage sources, sort by name or recent reading, and search by pinyin, initials or English; single-book actions use a popup, while management supports batch selection, progress reset/deletion and rescan; experimental shake-to-turn defaults off. EPUB navigation supports NCX and nav documents. |
-| Transfer | Device hotspot or existing WiFi, with browser TXT/EPUB upload and complete TTF font uploads to TF; TF card preferred, internal storage limited to 1 MB per file. Scan the hotspot QR to join, or select a 2.4 GHz network and enter its password on the touchscreen. Web provisioning remains available. The browser lists and searches books in the current upload destination, confirms replacement or deletion, and supports upload cancellation and retry. Saved WiFi can be forgotten on the device. Leaving the page stops networking. |
+| Books | UTF-8 / GBK TXT and EPUB from TF or internal storage; chapters, font size, per-book progress, shelf filters/sorting/search and management. Each page turn uses full-screen GC16 to clear ghosting. EPUB navigation supports NCX and nav documents. |
+| Transfer | Upload TXT/EPUB and complete TTF fonts to TF over the device hotspot or existing WiFi; touchscreen provisioning, QR connection, browser book management, confirmed replacement/deletion, cancellation and retry. Networking stops on exit. |
+| Device Status | Boot I2C scan, IDs, battery and charging status, build time. |
+| Dashboard | Optional date, battery, recent reading and personal text; lock-screen theme. |
+| Device Self-Test | Device probes and command ACKs; power-cut items are recorded in the backend only. |
+| System Tools | Open the hardware diagnostics and development helpers below. |
 
-In Books, KEY1 / KEY2 / KEY3 select previous page / toolbar / next page. The toolbar includes full refresh. Hold KEY2 for 500 ms to open the demo menu. Other pages retain KEY2 full GC16 refresh and KEY3 menu. Menu rows select on release; slide away to cancel.
+System Tools contains EPD refresh, built-in reading, touch, accelerometer and IMU lab,
+power, PMU, key events, sleep/wake, storage and buzzer, font management and IO expander.
+The sleep tool covers deep sleep, light sleep and power-off; the default lock uses soft
+sleep and wakes on a short power-key press, while explicit power-off requires a long press.
+
+In Books, KEY1 / KEY2 / KEY3 select previous page / toolbar / next page. The toolbar
+includes full refresh. Hold KEY2 for 500 ms to open the app menu. Other pages retain KEY2
+full GC16 refresh and KEY3 menu. Menu rows select on release; slide away to cancel.
 
 ## Repository Layout
 
@@ -100,7 +94,7 @@ In Books, KEY1 / KEY2 / KEY3 select previous page / toolbar / next page. The too
 main/
   app_main.c        Boot wiring, then app_loop
   app/              App interface (app.h), registry and event loop
-  apps/             One demo per file, exporting only app_desc_t
+  apps/             Pico OS apps and system tools, each exporting app_desc_t
   ui/               ui_kit drawing primitives and layout constants; ui_menu two-level menu
   font/             stb_truetype glyph cache
   factory/          Device self-test and factory VCOM calibration
@@ -116,9 +110,9 @@ assets/             Image sources for main/assets/*.bin
 tools/              Font and image conversion scripts
 ```
 
-To add a demo page, create a file in `main/apps/`, implement the `app_desc_t`
-callbacks you need and add it to the menu table in `main/app/app_registry.c`.
-The main loop stays untouched.
+To add a root app, create a page in `main/apps/` and add it to
+`main/app/app_registry.c`. Add hardware diagnostics to the tool table in
+`main/apps/app_system_tools.c`. The main loop stays untouched.
 
 ## Pinout
 

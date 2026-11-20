@@ -32,7 +32,7 @@ idf.py build
 | `main/reading_stats.c` | 持久化累计阅读时间、最近摘录与最近图书进度。/ Persist cumulative reading time, saved excerpt and recent book progress. |
 | `main/app/app.h` | `app_desc_t` / `app_ctx_t` / `app_redraw_t` 契约。/ Page contract. |
 | `main/app/app_loop.c` | 与页面无关的事件循环：触摸去抖、三键与菜单把手、切页、刷屏、锁屏、SD 字体延迟加载。/ Shared event loop. |
-| `main/app/app_registry.c` | 菜单顺序。加页只改这张表。/ Menu table. |
+| `main/app/app_registry.c` | 一级应用菜单顺序。底层工具由 `app_system_tools.c` 汇总。/ Root app menu order; low-level tools are grouped by `app_system_tools.c`. |
 | `main/app/app_config.h` | 均衡 / ALL_DU 刷新档位。/ Refresh profile. |
 | `main/ui/` | `ui_kit` 排版常量与绘制原语；`ui_menu` 两层菜单。页面互不引用。/ Shared drawing; pages do not include each other. |
 | `main/font/` | stb_truetype 字形缓存。`fallback.h` 是生成位图，勿手改。/ Glyph cache. Do not edit `fallback.h` by hand. |
@@ -61,35 +61,26 @@ Deliver implementation, reproducible tests, feature documentation and necessary 
 计划、检查点、过程审查、验收结果和调试日志在 `docs/local/` 或被忽略的构建目录内部闭环，不加入提交。长期有效的行为与限制整理进对应功能文档，不要求读者查内部计划。只有需要交接未完功能或责任时才按 `docs/HANDOFF.md` 提供最小必要摘要；本机账本仍不入库。
 Keep plans, checkpoints, review records, acceptance results and debug logs in ignored `docs/local/` or build directories. Put lasting behavior and limits in feature documentation without dependencies on internal plans. Use `docs/HANDOFF.md` for the minimal necessary handoff of unfinished work or responsibility; the local ledger remains untracked.
 
-### demo 页 / Demo pages
+### 应用页与系统工具 / App pages and system tools
 
-每个文件只导出 `app_desc_t`。顺序与 `app_registry.c` 一致。
+每个文件只导出 `app_desc_t`。一级应用顺序与 `app_registry.c` 一致；底层硬件诊断由 `app_system_tools.c` 的工具表索引。
 
-One file, one `app_desc_t`. Order matches `app_registry.c`.
+One file, one `app_desc_t`. Root app order matches `app_registry.c`; low-level diagnostics are indexed by the tool table in `app_system_tools.c`.
 
-| 文件 / File | 演示 / Demo | 依赖 / Depends on |
+| 文件 / File | 功能 / Role | 依赖 / Depends on |
 | --- | --- | --- |
-| `app_personal.c` | 默认看板：日期、电池、最近阅读与 TF 卡文字；可选择锁屏主题。/ Default dashboard with date, battery, recent reading and SD text; choose lock-screen style. | `settings`, `reading_stats`, `read_pico_pmu`, `read_pico_sd` |
-| `app_pico_home.c` | Pico OS 启动页与入口。/ Pico OS launcher and entry points. | `ui_kit` |
-| `app_home.c` | 概览：I2C 普查、识别码、电池、构建时间。/ Overview. | `read_pico`, `read_pico_pmu` |
-| `app_refresh.c` | GC16 / DU / 灰阶梯子与耗时。/ Refresh matrix. | `epdiy`, `e0470_epaper_waveform` |
-| `app_reading.c` | 内置正文翻页。/ Reading demo. | `ttf_font` |
-| `app_touch.c` | 两点跟手连续 DU、深睡唤醒。/ Touch + continuous DU. | `cst836u`, `continuous_du` |
-| `app_axis.c` | 读数页 Live/Tap/Orient 与诊断页 Setup/Event/FIFO/Test。/ IMU pages. | `sc7a20h` |
-| `app_power.c` | 电池与 SY7636A 只读。/ Battery + rails. | `read_pico_pmu`, `sy7636a` |
-| `app_pmu.c` | CW32 协议五视图。/ Protocol views. | `read_pico_pmu` |
-| `app_key.c` | 电源键原始事件。/ Power-key events. | `read_pico_pmu` |
-| `app_sleep.c` | 浅睡 / 深睡 / 关机。/ Sleep modes. | `sleep`, `read_pico_pmu`, `sc7a20h` |
-| `app_sd.c` | TF 卡与蜂鸣器。/ Card + buzzer. | `read_pico_sd`, `read_pico_buzzer` |
-| `app_font_pick.c` | 卡上 TTF 列表与字重。/ Font picker. | `ttf_font` |
-| `app_ioe.c` | FCA9555 Port-0。/ Expander pins. | `fca9555` |
-| `app_selftest.c` | 设备功能自检入口。/ Device self-test UI. | `pmu_selftest` |
-| `app_book.c` | TXT / EPUB 书架、目录、字号与逐书进度；晃动翻页实验默认关。/ TXT / EPUB shelf, TOC, size and per-book progress; experimental shake defaults off. | `book_*`, `ttf_font` |
-| `app_transfer.c` | 设备热点/已有 WiFi 传 TXT/EPUB 与 TF 卡 TTF 字体，触屏/网页配网与热点二维码，离页停止；停留期间不计空闲自动休眠；停止按钮返回进入前的位置。/ AP/STA book and TF font upload with touchscreen/web provisioning and hotspot QR; stops on exit; idle auto-sleep does not run while the page is current; the stop button returns to the entry origin. | `read_pico_transfer`, `book_store` |
+| `app_pico_home.c` | Pico OS 默认桌面与日常应用入口。/ Pico OS launcher and daily app entry points. | `ui_kit` |
+| `app_book.c` | 一级应用：TXT / EPUB 书架、目录、字号与逐书进度。/ Root app: TXT / EPUB shelf, TOC, size and progress. | `book_*`, `ttf_font` |
+| `app_transfer.c` | 一级应用：设备热点/已有 WiFi 传书与 TF 字体上传。/ Root app: WiFi book and TF font transfer. | `read_pico_transfer`, `book_store` |
+| `app_home.c` | 一级应用：I2C 普查、识别码、电池、构建时间。/ Root app: device and system status. | `read_pico`, `read_pico_pmu` |
+| `app_personal.c` | 一级应用：个人看板与锁屏主题。/ Root app: personal dashboard and lock-screen theme. | `settings`, `reading_stats`, `read_pico_pmu`, `read_pico_sd` |
+| `app_selftest.c` | 一级应用：设备探活与 PMU 命令 ACK 自检。/ Root app: device probe and PMU command self-test. | `pmu_selftest` |
+| `app_system_tools.c` | 二级入口：集中导航至硬件诊断与开发辅助页。/ Nested index for hardware diagnostics and development helpers. | tool app descriptors |
+| 其余 `app_*.c` / Other `app_*.c` | 系统工具中的刷新、阅读、触摸、传感器、电源、睡眠、存储、字体与 IOE 页面。/ Refresh, reading, touch, sensor, power, sleep, storage, font and IOE tools. | varies |
 
-加页：在 `main/apps/` 新建文件，实现需要的回调，把它加入 `app_registry.c` 的 `s_apps[]`。不要改 `app_loop.c`。
+新增一级应用：把页面加入 `app_registry.c`；新增硬件诊断：把页面加入 `app_system_tools.c` 的工具表。不要改 `app_loop.c`。
 
-To add a page: new file in `main/apps/`, implement the callbacks you need, append it to `s_apps[]` in `app_registry.c`. Leave `app_loop.c` alone.
+Add root apps to `app_registry.c`; add hardware diagnostics to the tool table in `app_system_tools.c`. Leave `app_loop.c` alone.
 
 ## `app_desc_t` 契约 / Contract
 
@@ -115,7 +106,7 @@ Defined in [`main/app/app.h`](main/app/app.h). The loop presents via `app_presen
 - `on_touch()` / `on_gesture()` / `on_key()` / `on_tick()`：可有副作用，用返回值要刷屏。/ Side effects OK; return the redraw.
 - `on_key_long()` 可选：仅接管三键的页面在同键单指保持500ms后触发一次，原按下动作先执行；滑出、多点、读错、睡眠、字体重载或切页取消。/ Optional owned-key hold callback fires once at 500ms after the normal press; leaving, multitouch, read errors, sleep, font reload and page switches cancel.
 - `on_gesture()` 可选；提供后不再接收 `on_touch()`。主循环负责识别与全局中断取消，页面解释动作。/ Optional gesture callback replaces `on_touch`; the loop recognizes and cancels, the page interprets.
-- `on_key()` 默认只收 `UI_KEY_1`；`owns_keys` 页面在菜单关闭时接收三键，并须提供强刷和演示菜单出口。/ Normally KEY1 only; `owns_keys` pages receive all three outside the menu and must expose full refresh and the demo menu.
+- `on_key()` 默认只收 `UI_KEY_1`；`owns_keys` 页面在菜单关闭时接收三键，并须提供强刷和应用菜单出口。/ Normally KEY1 only; `owns_keys` pages receive all three outside the menu and must expose full refresh and the app menu.
 
 标志：
 

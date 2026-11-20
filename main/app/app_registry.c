@@ -2,9 +2,14 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * 全部 demo 页的清单。菜单顺序。加页只改这张表。
+ * Pico OS 一级应用与系统工具入口。主菜单顺序在这里维护。
  *
- * Demo page table. Menu order lives here; adding a page only changes this list.
+ * Pico OS top-level apps and system tools entry. The root menu order lives here.
+ *
+ * 冻结：一级菜单突出固件原生应用与设备自检；硬件演示和开发诊断统一从系统工具进入，避免 Pico OS 被呈现为众多演示页之一。
+ * Frozen: The root menu foregrounds native firmware apps and device self-test;
+ * hardware demos and development diagnostics live under System Tools so Pico OS
+ * is not presented as one item among a flat list of demos.
  */
 
 #include "app_registry.h"
@@ -27,27 +32,17 @@ extern const app_desc_t app_ioe;
 extern const app_desc_t app_selftest;
 extern const app_desc_t app_book;
 extern const app_desc_t app_transfer;
+extern const app_desc_t app_system_tools;
 
-// 一份菜单，相近的页挨着排，由 ui_menu 按页翻。/ One menu, similar pages together; ui_menu pages through it.
+// 一级只列日常功能、自检和系统工具入口；硬件诊断由工具页继续进入。
+// Keep daily functions, self-test and the system tools entry at the root; diagnostics live one level deeper.
 static const app_desc_t* const s_apps[] = {
-    &app_personal,
-    &app_pico_home,
-    &app_home,
-    &app_refresh,
-    &app_reading,
-    &app_touch,
-    &app_axis,
-    &app_axis_lab,
-    &app_power,
-    &app_pmu,
-    &app_key,
-    &app_sleep,
-    &app_sd,
-    &app_font_pick,
-    &app_ioe,
-    &app_selftest,
     &app_book,
     &app_transfer,
+    &app_home,
+    &app_personal,
+    &app_selftest,
+    &app_system_tools,
 };
 
 #define APP_COUNT ((int)(sizeof(s_apps) / sizeof(s_apps[0])))
