@@ -25,6 +25,10 @@ int app_index_of(const app_desc_t* app);
 const app_desc_t* app_home_page(void);
 const app_desc_t* app_selftest_page(void);
 
+/// 开发者工具专用清单，不进入日常应用菜单。/ Diagnostic pages hidden from the daily app menu.
+int app_tool_count(void);
+const app_desc_t* app_tool_at(int index);
+
 #ifdef __cplusplus
 }
 #endif

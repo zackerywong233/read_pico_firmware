@@ -26,11 +26,18 @@ extern const app_desc_t app_ioe;
 extern const app_desc_t app_selftest;
 extern const app_desc_t app_book;
 extern const app_desc_t app_transfer;
+extern const app_desc_t app_tools;
 
 // 一份菜单，相近的页挨着排，由 ui_menu 按页翻。/ One menu, similar pages together; ui_menu pages through it.
 static const app_desc_t* const s_apps[] = {
-    &app_pico_home,
+    &app_book,
+    &app_transfer,
     &app_home,
+    &app_font_pick,
+    &app_tools,
+};
+
+static const app_desc_t* const s_tools[] = {
     &app_refresh,
     &app_reading,
     &app_touch,
@@ -41,11 +48,8 @@ static const app_desc_t* const s_apps[] = {
     &app_key,
     &app_sleep,
     &app_sd,
-    &app_font_pick,
     &app_ioe,
     &app_selftest,
-    &app_book,
-    &app_transfer,
 };
 
 #define APP_COUNT ((int)(sizeof(s_apps) / sizeof(s_apps[0])))
@@ -72,4 +76,13 @@ const app_desc_t* app_home_page(void) {
 
 const app_desc_t* app_selftest_page(void) {
     return &app_selftest;
+}
+
+int app_tool_count(void) {
+    return (int)(sizeof(s_tools) / sizeof(s_tools[0]));
+}
+
+const app_desc_t* app_tool_at(int index) {
+    if (index < 0 || index >= app_tool_count()) return NULL;
+    return s_tools[index];
 }
