@@ -121,7 +121,7 @@ Defined in [`main/app/app.h`](main/app/app.h). The loop presents via `app_presen
 
 - `holds_pmu`：长时间独占 PMU（自检）。主循环的锁屏按键轮询让路。/ Page owns the PMU; lock-key poll yields.
 - `owns_keys`：接管三键；不影响菜单打开时的全局键和菜单把手。/ Own all three keys outside the menu; global menu keys and the handle remain.
-- `enter_full`：进页走 `APP_REDRAW_FULL`，避免差分刷留边。/ Enter with a full refresh.
+- 页面切换与菜单打开/返回统一走整屏 GC16；图书每次翻页整屏 GC16。/ App switches, menu open/return and each book turn use full-screen GC16.
 
 `app_ctx_t.request_app` 非空时，主循环在本轮末尾切页；`request_menu` 请求打开根菜单。同时设置时切页优先。/ At tick end, `request_app` switches pages and `request_menu` opens the root menu; a page request takes priority.
 

@@ -158,7 +158,7 @@ static void switch_to(
     if ((*current)->on_exit != NULL) (*current)->on_exit(ctx);
     *current = next;
     if (next->on_enter != NULL) next->on_enter(ctx);
-    app_present(ctx, next, next->enter_full ? APP_REDRAW_FULL : APP_REDRAW_PAGE);
+    app_present(ctx, next, APP_REDRAW_FULL);
     ESP_LOGI(TAG, "page -> %s", next->title);
 }
 
@@ -169,7 +169,7 @@ static void present_menu(app_ctx_t* ctx, const app_desc_t* current, int leaf, me
         guard_draw_result(ctx->hl, update_display_white(ctx->hl));
     }
     ui_draw_menu_page(ctx->fb, current, leaf);
-    guard_draw_result(ctx->hl, update_display_mode(ctx->hl, APP_PAGE_REFRESH_MODE));
+    guard_draw_result(ctx->hl, update_display_full(ctx->hl));
 }
 
 // 空槽常带着抬起事件或残留坐标，不能进页面看到的快照；抬手后保留最后一次位置。
@@ -389,7 +389,7 @@ void app_loop_run(const app_loop_config_t* config) {
                 if (menu_open) {
                     menu_leaf = ui_menu_leaf_for_app(current);
                     present_menu(&ctx, current, menu_leaf, &feedback);
-                } else app_present(&ctx, current, APP_REDRAW_PAGE);
+                } else app_present(&ctx, current, APP_REDRAW_FULL);
             } else if (key >= 0 && menu_open) {
                 int next = menu_leaf + (key == UI_KEY_1 ? -1 : 1);
                 if (next >= 0 && next < ui_menu_leaf_count()) {
@@ -544,7 +544,7 @@ void app_loop_run(const app_loop_config_t* config) {
                     ctx.leaf = return_leaf;
                 }
                 if (menu_open) present_menu(&ctx, current, menu_leaf, &feedback);
-                else app_present(&ctx, current, APP_REDRAW_PAGE);
+                else app_present(&ctx, current, APP_REDRAW_FULL);
             } else if (next) {
                 if (next != current) {
                     return_app = current;

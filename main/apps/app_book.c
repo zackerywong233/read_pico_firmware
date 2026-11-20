@@ -8,7 +8,7 @@
  * 冻结：Phase4b统一手势入口并接管三键为上页/工具条/下页；工具条保留强刷，长按中键或把手打开演示菜单。屏幕翻页在抬起提交，不画按下态。
  * 晃动实验默认关，只翻下一页；离页关闭AOI2并休眠。render只绘图。
  * 预渲染回调返回前收齐，避免菜单/锁屏绕过页内TTF锁。
- * 普通翻页正文与页脚分区刷新；页脚只驱动变化像素，整屏强刷仍清全屏。
+ * 普通翻页每次整屏 GC16 定稿，清除上一页残影；其余局部交互仍可分区刷新。
  * 中键按下切工具条，持续按住500ms返回演示菜单（用户新增快捷出口）。
  * 用户授权基础管理：长按书架先看完整详情，清进度与删文件分别确认；失败保留待重试记录，不自动回收其他书进度。
  * 用户修订：单本管理为书架弹窗；管理页用于批量操作。分页和排序保留勾选，筛选/应用搜索及重扫清除勾选。
@@ -19,7 +19,7 @@
  * Frozen: Phase4b uses the shared gesture entry and owns previous/tools/next keys; the toolbar keeps full refresh and the middle-key hold or handle opens the demo menu. Screen turns commit on release without pressed decoration.
  * Shake is experimental, off by default, forward only; exit disables AOI2 and sleeps it. Render only paints.
  * Join preparation before returning callbacks so menus/lock cannot race the page-local TTF lock.
- * Ordinary turns refresh body and footer separately; the footer drives changed pixels only, while full refresh still clears the whole screen.
+ * Every ordinary page turn settles the whole screen with GC16 to clear page ghosting; other local interactions may still refresh regions.
  * Middle-key press toggles tools; holding for 500ms opens the demo menu, as requested.
  * User-authorized management shows full details before separate clear/delete confirmations; retain failed saves for retry without pruning other books.
  * User revision: single-book actions use a shelf dialog; full management is for batches. Paging/sorting preserve selection; filtering/applied search and rescanning clear it.
@@ -131,7 +131,7 @@ static size_t s_image_block = SIZE_MAX;
 static const char* s_image_error;
 static char s_image_origin[224];
 static uint32_t s_file_size;
-static int s_px, s_turns, s_unsaved;
+static int s_px, s_unsaved;
 static int64_t s_reading_tick_ms;
 static uint32_t s_reading_acc_ms;
 static bool s_excerpt_saved;
@@ -932,7 +932,7 @@ static bool open_book(app_ctx_t* ctx, const char* path) {
     }
     s_view = READING;
     s_toolbar = s_clear_confirm = s_batch_confirm = false;
-    s_turns = s_unsaved = 0;
+    s_unsaved = 0;
     s_size_settle_ms = 0;
     pending_mark_latest(s_path);
     save_progress();
@@ -1181,11 +1181,7 @@ static app_redraw_t turn_page(app_ctx_t* ctx, int dir) {
     if (!changed) { s_view = s_text ? TOC : SHELF; ctx->leaf = s_text ? s_chapter / BOOK_TOC_ROWS : 0; return APP_REDRAW_PAGE; }
     s_toolbar = false;
     s_last_turn_ms = ctx->now_ms;
-#if APP_GC16_EVERY > 0
-    s_full = (++s_turns % APP_GC16_EVERY) == 0;
-#else
-    s_full = false;
-#endif
+    s_full = true;
     if (s_unsaved < 8) ++s_unsaved;
     if (s_unsaved >= 8 && !s_save_failed) save_progress();
     ESP_LOGI(TAG, "turn chapter=%u page=%u/%u pct=%u", (unsigned)s_chapter, (unsigned)s_page + 1, (unsigned)book_layout_page_count(), percent(s_page));
@@ -1734,7 +1730,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
 static EpdRect area_hint(app_ctx_t* ctx) { (void)ctx; return s_area; }
 
 const app_desc_t app_book = {
-    .title = "图书 Books", .detail = "TF 卡 txt / epub 阅读", .enter_full = true, .owns_keys = true,
+    .title = "图书 Books", .detail = "TF 卡 txt / epub 阅读", .owns_keys = true,
     .render = render, .present = present, .on_enter = on_enter, .on_exit = book_on_exit,
     .on_media_lost = book_on_media_lost,
     .on_gesture = gesture_event, .on_key = on_key, .on_key_long = on_key_long,

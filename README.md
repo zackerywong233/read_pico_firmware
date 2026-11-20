@@ -84,12 +84,12 @@ The function menu lists pages in the order defined in
 | Power | Battery voltage, level and charging status; EPD rails, temperature, faults and read-only SY7636A configuration |
 | PMU | Protocol status, events, configuration and commands |
 | Power Key | `key_raw_events`, press/release levels and DOWN/UP/SHORT/LONG events |
-| Sleep | Light sleep with key or pickup wake, deep sleep and power off |
+| Sleep | Default lock uses soft sleep and wakes on a short power-key press; light sleep can wake by key or pickup, while explicit power-off requires a long press to boot |
 | Storage | TF card capacity and mount status, remount, format and buzzer |
 | Font | Select TTF files from the card, preview typesetting and cycle font weight |
 | IOE | Port-0 levels and interrupts, touch-reset pulse from the bottom bar |
 | Device | Device probes and command ACKs; power-cut items are recorded in the backend only |
-| Books | UTF-8 / GBK TXT and EPUB from TF or internal storage, chapters, font size and per-book progress; swipe to turn, hold text for TOC and hold a shelf row for details, progress reset or confirmed deletion; filter storage sources, sort by name or recent reading, and search by pinyin, initials or English; single-book actions use a popup, while management supports batch selection, progress reset/deletion and rescan; experimental shake-to-turn defaults off. EPUB navigation supports NCX and nav documents. |
+| Books | UTF-8 / GBK TXT and EPUB from TF or internal storage, chapters, font size and per-book progress; every page turn uses full-screen GC16 to clear ghosting; swipe to turn, hold text for TOC and hold a shelf row for details, progress reset or confirmed deletion; filter storage sources, sort by name or recent reading, and search by pinyin, initials or English; single-book actions use a popup, while management supports batch selection, progress reset/deletion and rescan; experimental shake-to-turn defaults off. EPUB navigation supports NCX and nav documents. |
 | Transfer | Device hotspot or existing WiFi, with browser TXT/EPUB upload and complete TTF font uploads to TF; TF card preferred, internal storage limited to 1 MB per file. Scan the hotspot QR to join, or select a 2.4 GHz network and enter its password on the touchscreen. Web provisioning remains available. The browser lists and searches books in the current upload destination, confirms replacement or deletion, and supports upload cancellation and retry. Saved WiFi can be forgotten on the device. Leaving the page stops networking. |
 
 In Books, KEY1 / KEY2 / KEY3 select previous page / toolbar / next page. The toolbar includes full refresh. Hold KEY2 for 500 ms to open the demo menu. Other pages retain KEY2 full GC16 refresh and KEY3 menu. Menu rows select on release; slide away to cancel.

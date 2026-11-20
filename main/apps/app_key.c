@@ -355,7 +355,6 @@ const app_desc_t app_key = {
     .title = KEY_TITLE,
     .detail = "原始事件与电平 key_raw_events",
     .holds_pmu = true,
-    .enter_full = true,
     .render = render,
     .present = key_present,
     .on_enter = key_on_enter,

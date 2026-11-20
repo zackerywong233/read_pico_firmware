@@ -378,7 +378,6 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
 const app_desc_t app_sleep = {
     .title = SLEEP_TITLE,
     .detail = "试睡与锁屏 Try Sleep & Lock",
-    .enter_full = true,
     .render = render,
     .on_enter = on_enter,
     .on_touch = on_touch,

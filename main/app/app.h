@@ -93,9 +93,6 @@ struct app_desc_s {
     /// true = 这一页会长时间独占 PMU，主循环的锁屏按键轮询要让路（设备功能自检）。
     /// / true = page owns the PMU; lock-key poll yields (device self-test).
     bool holds_pmu;
-    /// true = 进页走 APP_REDRAW_FULL（均衡配置下整屏 GC16）。内容和上一页差别大的页面用，避免差分刷留边。
-    /// / true = enter with APP_REDRAW_FULL so a differential update does not leave a seam.
-    bool enter_full;
     /// 菜单关闭时接管三键，页面必须提供强刷和菜单入口。
     /// Own all three keys outside the menu; provide full refresh and menu exits.
     bool owns_keys;
@@ -136,9 +133,8 @@ struct app_desc_s {
     void* user;
 };
 
-// 锁屏：浅睡按键或拿起回原页；软睡 EN=0，再短按开机；关机 EN=0，长按开机。
-// Lock: light-sleep key or pickup returns to the page; soft sleep drops EN
-// and a short press powers on; power-off drops EN and needs a long press.
+// 锁屏默认软睡，侧键短按开机；浅睡按键或拿起回原页；显式关机后需长按开机。
+// Default lock uses soft sleep and a short power-key press to boot; light sleep returns on key or pickup; explicit power-off needs a long press.
 // 无操作满这段时间走同一条锁屏路径，档位仍由睡眠设置决定。
 // Idle this long, then the same lock path; the sleep setting still picks the mode.
 #define APP_AUTO_SLEEP_MS (2 * 60 * 1000)

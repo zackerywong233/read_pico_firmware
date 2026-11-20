@@ -1,5 +1,12 @@
 # 版本变更 / Changelog
 
+## 2026-11-20
+
+- 锁屏默认改为 PMU 软睡眠，短按侧边电源键即可开机；显式关机档仍需长按开机。图书每次翻页及应用/菜单切换使用整屏 GC16，减少上一页残影。
+  Default lock now uses PMU soft sleep, so a short power-key press boots the device; explicit power-off still requires a long press. Book turns and app/menu transitions use full-screen GC16 to reduce prior-page ghosting.
+- 修正浏览器刷机页的连接排查说明，移除 Read Pico 上不存在的 BOOT 键操作。
+  Correct the browser flashing connection guidance; Read Pico has no physical BOOT button.
+
 ## 2026-11-16 · Pico OS
 
 - 新增 Pico OS 桌面入口与第一阶段产品/视觉基线；保留原厂硬件驱动、图书、传输及诊断页面。

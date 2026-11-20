@@ -266,7 +266,7 @@ flowchart TD
    - **菜单打开时的 KEY1**：菜单上一叶；菜单里的"上一页/下一页"触摸区翻叶；点条目切页。
    - **菜单关闭时的 KEY1** → 页面 `on_key(UI_KEY_1)`（页面自己决定含义，通常是翻页）；屏内触摸 → `on_touch()`。
 3. 手势页使用 `on_gesture` 替代 `on_touch`；主循环在全局中断/重绘边界发 CANCEL。菜单条目按下高亮、同项抬起切页，滑出取消。
-4. `request_app` / `request_menu` 在 `on_tick` 后统一消费（切页优先）；输入已有请求则跳过旧页 tick。`request_app` 非空 → `switch_to()`：`on_exit` → `on_enter` → `enter_full ? FULL : PAGE`。
+4. `request_app` / `request_menu` 在 `on_tick` 后统一消费（切页优先）；输入已有请求则跳过旧页 tick。`request_app` 非空 → `switch_to()`：`on_exit` → `on_enter` → 整屏 GC16。
 4. `rails_idle_check`：屏电源轨空闲 8 s（`RAILS_IDLE_TIMEOUT_MS`）断电。
 5. 电源键短按 → `enter_lock_and_sleep()`，除非当前页 `holds_pmu`。开机后 2 s 内忽略（`APP_LOCK_IGNORE_BOOT_MS`）。
 6. TF 卡字体延迟加载重试（每 3 s）。
@@ -292,11 +292,12 @@ flowchart TD
 - 换页/怕残影 → `APP_REDRAW_FULL`（`APP_PAGE_FORCE_FULL` 时 GC16）。
 - 自己已经 `present` 过 → `APP_REDRAW_DONE`。
 
-标志：`enter_full`（进页整屏，当前 home / reading / font_pick / key / sleep 开着）、`holds_pmu`（独占 PMU，当前 key / selftest 开着；开着时电源键短按不锁屏）。
+标志：`holds_pmu`（独占 PMU，当前 key / selftest 开着；开着时电源键短按不锁屏）。页面切换、菜单打开和返回均整屏 GC16。
 
 ### 6.4 刷新策略（[main/app/app_config.h](../main/app/app_config.h) + [main/display.c](../main/display.c)）
 
 - 档位 `APP_REFRESH_PROFILE`：`BALANCED`（默认：页 GL16、定稿 GC16、动态 DU、每 14 次软刷强制一次 GC16 压灰底）或 `ALL_DU`（实验，只看速度）。
+- 图书阅读每次翻页、应用页切换以及菜单打开/关闭/返回都会整屏 GC16，避免旧页内容留在背景。
 - 波形（[components/e0470_epaper_waveform](../components/e0470_epaper_waveform/)）：`E0470_WAVEFORM`（裁剪 GC16 36 相 / GL16 37 相 + 阈值 DU）、`E0470_FULL_WAVEFORM`（48/48/DU 20）、`E0470_GRAY8_WAVEFORM`（30 相，约 360 ms）、`E0470_FOLLOW_WAVEFORM`（开机生成 8 帧，跟手数字用）。帧周期 11090 µs（约 90 Hz）。
 - pclk：默认 18 MHz，安全 12，最大 24。`EPD_DRAW_EMPTY_LINE_QUEUE` 时自动降到 12 MHz 并刷白。
 - 术语（DU / GC16 / GL16 / 跟随 DU / 连续 DU / 跟手 / 定稿 / 把手）见 AGENTS.md 术语表，注释里不要再解释。
@@ -326,17 +327,17 @@ flowchart TD
 
 | 页 | 文件 | 标志 | Frozen 摘要 |
 | --- | --- | --- | --- |
-| 概览 | `app_home.c` | enter_full | — |
+| 概览 | `app_home.c` | — | — |
 | 墨水屏刷新 | `app_refresh.c` | — | GC16 / DU / 灰阶梯子与耗时矩阵 |
-| 阅读测试 | `app_reading.c` | enter_full | 后台排版任务跑在 core 1、结果放 PSRAM |
+| 阅读测试 | `app_reading.c` | — | 后台排版任务跑在 core 1、结果放 PSRAM |
 | 触摸 | `app_touch.c` | — | 连续 DU 跟手；TAP_SLEEP 10 s 进深睡演示 |
 | 加速度 / 诊断 | `app_axis.c`（两个 `app_desc_t` 共享 `.user`） | — | 默认不跟手，点"监听"才 DU；敲击 200 Hz；FIFO 默认存满即停 |
 | 电源与电池 | `app_power.c` | — | 不关轨；**不写 SY7636A 任何寄存器**；只读条 |
 | 电源管理协议 | `app_pmu.c` | — | 四视图 信息/事件/配置/动作；Off/Reset/DL 走主机路径；不做出厂复位/硬复位/软睡；VCOM 只读 |
-| 电源按键 | `app_key.c` | holds_pmu, enter_full | 本页独占 PMU 事件，短按不锁屏；进页 GL16 后只刷变化块 |
-| 睡眠与唤醒 | `app_sleep.c` | enter_full | 底栏走 `ui_bar_rect`；拿起唤醒默认关；浅睡 350 mg / 3 拍 |
+| 电源按键 | `app_key.c` | holds_pmu | 本页独占 PMU 事件，短按不锁屏；进页后只刷变化块 |
+| 睡眠与唤醒 | `app_sleep.c` | — | 默认深睡（短按开机）；底栏走 `ui_bar_rect`；拿起唤醒默认关；浅睡 350 mg / 3 拍 |
 | TF 卡与蜂鸣器 | `app_sd.c` | — | 无字体走 `ui_draw_no_font_page`；格式化两次确认（**会清空卡**）；探测 A/B/1b/4k |
-| 字体 | `app_font_pick.c` | enter_full | 列表行高 `UI_BTN_H`；行数由剩余高度解出；换字体/字重整屏 GC16 |
+| 字体 | `app_font_pick.c` | — | 列表行高 `UI_BTN_H`；行数由剩余高度解出；换字体/字重整屏 GC16 |
 | 扩展口 | `app_ioe.c` | — | CFG/INV 只读；不拨 SY_EN / VCOM_EN / MODE / XOE；只允许脉冲 TP_RST |
 | 设备功能自检 | `app_selftest.c` | holds_pmu | 底栏只留探测/清空；不等闹钟、不目视灯、不断电续跑 |
 | （出厂）VCOM 标定 | `factory/vcom_setup.c` | 非菜单页 | 副标题不写范围；数字带只用 FOLLOW DU；三位合法自动进确认；不写 ESP NVS |
@@ -576,7 +577,7 @@ Read AGENTS.md, then docs/ONBOARDING.md, then docs/HANDOFF.md. Do not duplicate 
 | 开机图之后不进菜单，日志 `No touch controller, UI cannot run` | 触摸未就绪，`app_main` 直接返回（明确设计）。查 I2C 普查日志、TP_RST（FCA9555 P0.7）、INT GPIO43 |
 | 开机停在一个三位数字页 | 这是 `vcom_setup` 出厂标定拦截，PMU 里没有 VCOM。不要在产品页加旁路 |
 | 中文显示成缺字方块 | 新字串没进 `builtin.ttf`，跑 `tools/gen_builtin_font.py` |
-| 刷新后屏边缘留边 | 页面切换用了 PAGE 而不是 FULL；给该页加 `enter_full = true` 或返回 `APP_REDRAW_FULL` |
+| 页面切换后有残影 | 确认切页/返回/开菜单路径走 `APP_REDRAW_FULL`；图书翻页走整屏 GC16 |
 | 刷新出现横条、随后自动变白 | `EPD_DRAW_EMPTY_LINE_QUEUE` 保护触发，pclk 已降 12 MHz；检查是否有别的核在抢 PSRAM 带宽 |
 | 电源键短按不锁屏 | 当前页 `holds_pmu = true`（key / selftest），设计如此 |
 

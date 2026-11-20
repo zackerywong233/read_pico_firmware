@@ -2,9 +2,9 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * NVS 读写。打开失败就用关机默认值，不擦除整个分区。
+ * NVS 读写。打开失败就用深睡默认值，不擦除整个分区。
  *
- * NVS load/store. A failed open keeps the power-off default; the
+ * NVS load/store. A failed open keeps the soft-sleep default; the
  * partition is not erased.
  */
 
@@ -29,7 +29,7 @@
 #define NVS_KEY_DASH "dash"
 #define FONT_PATH_MAX 160
 
-static app_sleep_mode_t s_sleep = APP_SLEEP_OFF;
+static app_sleep_mode_t s_sleep = APP_SLEEP_DEEP;
 static char s_font[FONT_PATH_MAX];
 static uint8_t s_last_wake;
 static uint8_t s_last_boot;
@@ -50,13 +50,13 @@ void app_settings_init(void) {
         err = nvs_flash_init();
     }
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "nvs init %s, use power off", esp_err_to_name(err));
+        ESP_LOGW(TAG, "nvs init %s, use soft-sleep default", esp_err_to_name(err));
         return;
     }
 
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
-    uint8_t raw = APP_SLEEP_OFF;
+    uint8_t raw = APP_SLEEP_DEEP;
     if (nvs_get_u8(h, NVS_KEY_SLEEP, &raw) == ESP_OK && raw <= APP_SLEEP_OFF) {
         s_sleep = (app_sleep_mode_t)raw;
     }
