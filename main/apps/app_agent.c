@@ -402,7 +402,7 @@ static void cleanup(void) {
     s_config_loaded = false;
 }
 
-static void on_exit(app_ctx_t *ctx) {
+static void agent_on_exit(app_ctx_t *ctx) {
     (void)ctx; cleanup(); display_set_bulk_io(false); (void)ttf_font_suspend_sd(false);
 }
 
@@ -482,7 +482,7 @@ const app_desc_t app_agent = {
     .owns_keys = true,
     .render = render,
     .on_enter = on_enter,
-    .on_exit = on_exit,
+    .on_exit = agent_on_exit,
     .on_media_lost = on_media_lost,
     .on_tick = on_tick,
     .on_gesture = on_gesture,
