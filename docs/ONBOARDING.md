@@ -296,7 +296,9 @@ flowchart TD
 ### 6.4 刷新策略（[main/app/app_config.h](../main/app/app_config.h) + [main/display.c](../main/display.c)）
 
 - 档位 `APP_REFRESH_PROFILE`：`BALANCED`（默认：页 GL16、定稿 GC16、动态 DU、每 14 次软刷强制一次 GC16 压灰底）或 `ALL_DU`（实验，只看速度）。
-- 图书阅读每次翻页、应用页切换以及菜单打开/关闭/返回都会整屏 GC16，避免旧页内容留在背景。
+- 图书阅读每次翻页、应用页切换以及菜单打开/关闭/返回都会整屏 GC16，避免旧页内容留在背景；底部进度条始终可点按跳转，章节会补排至目标正文偏移。
+- 书签与整页摘录保存在图书根目录的隐藏 `.pico_notes/n_<路径哈希>.bin` sidecar 中，文件内校验完整路径和图书大小；数量与摘录长度均不设软件上限，由可用空间和内存决定。旧 `rp_notes` NVS 记录首次读取时迁移，sidecar 写入成功后才清旧记录。清进度保留笔记，`book_store_delete` 与文件变更回调同步清笔记；最近摘录仍更新看板屏保。
+- 内置 FAT 存储首次按需挂载；只有 `storage` 分区全部字节均为 `0xFF` 才允许格式化初始化。非空分区挂载失败时保留内容并将该来源标记为不可用，不自动重建文件系统。
 - 波形（[components/e0470_epaper_waveform](../components/e0470_epaper_waveform/)）：`E0470_WAVEFORM`（裁剪 GC16 36 相 / GL16 37 相 + 阈值 DU）、`E0470_FULL_WAVEFORM`（48/48/DU 20）、`E0470_GRAY8_WAVEFORM`（30 相，约 360 ms）、`E0470_FOLLOW_WAVEFORM`（开机生成 8 帧，跟手数字用）。帧周期 11090 µs（约 90 Hz）。
 - pclk：默认 18 MHz，安全 12，最大 24。`EPD_DRAW_EMPTY_LINE_QUEUE` 时自动降到 12 MHz 并刷白。
 - 术语（DU / GC16 / GL16 / 跟随 DU / 连续 DU / 跟手 / 定稿 / 把手）见 AGENTS.md 术语表，注释里不要再解释。
@@ -304,11 +306,11 @@ flowchart TD
 ### 6.5 睡眠与锁屏（[main/sleep.c](../main/sleep.c)、[main/settings.c](../main/settings.c)）
 
 - 模式 `app_sleep_mode_t`：LIGHT 0 / DEEP 1 / OFF 2（默认）。
-- 无操作 2 分钟（`APP_AUTO_SLEEP_MS`）走同一条锁屏路径；独占 PMU 的页和传书页不计时。
+- 无操作按“睡眠与唤醒”页所设时间走同一条锁屏路径，默认 2 分钟，可设 30 秒至 60 分钟或关闭；独占 PMU 的页和传书页不计时。
 - 浅睡：`app_light_sleep_wait()`，唤醒源 IOE INT（GPIO41 低电平）+ 可选拿起（SC7A20H，350 mg / 3 拍，带静默窗口）。
 - 软睡/关机：`app_enter_host_sleep()` 经 PMU 执行，成功**不返回**；失败返回错误，锁屏退到浅睡。锁屏前主循环先调当前页 `on_exit`。
 - 三种睡眠前都把常开 SYS_VDD 上的外设收口：触摸深睡、加速度计掉电、9555 的 MODE 拉低与 Port1 推高；关机/软睡另把 CW_INT 改输出低，避免关机期间 INT# 被拉住。
-- NVS 键（命名空间 `read_pico`）：`sleep`(u8)、`font`(str，空 = 内置)、`lwake`、`lboot`、`pickup`。自检结果在命名空间 `pmu_st` 键 `blob`（magic 0xAA）。
+- NVS 键（命名空间 `read_pico`）：`sleep`(u8)、`idle_s`(u16，自动锁屏秒数，0 = 关闭)、`font`(str，空 = 内置)、`lwake`、`lboot`、`pickup`。自检结果在命名空间 `pmu_st` 键 `blob`（magic 0xAA）。
 
 ### 6.6 PMU 协议要点（[components/read_pico_pmu](../components/read_pico_pmu/)）
 
@@ -335,6 +337,8 @@ flowchart TD
 | 电源管理协议 | `app_pmu.c` | — | 四视图 信息/事件/配置/动作；Off/Reset/DL 走主机路径；不做出厂复位/硬复位/软睡；VCOM 只读 |
 | 电源按键 | `app_key.c` | holds_pmu | 本页独占 PMU 事件，短按不锁屏；进页后只刷变化块 |
 | 睡眠与唤醒 | `app_sleep.c` | — | 默认深睡（短按开机）；底栏走 `ui_bar_rect`；拿起唤醒默认关；浅睡 350 mg / 3 拍 |
+| 网页阅读 | `app_web.c` | — | 仅 HTTP/HTTPS 静态正文提取；512 KiB 响应上限；离页停 WiFi 与剪藏服务 |
+| Agent 收件 | `app_agent.c` | — | MQTT/TLS 精确主题；有界 JSON；文字分页、HTTPS 图片（2 MiB）保存为 TF 锁屏屏保；离页停止网络 |
 | TF 卡与蜂鸣器 | `app_sd.c` | — | 无字体走 `ui_draw_no_font_page`；格式化两次确认（**会清空卡**）；探测 A/B/1b/4k |
 | 字体 | `app_font_pick.c` | — | 列表行高 `UI_BTN_H`；行数由剩余高度解出；换字体/字重整屏 GC16 |
 | 扩展口 | `app_ioe.c` | — | CFG/INV 只读；不拨 SY_EN / VCOM_EN / MODE / XOE；只允许脉冲 TP_RST |
@@ -598,8 +602,15 @@ Read AGENTS.md, then docs/ONBOARDING.md, then docs/HANDOFF.md. Do not duplicate 
 
 ### 图书与传书的契约扩展 / Book and transfer contract extensions
 
-`owns_keys` 只在菜单关闭时接管三键；图书工具条提供强刷，中键长按或把手打开应用菜单。传书组件不依赖页面；由 `app_transfer` 注入存储根、限额、容量回调。文件提交、删除或进度清理重试后通过书源 revision 请求下次进图书时重扫；文件变更回调只清对应路径进度。传书与阅读互斥，停止HTTP并等待退出后才切图书页，进度API由调用端串行化。
-`owns_keys` captures three keys outside the menu; Books provides toolbar refresh; holding the middle key or using the handle opens the app menu. Transfer receives storage policy from its page. File commits, deletions and metadata retries invalidate the shelf through a storage revision; an injected callback clears progress only for the affected path. Transfer and reading are exclusive; HTTP is stopped and joined before entering Books, serializing progress API callers.
+`owns_keys` 只在菜单关闭时接管三键；图书工具条提供强刷、书签和摘录，中键长按或把手打开应用菜单。传书组件不依赖页面；由 `app_transfer` 注入存储根、限额、容量回调。TF 卡与内置存储同时可用时，点按传书页容量行切换图书目的地；仅在没有接收请求时停止并重启 HTTP，字体上传始终只写 TF 卡。显式选择 TF 卡但卡不可用时不回退内置存储。文件提交、删除或进度清理重试后通过书源 revision 请求下次进图书时重扫；文件变更回调只清对应路径的进度与笔记，用户单独清进度则保留笔记。传书与阅读互斥，停止HTTP并等待退出后才切图书页，进度API由调用端串行化。
+
+`app_web` 复用该组件的 STA 生命周期提供同网剪藏服务，并用 `esp_http_client` 访问输入的网址。每次开机首次启动服务时生成随机剪藏口令，停启服务不轮换；设备重启后须在网页上重新生成剪藏书签。表单字段按 URL 编码解码后校验并原子保存为书架 TXT；剪藏正文上限 64 KiB，请求体上限 640 KiB（容纳 UTF-8 表单编码膨胀）。网页抓取仅限 512 KiB 响应，交给 `html_text` 做静态提取；不执行脚本、不解释 CSS、不取图片。产品与 CI 配置需启用 ESP x509 根证书包以验证 HTTPS。
+
+`app_web` reuses the transfer component's STA lifecycle for same-LAN clipping and uses `esp_http_client` for entered URLs. The first service start per boot creates a random clip token, which survives service stop/start; recreate the browser bookmark after reboot. URL-encoded form fields are decoded and validated before an atomic TXT commit. Clip text is capped at 64 KiB and request bodies at 640 KiB to allow for UTF-8 form-encoding expansion. Page fetches are capped at 512 KiB and passed to `html_text` for static extraction; scripts, CSS and images are not processed. Product and CI configurations must enable the ESP x509 root certificate bundle for HTTPS verification.
+
+`app_agent` also reuses the transfer component's STA lifecycle and reads `agent_mqtt.json` from the active book-storage root. The local `/agent` page never returns the password; the file is plaintext on device storage and must be treated as a secret. MQTT delivery uses an exact topic (no `+` or `#`) and bounded JSON messages up to 8 KiB. Text bodies are limited to 6 KiB. Image messages accept HTTPS only, disable redirects, cap downloads at 2 MiB, verify certificates with the x509 bundle, decode before an atomic save to `/sdcard/agent_screensaver.jpg` or `.png`, then select the image lock-screen style. The lock renderer checks these Agent paths before the user's `screensaver.jpg/png`. Only one image download may run at a time; leaving the page stops MQTT and transfer networking and joins the image task.
+
+`owns_keys` captures three keys outside the menu; Books provides toolbar refresh, bookmarks and excerpts; holding the middle key or using the handle opens the app menu. Transfer receives storage policy from its page. When both roots are available, tapping the capacity row switches the book destination; HTTP restarts only if no upload is active, and fonts remain TF-only. Explicit TF selection does not fall back to flash when the card is unavailable. File commits, deletions and metadata retries invalidate the shelf through a storage revision; an injected callback clears progress and notes only for the affected path, while a user-requested progress clear preserves notes. Transfer and reading are exclusive; HTTP is stopped and joined before entering Books, serializing progress API callers.
 
 
 传书页通过 `display_set_bulk_io` 在页内提高扫描预填余量，退出恢复默认；大文件进度用低频FOLLOW DU，结束/离页清残影。欠载恢复必须保留目标前缓冲，不能调用 `epd_hl_set_all_white` 丢掉整页。相关回归：`tools/run_display_host_test.sh`。

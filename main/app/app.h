@@ -135,9 +135,8 @@ struct app_desc_s {
 
 // 锁屏默认软睡，侧键短按开机；浅睡按键或拿起回原页；显式关机后需长按开机。
 // Default lock uses soft sleep and a short power-key press to boot; light sleep returns on key or pickup; explicit power-off needs a long press.
-// 无操作满这段时间走同一条锁屏路径，档位仍由睡眠设置决定。
-// Idle this long, then the same lock path; the sleep setting still picks the mode.
-#define APP_AUTO_SLEEP_MS (2 * 60 * 1000)
+// 无操作达到睡眠页设置的时长后走同一条锁屏路径；0 表示关闭自动锁屏。
+// After the Sleep page's idle interval, use the same lock path; 0 disables auto-lock.
 #define APP_LOCK_POLL_MS 200
 #define APP_LOCK_IGNORE_BOOT_MS 2000
 #define APP_LOCK_IGNORE_SELFTEST_MS 2000

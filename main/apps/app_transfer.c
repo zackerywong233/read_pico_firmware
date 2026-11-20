@@ -15,6 +15,7 @@
  * 用户验收要求停止后恢复进入传书前的页面或菜单位置；遗忘网络必须确认。
  * 用户要求联网后提供网址二维码；热点用单码切换连接/网页，网络变更清除旧码。
  * 卡失效时停止并汇合接收任务，清除旧容量与二维码；当前请求不得切换存储源。
+ * TF 卡和内置存储同时可用时允许点按容量行切换图书上传目标；仅空闲时切换并重启服务，TTF 仍只写 TF 卡。
  * Frozen: user-requested AP/STA modes stop networking on exit.
  * Idle auto-sleep does not run while this page is current, so a waiting hotspot and reception stay up.
  * Decision change: the 2-minute idle lock was closing the transfer flow; the user requires that flow to keep running.
@@ -25,6 +26,7 @@
  * Acceptance requires returning to the page or menu position used to enter transfer; forgetting WiFi requires confirmation.
  * User-requested URL QR follows network readiness; AP switches one code between joining and browsing, discarding stale codes on changes.
  * Lost media stops and joins reception and clears capacity/QR; never switch storage beneath an active request.
+ * When TF and flash are both available, the capacity row switches the book target; restart only while idle, and keep TTF uploads TF-only.
  */
 // 整个传书页暂停 SD 字体并使用内置字库；HTTP 停止后才恢复读取。
 // Use the built-in font and suspend SD font opens for this page; resume only after HTTP stops.
@@ -54,6 +56,8 @@ static esp_err_t s_font_error;
 static int s_pressed = -1;
 static read_pico_transfer_mode_t s_mode = READ_PICO_TRANSFER_MODE_AP;
 static bool s_session_started;
+static bool s_upload_flash, s_can_switch_root;
+static char s_root_message[96];
 static int64_t s_poll_ms;
 static uint64_t s_free;
 static size_t s_heap_before, s_internal_before;
@@ -377,8 +381,12 @@ static void draw_capacity(uint8_t* fb) {
     char capacity[96];
     ui_clear_rect_fast(fb, (EpdRect){UI_MARGIN, 518, ui_content_width(), 42});
     if (s_media_lost) snprintf(capacity, sizeof(capacity), "TF 卡已移除，原存储已停用");
-    else snprintf(capacity, sizeof(capacity), "%s · 剩余 %.1f MB%s", s_root.is_flash ? "内置" : "TF 卡", s_free / 1048576.0, s_root.is_flash ? " · 单文件 ≤ 1 MB" : "");
-    ui_text(fb, UI_MARGIN, 528, UI_PX_CAPTION, capacity, EPD_DRAW_ALIGN_LEFT, false);
+    else snprintf(capacity, sizeof(capacity), "%s · 余 %.1f MB%s%s", s_root.is_flash ? "内置" : "TF 卡", s_free / 1048576.0,
+                  s_root.is_flash ? " · 单本≤1MB" : "", s_can_switch_root ? " · 点按切换" : "");
+    if (!s_root_message[0] && s_can_switch_root && !s_media_lost)
+        ui_draw_button(fb, (EpdRect){UI_MARGIN, 518, ui_content_width(), 42}, capacity, false);
+    else
+        ui_text(fb, UI_MARGIN, 528, UI_PX_CAPTION, s_root_message[0] ? s_root_message : capacity, EPD_DRAW_ALIGN_LEFT, false);
 }
 
 static void draw_status(uint8_t* fb) {
@@ -421,6 +429,7 @@ static void draw_status(uint8_t* fb) {
 
 static EpdRect control_rect(int id) {
     if (id == 3) return (EpdRect){UI_MARGIN, 454, 350, 60};
+    if (id == 4) return (EpdRect){UI_MARGIN, 518, ui_content_width(), 42};
     return id == 2 ? ui_bar_rect(0, 1) : ui_row_rect(id, 2, UI_CONTENT_TOP, UI_BTN_H);
 }
 
@@ -496,6 +505,8 @@ static void on_enter(app_ctx_t* ctx) {
     read_pico_transfer_get_saved_wifi(s_status.wifi_ssid, &s_status.wifi_configured);
     s_poll_ms = 0;
     s_free = 0;
+    s_root_message[0] = 0;
+    s_can_switch_root = false;
 }
 
 static void stop_session(void) {
@@ -519,6 +530,7 @@ static void transfer_on_media_lost(app_ctx_t* ctx) {
     clear_password();
     s_pressed = -1;
     s_free = 0;
+    s_can_switch_root = false;
     memset(&s_root, 0, sizeof(s_root));
     s_media_lost = true;
     s_settle = false;
@@ -542,13 +554,19 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     if (s_start_pending) {
         s_start_pending = false;
         if (s_font_error != ESP_OK) s_font_error = ttf_font_suspend_sd(true);
-        esp_err_t err = s_font_error == ESP_OK ? book_store_upload_root(&s_root) : s_font_error;
+        esp_err_t err = s_font_error == ESP_OK ? book_store_upload_root_for(s_upload_flash, &s_root) : s_font_error;
         if (err == ESP_OK) {
             s_media_lost = false;
             s_free = book_store_free_bytes(&s_root);
+            book_store_root_t roots[2]; int root_count = 0;
+            if (book_store_roots(roots, &root_count) == ESP_OK) {
+                s_can_switch_root = false;
+                for (int i = 0; i < root_count; ++i)
+                    if (roots[i].is_flash != s_root.is_flash) s_can_switch_root = true;
+            }
             read_pico_transfer_cfg_t cfg = {.mode = s_mode, .root_dir = s_root.path, .is_flash = s_root.is_flash,
                 .font_dir = s_root.is_flash ? NULL : "/sdcard/fonts",
-                .file_limit = book_store_file_limit(&s_root), .free_bytes_cb = free_bytes, .free_bytes_ctx = &s_root, .file_changed_cb = book_progress_forget};
+                .file_limit = book_store_file_limit(&s_root), .free_bytes_cb = free_bytes, .free_bytes_ctx = &s_root, .file_changed_cb = book_store_forget_changed_path};
             err = read_pico_transfer_start(&cfg);
             s_session_started = err == ESP_OK;
             read_pico_transfer_get_status(&s_status);
@@ -588,6 +606,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
 
 static int hit_control(uint16_t x, uint16_t y) {
     if (s_mode == READ_PICO_TRANSFER_MODE_AP && s_status.network_ready && ui_rect_hit(control_rect(3), x, y)) return 3;
+    if (s_can_switch_root && !s_media_lost && ui_rect_hit(control_rect(4), x, y)) return 4;
     for (int i = 0; i < 3; ++i) if (ui_rect_hit(control_rect(i), x, y)) return i;
     return -1;
 }
@@ -611,6 +630,26 @@ static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
             ctx->request_return = true;
         } else if (origin == 1) {
             if (enter_networks()) return APP_REDRAW_PAGE;
+        } else if (origin == 4) {
+            book_store_root_t target = {0};
+            bool prefer_flash = !s_root.is_flash;
+            esp_err_t err = book_store_upload_root_for(prefer_flash, &target);
+            if (err != ESP_OK) {
+                snprintf(s_root_message, sizeof(s_root_message), "%s存储当前不可用，未切换", prefer_flash ? "内置" : "TF 卡");
+                return APP_REDRAW_PAGE;
+            }
+            if (!read_pico_transfer_try_stop_if_idle()) {
+                snprintf(s_root_message, sizeof(s_root_message), "上传进行中，请完成后再切换目标");
+                return APP_REDRAW_PAGE;
+            }
+            stop_session();
+            s_upload_flash = target.is_flash;
+            s_root = target;
+            s_free = book_store_free_bytes(&s_root);
+            s_root_message[0] = 0;
+            s_start_pending = true;
+            s_can_switch_root = true;
+            return APP_REDRAW_PAGE;
         } else {
             read_pico_transfer_status_t latest;
             read_pico_transfer_get_status(&latest);

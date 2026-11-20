@@ -32,6 +32,8 @@ extern const app_desc_t app_ioe;
 extern const app_desc_t app_selftest;
 extern const app_desc_t app_book;
 extern const app_desc_t app_transfer;
+extern const app_desc_t app_web;
+extern const app_desc_t app_agent;
 extern const app_desc_t app_system_tools;
 
 // 一级只列日常功能、自检和系统工具入口；硬件诊断由工具页继续进入。
@@ -39,6 +41,8 @@ extern const app_desc_t app_system_tools;
 static const app_desc_t* const s_apps[] = {
     &app_book,
     &app_transfer,
+    &app_web,
+    &app_agent,
     &app_home,
     &app_personal,
     &app_selftest,

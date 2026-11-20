@@ -402,17 +402,17 @@ static app_redraw_t pick(int index) {
     if (font_is_current(index)) return APP_REDRAW_NONE;
     bench_reset();
     if (index == 0) {
-        app_settings_set_font_path("");
-        ttf_font_open_builtin();
+        esp_err_t err = ttf_font_open_builtin();
+        if (err == ESP_OK) app_settings_set_font_path("");
     } else {
         const ttf_font_item_t* item = ttf_font_item(index - 1);
         if (item == NULL) return APP_REDRAW_NONE;
         read_pico_sd_info_t sd = {0};
         read_pico_sd_get_info(&sd);
         if (!sd.present || !sd.mounted) return APP_REDRAW_FULL;
-        app_settings_set_font_path(item->path);
         esp_err_t err = ttf_font_open(item->path);
-        if (err != ESP_OK) {
+        if (err == ESP_OK && !ttf_font_is_builtin()) app_settings_set_font_path(item->path);
+        else {
             ESP_LOGW(TAG, "font switch %s: %s", item->path, esp_err_to_name(err));
         }
     }

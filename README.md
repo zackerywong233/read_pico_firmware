@@ -72,8 +72,10 @@ self-test and a System Tools entry; hardware diagnostics are one level deeper.
 
 | Root app | Content |
 | --- | --- |
-| Books | UTF-8 / GBK TXT and EPUB from TF or internal storage; chapters, font size, per-book progress, shelf filters/sorting/search and management. Each page turn uses full-screen GC16 to clear ghosting. EPUB navigation supports NCX and nav documents. |
-| Transfer | Upload TXT/EPUB and complete TTF fonts to TF over the device hotspot or existing WiFi; touchscreen provisioning, QR connection, browser book management, confirmed replacement/deletion, cancellation and retry. Networking stops on exit. |
+| Books | UTF-8 / GBK TXT and EPUB from TF or internal storage; chapters, font size, per-book resume, bookmarks and excerpts, shelf filters/sorting/search and management. Notes are stored beside the books without per-book item-count or excerpt-length caps; physical storage and memory are the practical limits. Tap an entry to return to its text. Tap the bottom progress track to seek; cross-chapter jumps paginate through the target. Each page turn uses full-screen GC16. EPUB navigation supports NCX and nav documents. |
+| Transfer | Upload TXT/EPUB and TTF fonts over the device hotspot or existing WiFi. When TF and internal storage are both available, tap the capacity row to switch the book destination while idle; fonts remain TF-only. Includes touchscreen provisioning, QR connection, browser book management, confirmed replacement/deletion, cancellation and retry. Networking stops on exit. |
+| Web Reader | Enter an HTTP/HTTPS address to read extracted page text. A browser bookmark on the same WiFi can save a page as a TXT book. Static extraction does not run scripts or load CSS/images; networking stops on page exit or device lock. |
+| Agent Inbox | Configure an MQTT/TLS broker and topic on the local transfer page. Open Agent Inbox from the app menu to receive JSON text or HTTPS images; text is paginated and images can become the lock-screen saver. Networking runs only while the app is active. |
 | Device Status | Boot I2C scan, IDs, battery and charging status, build time. |
 | Dashboard | Optional date, battery, recent reading and personal text; lock-screen theme. |
 | Device Self-Test | Device probes and command ACKs; power-cut items are recorded in the backend only. |
@@ -83,6 +85,8 @@ System Tools contains EPD refresh, built-in reading, touch, accelerometer and IM
 power, PMU, key events, sleep/wake, storage and buzzer, font management and IO expander.
 The sleep tool covers deep sleep, light sleep and power-off; the default lock uses soft
 sleep and wakes on a short power-key press, while explicit power-off requires a long press.
+
+Agent messages use one MQTT JSON object: `{"type":"text","title":"Title","text":"Body"}` or `{"type":"image","url":"https://example.com/image.jpg"}`. Configure the broker, username, password and exact topic on the device's local transfer page. The password is stored unencrypted on device and is never echoed by the webpage. Image delivery requires a mounted TF card and a valid HTTPS certificate.
 
 In Books, KEY1 / KEY2 / KEY3 select previous page / toolbar / next page. The toolbar
 includes full refresh. Hold KEY2 for 500 ms to open the app menu. Other pages retain KEY2

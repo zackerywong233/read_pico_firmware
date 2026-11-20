@@ -292,7 +292,10 @@ esp_err_t app_enter_host_sleep(app_sleep_mode_t mode) {
 static uint8_t* load_saver_image(size_t* length) {
     read_pico_sd_info_t sd = {0};
     if (read_pico_sd_get_info(&sd) != ESP_OK || !sd.mounted) return NULL;
-    static const char* paths[] = {"/sdcard/screensaver.jpg", "/sdcard/screensaver.png"};
+    static const char* paths[] = {
+        "/sdcard/agent_screensaver.jpg", "/sdcard/agent_screensaver.png",
+        "/sdcard/screensaver.jpg", "/sdcard/screensaver.png"
+    };
     for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
         FILE* f = fopen(paths[i], "rb");
         if (!f) continue;

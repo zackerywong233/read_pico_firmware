@@ -70,8 +70,9 @@ One file, one `app_desc_t`. Root app order matches `app_registry.c`; low-level d
 | 文件 / File | 功能 / Role | 依赖 / Depends on |
 | --- | --- | --- |
 | `app_pico_home.c` | Pico OS 默认桌面与日常应用入口。/ Pico OS launcher and daily app entry points. | `ui_kit` |
-| `app_book.c` | 一级应用：TXT / EPUB 书架、目录、字号与逐书进度。/ Root app: TXT / EPUB shelf, TOC, size and progress. | `book_*`, `ttf_font` |
+| `app_book.c` | 一级应用：TXT / EPUB 书架、目录、字号、逐书进度、书签和摘录。/ Root app: TXT / EPUB shelf, TOC, size, progress, bookmarks and excerpts. | `book_*`, `ttf_font` |
 | `app_transfer.c` | 一级应用：设备热点/已有 WiFi 传书与 TF 字体上传。/ Root app: WiFi book and TF font transfer. | `read_pico_transfer`, `book_store` |
+| `app_agent.c` | 一级应用：活动期间订阅 MQTT/TLS；接收分页文字和 HTTPS 锁屏图片。/ Root app: subscribe to MQTT/TLS while active; receive paginated text and HTTPS lock-screen images. | `read_pico_transfer`, `book_layout`, `book_image`, `esp-mqtt` |
 | `app_home.c` | 一级应用：I2C 普查、识别码、电池、构建时间。/ Root app: device and system status. | `read_pico`, `read_pico_pmu` |
 | `app_personal.c` | 一级应用：个人看板与锁屏主题。/ Root app: personal dashboard and lock-screen theme. | `settings`, `reading_stats`, `read_pico_pmu`, `read_pico_sd` |
 | `app_selftest.c` | 一级应用：设备探活与 PMU 命令 ACK 自检。/ Root app: device probe and PMU command self-test. | `pmu_selftest` |

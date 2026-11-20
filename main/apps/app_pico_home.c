@@ -6,9 +6,10 @@
  *
  * Pico OS launcher. Owns the home surface and app routing, not board services.
  *
+ * 决策变更：网页阅读成为桌面直达应用；桌面扩为六格，保留离线页面与完整应用菜单。
+ * Decision change: make Web Reader a direct launcher tile; use a six-tile grid while keeping offline pages and the full app menu.
  * 冻结：触控点按与屏下三键都必须能完成主要导航；离线时桌面仍可用。
- * Frozen: touch and the three physical key zones both provide primary navigation;
- * the launcher remains usable while Wi-Fi is unavailable.
+ * Frozen: touch and the three physical key zones both provide primary navigation; the launcher remains usable offline.
  */
 
 #include "app.h"
@@ -20,14 +21,16 @@
 extern const app_desc_t app_home;
 extern const app_desc_t app_book;
 extern const app_desc_t app_transfer;
+extern const app_desc_t app_web;
+extern const app_desc_t app_personal;
 
 #define HOME_TITLE "小纸 Pico"
 #define HOME_SUBTITLE "Pico OS  ·  轻量、专注、联网"
-#define HOME_TILE_COUNT 4
+#define HOME_TILE_COUNT 6
 #define HOME_TILE_Y (UI_CONTENT_TOP + 48)
-#define HOME_TILE_H 340
+#define HOME_TILE_H 250
 
-enum { TILE_BOOKS = 0, TILE_TRANSFER, TILE_DEVICE, TILE_APPS };
+enum { TILE_BOOKS = 0, TILE_TRANSFER, TILE_WEB, TILE_DEVICE, TILE_PERSONAL, TILE_APPS };
 static int s_focus;
 
 static EpdRect tile_rect(int index) {
@@ -36,15 +39,15 @@ static EpdRect tile_rect(int index) {
 
 static const char* tile_title(int index) {
     static const char* const titles[HOME_TILE_COUNT] = {
-        "图书", "Wi-Fi 传输", "设备状态", "应用与工具"
+        "图书", "Wi-Fi 传输", "网页阅读", "设备状态", "我的看板", "应用与工具"
     };
     return titles[index];
 }
 
 static const char* tile_detail(int index) {
     static const char* const details[HOME_TILE_COUNT] = {
-        "继续阅读 TXT / EPUB", "连接网络，同步文件",
-        "电量、存储与系统信息", "打开 Pico OS 应用菜单"
+        "继续阅读 TXT / EPUB", "连接网络，同步文件", "在线阅读或剪藏网页",
+        "电量、存储与系统信息", "个人信息与屏保", "打开 Pico OS 应用菜单"
     };
     return details[index];
 }
@@ -81,7 +84,9 @@ static void activate(app_ctx_t* ctx, int index) {
     switch (index) {
         case TILE_BOOKS: ctx->request_app = &app_book; break;
         case TILE_TRANSFER: ctx->request_app = &app_transfer; break;
+        case TILE_WEB: ctx->request_app = &app_web; break;
         case TILE_DEVICE: ctx->request_app = &app_home; break;
+        case TILE_PERSONAL: ctx->request_app = &app_personal; break;
         case TILE_APPS: ctx->request_menu = true; break;
         default: break;
     }

@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * 事件循环。只做和页面无关的事：读触摸并去抖、三个实体键与菜单把手的路由、切页
- * 时调 on_exit/on_enter、按回调返回值决定怎么刷屏、电源键锁屏、无操作 2 分钟走
+ * 时调 on_exit/on_enter、按回调返回值决定怎么刷屏、电源键锁屏、无操作按设置时长走
  * 同一锁屏、SD 卡上的字体延迟加载。页面自己的状态和刷新节奏都在 main/apps/ 各自的文件里。
  *
  * Event loop for page-agnostic work: touch debounce, the three keys and
- * the menu handle, on_exit/on_enter, present, lock, the same lock after
- * 2 minutes idle, delayed SD font load.
+ * the menu handle, on_exit/on_enter, present, lock after the configured idle
+ * interval, delayed SD font load.
  * Page state and refresh cadence stay in main/apps/; gesture recognition is shared.
  *
  * 冻结：主循环只产出手势、不解释含义；只有 owns_keys 页可接管三键，
@@ -465,7 +465,9 @@ void app_loop_run(const app_loop_config_t* config) {
                     last_input_ms = ctx.now_ms;
                 }
             } else if (ctx.now_ms >= s_lock_ignore_until_ms
-                       && ctx.now_ms - last_input_ms >= APP_AUTO_SLEEP_MS) {
+                       && app_settings_auto_sleep_sec() != 0
+                       && ctx.now_ms - last_input_ms
+                           >= (int64_t)app_settings_auto_sleep_sec() * 1000) {
                 ESP_LOGI(TAG, "idle lock");
                 lock_and_resume(
                     &ctx, current, &gesture, &held_key, &menu_pressed, &feedback,

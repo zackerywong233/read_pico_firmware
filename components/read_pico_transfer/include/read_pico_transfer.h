@@ -60,6 +60,18 @@ typedef struct {
     esp_err_t last_error; ///< 最近错误 / Last error
 } read_pico_transfer_status_t;
 
+#define READ_PICO_AGENT_URI_MAX 192
+#define READ_PICO_AGENT_USER_MAX 64
+#define READ_PICO_AGENT_PASSWORD_MAX 128
+#define READ_PICO_AGENT_TOPIC_MAX 160
+
+typedef struct {
+    char broker_uri[READ_PICO_AGENT_URI_MAX]; ///< mqtts:// TLS 地址 / TLS broker URI
+    char username[READ_PICO_AGENT_USER_MAX]; ///< 可为空 / Optional
+    char password[READ_PICO_AGENT_PASSWORD_MAX]; ///< 可为空；仅供本机调用，不进状态接口 / Optional; local caller only, never exposed in status APIs
+    char topic[READ_PICO_AGENT_TOPIC_MAX]; ///< 精确订阅主题，不含通配符 / Exact subscription topic without wildcards
+} read_pico_agent_config_t;
+
 /// 同一控制任务串行启动/停止；重复启动返回状态错误。/ Serialize start/stop on one owner task; repeated start fails.
 esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg);
 /// 等待请求退出并释放本组件资源；可重复调用。/ Join requests and release owned resources; repeatable.
@@ -72,6 +84,8 @@ void read_pico_transfer_get_status(read_pico_transfer_status_t *out);
 void read_pico_transfer_service_poll(void);
 /// 只读已保存SSID；未配置仍返回ESP_OK。/ Read only the saved SSID; unconfigured still returns ESP_OK.
 esp_err_t read_pico_transfer_get_saved_wifi(char ssid[33], bool *configured);
+/// 传书服务运行期间读取当前存储根里的 Agent 配置；缺失返回 ESP_ERR_NOT_FOUND。/ Read Agent config from the active storage root while service runs; missing file returns ESP_ERR_NOT_FOUND.
+esp_err_t read_pico_transfer_get_agent_config(read_pico_agent_config_t *out);
 /// 仅热点或停止状态可遗忘；上传中拒绝。/ Forget only while AP or stopped; rejected during upload.
 esp_err_t read_pico_transfer_forget_wifi(void);
 /// 停服后同步扫描2.4GHz网络；最多16个去重SSID，按信号降序，所有临时资源均释放。/ Scan synchronously while stopped; up to 16 unique SSIDs by descending RSSI; release all temporary resources.

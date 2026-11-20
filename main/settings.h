@@ -2,10 +2,10 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * NVS 里的用户设置：睡眠档、字体路径、上次唤醒/开机原因、拿起唤醒开关。
+ * NVS 里的用户设置：睡眠档、自动睡眠时间、字体路径、上次唤醒/开机原因、拿起唤醒开关。
  *
- * User settings in NVS: sleep mode, font path, last wake/boot reason,
- * pickup-wake switch.
+ * User settings in NVS: sleep mode and idle timeout, font path, last wake/boot
+ * reason, and pickup-wake switch.
  */
 
 #pragma once
@@ -39,6 +39,12 @@ void app_settings_init(void);
 app_sleep_mode_t app_settings_sleep_mode(void);
 void app_settings_set_sleep_mode(app_sleep_mode_t mode);
 const char* app_sleep_mode_name(app_sleep_mode_t mode);
+/// 无操作后自动锁屏秒数；0 表示关闭，默认 120 秒。
+/// Idle time before auto-lock, in seconds; 0 disables it, default 120 s.
+uint16_t app_settings_auto_sleep_sec(void);
+/// 保存自动锁屏秒数；仅接受睡眠页提供的选项。
+/// Save auto-lock seconds; accepts only options shown on the Sleep page.
+void app_settings_set_auto_sleep_sec(uint16_t seconds);
 /// 空路径表示固件内建字体；非空为 SD 上的 TTF。/ Empty path is the built-in font; non-empty is a TTF on the SD card.
 const char* app_settings_font_path(void);
 void app_settings_set_font_path(const char* path);

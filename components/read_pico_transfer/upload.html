@@ -13,10 +13,29 @@ Frozen: send raw files sequentially without multipart; AP-only provisioning neve
 <title>小纸 Pico · Read Pico</title>
 <style>
 body{font:17px/1.6 system-ui,sans-serif;max-width:680px;margin:40px auto;padding:0 24px;color:#222;background:#faf9f5}h1{font-size:28px}button,input{font:inherit;max-width:100%}button{padding:8px 16px;margin:8px 8px 0 0}li{overflow-wrap:anywhere;margin:16px 0}.hint{color:#555}progress{width:100%}small{display:block}button:disabled{opacity:.5}
+textarea{width:100%;min-height:100px;box-sizing:border-box;font:13px/1.4 ui-monospace,monospace}a.bookmarklet{display:inline-block;padding:8px 12px;border:1px solid #555;border-radius:6px;color:#222;background:#fff}
 </style>
 <h1>小纸 Pico · WiFi 传书</h1>
 <p class="hint">Read Pico · 保持手机与设备在同一网络。支持 TXT / EPUB；同名图书须明确选择替换或跳过。</p>
 <p id="info" role="status">正在查询存储空间…</p>
+<section id="clipSection" hidden><hr><h2>网页剪藏到 Pico</h2>
+<p class="hint">在书签栏新建书签，把下面的代码粘贴为网址。之后浏览网页时点这个书签，最多剪藏约 64 KiB 正文并保存为 TXT。Pico 须保持在网页/传书页面且处于唤醒状态，电脑或手机须与它处于同一 WiFi。书签口令在本次开机内有效；设备重启或网络地址变化后，请重新复制并保存书签。</p>
+<p><a id="clipLink" class="bookmarklet" href="#">拖到书签栏：发送到小纸 Pico</a></p>
+<label for="bookmarkletCode">书签网址（也可复制到新书签）</label>
+<textarea id="bookmarkletCode" readonly></textarea>
+<button id="copyBookmarklet" type="button">复制书签代码</button>
+<p id="clipResult" role="status"></p></section>
+<section id="agentSection" hidden><hr><h2>AI Agent · MQTT/TLS</h2>
+<p class="hint">配置 TLS Broker 后，设备在“Agent 收件”页订阅指定主题。配置保存在当前图书存储的 agent_mqtt.json；密码不回显，但文件本身未加密。请只在可信网络配置。</p>
+<form id="agentForm">
+<label for="agentUri">Broker 地址（仅 mqtts://）</label><br><input id="agentUri" maxlength="191" placeholder="mqtts://broker.example.com:8883" required><br>
+<label for="agentUser">用户名（可留空）</label><br><input id="agentUser" maxlength="63" autocomplete="off"><br>
+<label for="agentPassword">密码（留空保留已保存密码）</label><br><input id="agentPassword" type="password" maxlength="127" autocomplete="new-password"><br>
+<label for="agentTopic">接收主题（精确主题，不支持 + / #）</label><br><input id="agentTopic" maxlength="159" placeholder="readpico/device/inbox" required><br>
+<label><input id="clearAgentPassword" type="checkbox"> 清除已保存的密码</label><br>
+<button id="saveAgent" type="submit">保存 Agent 配置</button><button id="forgetAgent" type="button">清除配置</button>
+</form><p id="agentResult" role="status"></p>
+<p class="hint">消息格式：JSON text（title、text）或 image（HTTPS url）；仅在设备打开“Agent 收件”且保持唤醒时接收。</p></section>
 <input id="files" aria-label="选择图书" type="file" accept=".txt,.epub" multiple>
 <br><button id="send" disabled>开始上传</button><button id="cancel" disabled>取消当前及剩余队列</button>
 <section><h2>上传字体</h2>
@@ -53,6 +72,23 @@ async function info(){
   $('fontInfo').textContent=policy.fonts_enabled?'字体保存到 TF 卡 '+policy.font_root+' · 单文件上限 '+size(policy.font_limit):'字体需要 TF 卡；请挂载后重新进入传书。';
   $('fontFiles').disabled=$('sendFonts').disabled=busy||!policy.fonts_enabled;
   $('network').hidden=policy.mode!=='ap';$('saved').textContent=policy.wifi_configured?'已保存：'+policy.wifi_ssid:'尚未保存网络';
+  $('clipSection').hidden=!policy.network_ready||!policy.clip_token;
+  $('agentSection').hidden=!policy.network_ready;
+  if(policy.network_ready){
+    const agent=await request('/agent');
+    if(agent.status!==200)throw Error(agent.body.error||'无法读取 Agent 配置');
+    $('agentUri').value=agent.body.uri||'';$('agentUser').value=agent.body.username||'';
+    $('agentTopic').value=agent.body.topic||'';$('agentPassword').value='';
+    $('agentResult').textContent=agent.body.configured?'已配置；密码不回显':'尚未配置。';
+  }
+  if(! $('clipSection').hidden){
+    const fields={token:policy.clip_token,title:document.title,url:location.href,text:''};
+    const action=JSON.stringify(policy.url.replace(/\/$/,'')+'/webclip');
+    const data=JSON.stringify(fields);
+    const code=`(()=>{const e=document.querySelector('article')||document.querySelector('main')||document.body;let d=${data},a=Array.from(e.innerText||'');d.title=document.title;d.url=location.href;d.text=a.join('');while(new TextEncoder().encode(d.text).length>65536||encodeURIComponent(d.text).length>600000){a=a.slice(0,Math.floor(a.length*.8));d.text=a.join('')}const f=document.createElement('form');f.method='POST';f.target='_blank';f.action=${action};for(const [n,v] of Object.entries(d)){const i=document.createElement('input');i.type='hidden';i.name=n;i.value=v;f.append(i)}document.body.append(f);f.submit();f.remove()})()`;
+    const bookmarklet='javascript:'+code;
+    $('clipLink').href=bookmarklet;$('bookmarkletCode').value=bookmarklet;
+  }
 }
 function lock(value){busy=value;$('send').disabled=$('files').disabled=$('searchButton').disabled=$('previous').disabled=$('next').disabled=value;$('fontFiles').disabled=$('sendFonts').disabled=value||!policy?.fonts_enabled;$('cancel').disabled=!value;document.querySelectorAll('[data-mutate]').forEach(b=>b.disabled=value);if(!value){$('previous').disabled=page<=0;$('next').disabled=page+1>=pages;}}
 function button(parent,label,action){const b=document.createElement('button');b.type='button';b.textContent=label;b.dataset.mutate='1';b.disabled=busy;b.onclick=action;parent.append(b);return b;}
@@ -108,5 +144,8 @@ info().then(()=>{lock(false);return loadBooks();}).catch(e=>$('info').textConten
 async function configure(method,body){$('saveWifi').disabled=$('forgetWifi').disabled=true;$('wifiResult').textContent='正在保存…';try{const r=await fetch('/wifi',{method,headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const result=await r.json();if(!r.ok)throw Error(result.error||'配置失败');$('password').value='';$('wifiResult').textContent=method==='DELETE'?'已遗忘网络。':'已保存。请在设备上选择“已有 WiFi”；热点暂时保持连接。';await info();}catch(e){$('wifiResult').textContent=e.message;}finally{$('saveWifi').disabled=$('forgetWifi').disabled=false;}}
 $('wifiForm').onsubmit=e=>{e.preventDefault();const ssid=$('ssid').value,password=$('password').value;if(new TextEncoder().encode(ssid).length>32){$('wifiResult').textContent='SSID 超过32字节，请缩短名称。';return;}configure('POST',{ssid,password});};
 $('forgetWifi').onclick=()=>configure('DELETE');
+$('agentForm').onsubmit=async e=>{e.preventDefault();$('saveAgent').disabled=$('forgetAgent').disabled=true;$('agentResult').textContent='正在保存…';try{const body={uri:$('agentUri').value.trim(),username:$('agentUser').value,password:$('agentPassword').value,topic:$('agentTopic').value.trim(),clear_password:$('clearAgentPassword').checked};const r=await request('/agent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.status!==200)throw Error(r.body.error||'保存失败');$('agentPassword').value='';$('clearAgentPassword').checked=false;$('agentResult').textContent='已保存。进入设备“Agent 收件”页后生效。';}catch(e){$('agentResult').textContent=e.message;}finally{$('saveAgent').disabled=$('forgetAgent').disabled=false;}};
+$('forgetAgent').onclick=async()=>{if(!confirm('清除本设备保存的 MQTT/TLS 配置？'))return;$('saveAgent').disabled=$('forgetAgent').disabled=true;try{const r=await request('/agent',{method:'DELETE'});if(r.status!==200)throw Error(r.body.error||'清除失败');$('agentResult').textContent='配置已清除。';$('agentUri').value=$('agentUser').value=$('agentTopic').value='';$('agentPassword').value='';}catch(e){$('agentResult').textContent=e.message;}finally{$('saveAgent').disabled=$('forgetAgent').disabled=false;}};
+$('copyBookmarklet').onclick=async()=>{try{await navigator.clipboard.writeText($('bookmarkletCode').value);$('clipResult').textContent='已复制；新建书签后粘贴为网址。';}catch(e){$('bookmarkletCode').focus();$('bookmarkletCode').select();$('clipResult').textContent='请复制选中的代码，并粘贴为新书签的网址。';}};
 </script>
 </html>

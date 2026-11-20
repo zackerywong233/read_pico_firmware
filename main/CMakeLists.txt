@@ -3,6 +3,9 @@ set(main_requires
     read_pico_transfer
     read_pico_search
     espressif__qrcode
+    espressif__mqtt
+    espressif__cjson
+    esp_event
     continuous_du
     e0470_epaper_waveform
     read_pico_pmu
@@ -12,6 +15,9 @@ set(main_requires
     spi_flash
     heap
     nvs_flash
+    esp_http_client
+    esp-tls
+    mbedtls
     esp_hw_support
     esp_rom
     esp_driver_gpio
@@ -40,8 +46,11 @@ idf_component_register(
         "apps/app_reading.c"
         "apps/app_book.c"
         "apps/app_transfer.c"
+        "apps/app_web.c"
+        "apps/app_agent.c"
         "book/book_store.c"
         "book/book_progress.c"
+        "book/book_notes.c"
         "book/book_source.c"
         "book/book_txt.c"
         "book/book_epub.c"

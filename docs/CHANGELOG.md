@@ -2,6 +2,26 @@
 
 ## 2026-11-20
 
+- 本地内容可靠性：内置存储仅在检测到分区全擦除时自动初始化；已有内容遇到挂载错误时保留数据并报告不可用。TF 卡和内置存储同时可用时，可在传书页点按容量行切换图书上传目标，切换仅在上传空闲时重启服务；字体仍只上传至 TF 卡。Wi-Fi 覆盖遇到已提交文件留下的过期备份时可继续替换；字体配置仅在字体成功加载后更新。
+  Local content reliability: auto-initialize internal storage only when the partition is erased; preserve existing data on mount errors. When TF and internal storage are both available, tap the capacity row to switch the book upload target; switching restarts the service only while idle, and fonts remain TF-only. Wi-Fi replacement can proceed past stale backups left beside committed files, and font settings update only after a successful font load.
+- 阅读体验：底部进度条现在可直接点按跳转；跨章节跳转会继续分页到目标位置，避免落到只预排的前几页。
+  Reading: tap the bottom progress track to seek directly. Cross-chapter seeking paginates through the target offset instead of stopping at the first pre-rendered pages.
+- 书架与阅读：增加按图书保存的书签和整页摘录，笔记迁至图书目录旁的隐藏文件，不限制条目数或摘录长度，实际受存储空间和内存限制。旧固件 NVS 笔记会在首次打开时迁移。清阅读进度保留笔记，删除或替换图书时清理笔记。
+  Bookshelf and reading: add per-book bookmarks and full-page excerpts in hidden sidecar files, with no item-count or excerpt-length cap beyond available storage and memory. Legacy NVS notes migrate on first open. Clearing resume progress preserves notes; deleting or replacing a book removes them.
+- 续读：只有路径和文件大小都匹配的有效进度才显示续读确认；已删除或被替换的文件不会留下误导性的续读提示。
+  Resume: show the confirmation only when path and file size match a valid progress record; missing or replaced files no longer leave a misleading prompt.
+- 新增网页阅读：在设备输入 HTTP/HTTPS 地址，最多抓取 512 KiB 并按图书布局分页；同一 WiFi 下可用浏览器书签将网页正文剪藏到当前书架。静态提取不运行网页脚本、不加载 CSS 或图片，离开页面或设备锁屏后停止联网服务。
+  Add Web Reader: enter an HTTP/HTTPS address on the device, fetch up to 512 KiB and paginate with the book layout. A browser bookmark on the same WiFi can clip page text into the current shelf. Extraction is static, with no scripts, CSS or images; networking stops when leaving the page or locking the device.
+- 新增 Agent 收件：从应用菜单打开后，使用本机传书页配置的 MQTT/TLS Broker 与主题接收 JSON 文字或 HTTPS 图片；文字可分页阅读，图片保存至 TF 卡并设为锁屏屏保。仅在页面活动且设备已连接 WiFi 时联网；图片大小上限 2 MiB，屏保文件为 `agent_screensaver.jpg/png`。
+  Add Agent Inbox: open it from the app menu and receive JSON text or HTTPS images through the MQTT/TLS broker and topic configured on the local transfer page. Text is paginated; images are saved to TF and selected as the lock-screen saver. Networking runs only while the page is active and WiFi is connected; images are capped at 2 MiB and stored as `agent_screensaver.jpg/png`.
+- Pico OS 桌面改为六格布局，网页阅读、我的看板等日常应用可直接进入，同时保留原有离线入口与应用菜单。
+  Expand the Pico OS launcher to six tiles for direct access to Web Reader, Dashboard and other daily apps while retaining offline navigation and the full app menu.
+- 睡眠设置增加无操作自动睡眠时间：默认 2 分钟，可选 30 秒至 60 分钟或关闭；自动锁屏继续使用已选的浅睡、深睡或关机模式。
+  Add an adjustable idle timeout before automatic sleep: 2 minutes by default, with options from 30 seconds to 60 minutes or off. Automatic lock continues to use the selected light, deep or power-off mode.
+- 修复首页看板和系统工具新增中文缺少内置字形的问题；重新生成内置字体子集。
+  Add the missing built-in glyphs for the new dashboard and System Tools Chinese text by regenerating the embedded font subset.
+- 修正设备自检的失败级联：PMU 未就绪或探活前置项失败时，未运行步骤显示“跳过”；修正探活/命令分组边界并显示跳过计数。
+  Prevent self-test failure cascades: show unexecuted checks as skipped when the PMU or a prerequisite probe fails, correct the probe/command grouping and include skipped counts.
 - Pico OS 一级菜单现在突出图书、传书、看板、设备状态和自检；刷新、传感器、存储等开发诊断统一收进“系统工具”，不再把 Pico OS 桌面与硬件演示页并列呈现。
   The Pico OS root menu now foregrounds books, transfer, dashboard, device status and self-test. Refresh, sensor, storage and other development diagnostics are grouped under System Tools instead of appearing beside the launcher as peer demo pages.
 - 锁屏默认改为 PMU 软睡眠，短按侧边电源键即可开机；显式关机档仍需长按开机。图书每次翻页及应用/菜单切换使用整屏 GC16，减少上一页残影。

@@ -19,6 +19,7 @@
 #define TAG "settings"
 #define NVS_NS "read_pico"
 #define NVS_KEY_SLEEP "sleep"
+#define NVS_KEY_AUTO_SLEEP "idle_s"
 #define NVS_KEY_FONT "font"
 #define NVS_KEY_WAKE "lwake"
 #define NVS_KEY_BOOT "lboot"
@@ -30,6 +31,7 @@
 #define FONT_PATH_MAX 160
 
 static app_sleep_mode_t s_sleep = APP_SLEEP_DEEP;
+static uint16_t s_auto_sleep_sec = 120;
 static char s_font[FONT_PATH_MAX];
 static uint8_t s_last_wake;
 static uint8_t s_last_boot;
@@ -41,6 +43,23 @@ static uint8_t s_dashboard = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BO
 
 static uint8_t valid_book_px(uint8_t px) {
     return px >= 36 && px <= 72 && (px - 36) % 4 == 0 ? px : 48;
+}
+
+static bool valid_auto_sleep_sec(uint16_t seconds) {
+    switch (seconds) {
+        case 0:
+        case 30:
+        case 60:
+        case 120:
+        case 300:
+        case 600:
+        case 900:
+        case 1800:
+        case 3600:
+            return true;
+        default:
+            return false;
+    }
 }
 
 void app_settings_init(void) {
@@ -59,6 +78,11 @@ void app_settings_init(void) {
     uint8_t raw = APP_SLEEP_DEEP;
     if (nvs_get_u8(h, NVS_KEY_SLEEP, &raw) == ESP_OK && raw <= APP_SLEEP_OFF) {
         s_sleep = (app_sleep_mode_t)raw;
+    }
+    uint16_t auto_sleep = 120;
+    if (nvs_get_u16(h, NVS_KEY_AUTO_SLEEP, &auto_sleep) == ESP_OK
+        && valid_auto_sleep_sec(auto_sleep)) {
+        s_auto_sleep_sec = auto_sleep;
     }
     size_t font_len = sizeof(s_font);
     if (nvs_get_str(h, NVS_KEY_FONT, s_font, &font_len) != ESP_OK) {
@@ -79,8 +103,9 @@ void app_settings_init(void) {
     }
     nvs_close(h);
     ESP_LOGI(
-        TAG, "sleep mode %s, font %s",
+        TAG, "sleep mode %s, auto lock %u s, font %s",
         app_sleep_mode_name(s_sleep),
+        (unsigned)s_auto_sleep_sec,
         s_font[0] != '\0' ? s_font : "(builtin)"
     );
 }
@@ -104,6 +129,20 @@ void app_settings_set_sleep_mode(app_sleep_mode_t mode) {
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
     nvs_set_u8(h, NVS_KEY_SLEEP, (uint8_t)mode);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+uint16_t app_settings_auto_sleep_sec(void) {
+    return s_auto_sleep_sec;
+}
+
+void app_settings_set_auto_sleep_sec(uint16_t seconds) {
+    if (!valid_auto_sleep_sec(seconds) || s_auto_sleep_sec == seconds) return;
+    s_auto_sleep_sec = seconds;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_u16(h, NVS_KEY_AUTO_SLEEP, seconds);
     nvs_commit(h);
     nvs_close(h);
 }
