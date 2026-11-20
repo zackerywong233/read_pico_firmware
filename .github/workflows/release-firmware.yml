@@ -22,7 +22,7 @@ jobs:
           . "$IDF_PATH/export.sh"
           idf.py set-target esp32s3
           idf.py build
-          idf.py merge-bin -o build/pico-os-merged.bin
+          idf.py merge-bin -o pico-os-merged.bin
           mkdir -p public
           cp -R web/. public/
           cp build/pico-os-merged.bin public/pico-os-merged.bin
