@@ -29,6 +29,7 @@ idf.py build
 | 路径 / Path | 职责 / Role |
 | --- | --- |
 | `main/app_main.c` | 开机装配：板级 init、读设置、定 VCOM、开机图、字体，然后交给 `app_loop`。/ Boot wiring, then `app_loop`. |
+| `main/reading_stats.c` | 持久化累计阅读时间、最近摘录与最近图书进度。/ Persist cumulative reading time, saved excerpt and recent book progress. |
 | `main/app/app.h` | `app_desc_t` / `app_ctx_t` / `app_redraw_t` 契约。/ Page contract. |
 | `main/app/app_loop.c` | 与页面无关的事件循环：触摸去抖、三键与菜单把手、切页、刷屏、锁屏、SD 字体延迟加载。/ Shared event loop. |
 | `main/app/app_registry.c` | 菜单顺序。加页只改这张表。/ Menu table. |
@@ -68,6 +69,8 @@ One file, one `app_desc_t`. Order matches `app_registry.c`.
 
 | 文件 / File | 演示 / Demo | 依赖 / Depends on |
 | --- | --- | --- |
+| `app_personal.c` | 默认看板：日期、电池、最近阅读与 TF 卡文字；可选择锁屏主题。/ Default dashboard with date, battery, recent reading and SD text; choose lock-screen style. | `settings`, `reading_stats`, `read_pico_pmu`, `read_pico_sd` |
+| `app_pico_home.c` | Pico OS 启动页与入口。/ Pico OS launcher and entry points. | `ui_kit` |
 | `app_home.c` | 概览：I2C 普查、识别码、电池、构建时间。/ Overview. | `read_pico`, `read_pico_pmu` |
 | `app_refresh.c` | GC16 / DU / 灰阶梯子与耗时。/ Refresh matrix. | `epdiy`, `e0470_epaper_waveform` |
 | `app_reading.c` | 内置正文翻页。/ Reading demo. | `ttf_font` |
