@@ -16,7 +16,7 @@ After merging the firmware branch, push a version tag such as `v1.0.0` on `main`
 ## 使用方式 / Install
 
 1. 打开 [小纸 Pico 浏览器刷机页](https://zackerywong233.github.io/read_pico_firmware/)。
-2. 使用最新版 Chrome 或 Edge。Firefox 与 Safari 不支持此页面所用的 Web Serial 安装流程。
+2. 使用最新版 Chrome 或 Edge，确保浏览器支持 Web Serial。
 3. 用 USB 数据线连接设备，点击“连接并安装”，在系统弹窗里选择 Pico 的串口。
 4. 首次安装会询问是否擦除 ESP Flash。擦除会清除 ESP 内置存储和设置；TF 卡上的文件不会被擦除。
 5. 等到页面显示完成后再断开 USB 并重启设备。
