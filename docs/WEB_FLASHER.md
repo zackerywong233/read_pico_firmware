@@ -23,11 +23,11 @@ After merging the firmware branch, push a version tag such as `v1.0.0` on `main`
 
 Open the installer in current Chrome or Edge, connect over USB, select the Pico serial port, and wait for the completion message before disconnecting. The first install asks whether to erase ESP flash. Erasing clears internal storage and settings; files on the TF card remain untouched.
 
-## 恢复下载模式 / Enter download mode
+## USB 未识别 / USB not detected
 
-若串口未出现，可断开 USB，按住设备 BOOT 键再重新连接，识别后松开 BOOT。刷写中断时保持电源稳定，再次进入下载模式重试。
+若串口未出现，先换 USB-A 数据线；再让设备睡眠后唤醒并重试；最后重启开发板。刷写中断时保持电源稳定，重新连接后重试。
 
-If no serial port appears, unplug USB, hold BOOT while reconnecting, then release it after the port is detected. If flashing is interrupted, keep power stable and retry in download mode.
+If no serial port appears, try a USB-A data cable, then retry after a sleep/wake cycle, and restart the board if needed. If flashing is interrupted, keep power stable, reconnect, and retry.
 
 ## 维护说明 / Maintainer notes
 
