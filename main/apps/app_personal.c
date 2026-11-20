@@ -219,7 +219,6 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
 const app_desc_t app_personal = {
     .title = "我的看板",
     .detail = "个人信息与屏保",
-    .enter_full = true,
     .render = render,
     .on_enter = on_enter,
     .on_touch = on_touch,
