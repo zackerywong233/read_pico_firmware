@@ -38,6 +38,10 @@
 | 存储 | TF 卡（1 bit SDMMC），字体从卡上加载 |
 | 其它 | 蜂鸣器、三个电容按键区 |
 
+## 浏览器内安装
+
+发布新版本后，可在 [小纸 Pico 浏览器刷机页](https://zackerywong233.github.io/read_pico_firmware/) 直接安装固件。请使用最新版 Chrome 或 Edge，通过 USB 连接设备；首次安装时会显示是否擦除 ESP 内置 Flash 的选项。擦除会清除内置存储与设置，TF 卡文件不受影响。发布与刷写说明见 [浏览器刷机文档](docs/WEB_FLASHER.md)。
+
 ## 编译与烧写
 
 需要 ESP-IDF v6.1。`components/read_pico/read_pico_flash_hpm.c` 依赖 v6 才提供的
