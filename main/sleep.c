@@ -10,9 +10,15 @@
 
 #include "sleep.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "app.h"
+#include "book_image.h"
+#include "reading_stats.h"
 #include "display.h"
 #include "driver/gpio.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_private/sleep_cpu.h"
 #include "esp_sleep.h"
@@ -24,7 +30,9 @@
 #include "read_pico_buzzer.h"
 #include "read_pico_pmu.h"
 #include "sc7a20h_lab.h"
+#include "read_pico_sd.h"
 #include "settings.h"
+#include "ttf_font.h"
 #include "ui_kit.h"
 
 static const char* TAG = "read_pico";
@@ -281,6 +289,99 @@ esp_err_t app_enter_host_sleep(app_sleep_mode_t mode) {
     return err;
 }
 
+static uint8_t* load_saver_image(size_t* length) {
+    read_pico_sd_info_t sd = {0};
+    if (read_pico_sd_get_info(&sd) != ESP_OK || !sd.mounted) return NULL;
+    static const char* paths[] = {"/sdcard/screensaver.jpg", "/sdcard/screensaver.png"};
+    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+        FILE* f = fopen(paths[i], "rb");
+        if (!f) continue;
+        if (fseek(f, 0, SEEK_END) != 0) { fclose(f); continue; }
+        long size = ftell(f);
+        if (size <= 0 || size > 2 * 1024 * 1024 || fseek(f, 0, SEEK_SET) != 0) {
+            fclose(f);
+            continue;
+        }
+        uint8_t* data = heap_caps_malloc((size_t)size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!data) { fclose(f); return NULL; }
+        size_t got = fread(data, 1, (size_t)size, f);
+        fclose(f);
+        if (got == (size_t)size) { *length = got; return data; }
+        heap_caps_free(data);
+    }
+    return NULL;
+}
+
+static bool draw_saver_image(uint8_t* framebuffer) {
+    size_t encoded_len = 0;
+    uint8_t* encoded = load_saver_image(&encoded_len);
+    if (!encoded) return false;
+    uint8_t* pixels = NULL;
+    uint16_t image_w = 0, image_h = 0;
+    bool ok = book_image_decode(encoded, encoded_len, 2 * 1024 * 1024,
+                                &pixels, &image_w, &image_h);
+    heap_caps_free(encoded);
+    if (!ok || !pixels || !image_w || !image_h) { free(pixels); return false; }
+    ui_clear_page(framebuffer);
+    const int screen_w = epd_rotated_display_width();
+    const int screen_h = epd_rotated_display_height();
+    int draw_w = image_w, draw_h = image_h;
+    if (draw_w > screen_w) { draw_h = draw_h * screen_w / draw_w; draw_w = screen_w; }
+    if (draw_h > screen_h) { draw_w = draw_w * screen_h / draw_h; draw_h = screen_h; }
+    int left = (screen_w - draw_w) / 2;
+    int top = (screen_h - draw_h) / 2;
+    for (int y = 0; y < draw_h; ++y) for (int x = 0; x < draw_w; ++x) {
+        size_t src = (size_t)((int64_t)y * image_h / draw_h) * image_w +
+                     (size_t)((int64_t)x * image_w / draw_w);
+        epd_draw_pixel(left + x, top + y, pixels[src], framebuffer);
+    }
+    free(pixels);
+    return true;
+}
+
+static bool draw_saver_quote(uint8_t* framebuffer) {
+    char title[128] = {0}, excerpt[320] = {0};
+    if (!reading_stats_get_excerpt(title, sizeof(title), excerpt, sizeof(excerpt))) return false;
+    ui_clear_page(framebuffer);
+    ui_text_vc(framebuffer, UI_LOCK_WIDTH / 2, 260, UI_PX_TITLE,
+               "此刻摘录", EPD_DRAW_ALIGN_CENTER, false);
+    ui_hairline(framebuffer, 330, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
+    ui_text(framebuffer, UI_MARGIN, 390, UI_PX_SECTION, title,
+            EPD_DRAW_ALIGN_LEFT, false);
+    const char* start = excerpt;
+    int y = 470;
+    char wrapped[160];
+    while (*start && y < UI_LOCK_HEIGHT - 220) {
+        const char* p = start;
+        const char* end = start;
+        while (*p) {
+            const unsigned char c = (unsigned char)*p;
+            const char* next = p + (c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4);
+            size_t n = (size_t)(next - start);
+            if (n >= sizeof(wrapped)) break;
+            memcpy(wrapped, start, n);
+            wrapped[n] = '\0';
+            if (ttf_text_width_px(UI_PX_BODY, wrapped) > ui_content_width() && end != start) break;
+            end = next;
+            p = next;
+        }
+        if (end == start) break;
+        size_t n = (size_t)(end - start);
+        memcpy(wrapped, start, n);
+        wrapped[n] = '\0';
+        ui_text(framebuffer, UI_MARGIN, y, UI_PX_BODY, wrapped, EPD_DRAW_ALIGN_LEFT, false);
+        y += UI_PX_BODY + 18;
+        start = end;
+    }
+    char line[64];
+    snprintf(line, sizeof(line), "累计阅读 %lu 分钟",
+             (unsigned long)(reading_stats_total_seconds() / 60));
+    ui_text_vc(framebuffer, UI_LOCK_WIDTH / 2, UI_LOCK_HEIGHT - 120,
+               UI_PX_CAPTION, line, EPD_DRAW_ALIGN_CENTER, false);
+    return true;
+}
+
+
 void enter_lock_and_sleep(
     EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc
 ) {
@@ -291,7 +392,10 @@ void enter_lock_and_sleep(
     epd_poweron();
     epd_clear();
     epd_hl_set_all_white(hl);
-    ui_draw_full_image(framebuffer, lock_4bpp_bin_start);
+    bool custom = false;
+    if (app_settings_saver_style() == APP_SAVER_IMAGE) custom = draw_saver_image(framebuffer);
+    else if (app_settings_saver_style() == APP_SAVER_QUOTE) custom = draw_saver_quote(framebuffer);
+    if (!custom) ui_draw_full_image(framebuffer, lock_4bpp_bin_start);
     epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
 
     app_lock_wait_key_idle(800);
