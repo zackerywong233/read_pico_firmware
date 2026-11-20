@@ -676,7 +676,7 @@ static esp_err_t store_agent_config(const read_pico_agent_config_t *config) {
 static esp_err_t load_agent_nvs(read_pico_agent_config_t *out) {
     esp_err_t err = agent_config_store_read(out);
     if (err == ESP_ERR_NVS_NOT_FOUND) return err;
-    if (err != ESP_OK || size != sizeof(*out) || !valid_agent_config(out)) {
+    if (err != ESP_OK || !valid_agent_config(out)) {
         memset(out, 0, sizeof(*out));
         return err == ESP_OK ? ESP_ERR_INVALID_STATE : err;
     }
