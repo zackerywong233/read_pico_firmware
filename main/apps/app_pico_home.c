@@ -128,7 +128,6 @@ static void on_enter(app_ctx_t* ctx) {
 const app_desc_t app_pico_home = {
     .title = "小纸 Pico",
     .detail = "Pico OS 桌面",
-    .enter_full = true,
     .owns_keys = true,
     .render = render,
     .on_enter = on_enter,

@@ -409,7 +409,6 @@ static void on_enter(app_ctx_t* ctx) {
 const app_desc_t app_home = {
     .title = "概览 Overview",
     .detail = "设备识别码与状态 Device Info & Status",
-    .enter_full = true,
     .render = render,
     .present = home_present,
     .on_enter = on_enter,

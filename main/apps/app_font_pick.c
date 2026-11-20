@@ -466,7 +466,6 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
 const app_desc_t app_font_pick = {
     .title = FONT_TITLE,
     .detail = "选择、排版与基准 Select, Type & Bench",
-    .enter_full = true,
     .render = render,
     .on_enter = on_enter,
     .on_exit = font_on_exit,

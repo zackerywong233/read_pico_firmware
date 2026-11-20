@@ -588,7 +588,6 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
 const app_desc_t app_reading = {
     .title = READING_TITLE,
     .detail = "正文翻页对照 Reading Page Turn",
-    .enter_full = true,
     .render = render,
     .present = reading_present,
     .on_enter = on_enter,
