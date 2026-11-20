@@ -25,6 +25,8 @@
 #define NVS_KEY_PICKUP "pickup"
 #define NVS_KEY_BOOK_PX "bk_px"
 #define NVS_KEY_BOOK_SHAKE "bk_shake"
+#define NVS_KEY_SAVER "saver"
+#define NVS_KEY_DASH "dash"
 #define FONT_PATH_MAX 160
 
 static app_sleep_mode_t s_sleep = APP_SLEEP_OFF;
@@ -34,6 +36,8 @@ static uint8_t s_last_boot;
 static bool s_pickup_wake;
 static uint8_t s_book_px = 48;
 static bool s_book_shake;
+static app_saver_style_t s_saver = APP_SAVER_BUILTIN;
+static uint8_t s_dashboard = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK | APP_DASH_NOTE;
 
 static uint8_t valid_book_px(uint8_t px) {
     return px >= 36 && px <= 72 && (px - 36) % 4 == 0 ? px : 48;
@@ -66,9 +70,13 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_BOOT, &boot) == ESP_OK) s_last_boot = boot;
     uint8_t pickup = 0;
     if (nvs_get_u8(h, NVS_KEY_PICKUP, &pickup) == ESP_OK) s_pickup_wake = pickup != 0;
-    uint8_t book_px = 48, book_shake = 0;
+    uint8_t book_px = 48, book_shake = 0, saver = 0;
     if (nvs_get_u8(h, NVS_KEY_BOOK_PX, &book_px) == ESP_OK) s_book_px = valid_book_px(book_px);
     if (nvs_get_u8(h, NVS_KEY_BOOK_SHAKE, &book_shake) == ESP_OK) s_book_shake = book_shake != 0;
+    if (nvs_get_u8(h, NVS_KEY_SAVER, &saver) == ESP_OK && saver <= APP_SAVER_IMAGE) s_saver = (app_saver_style_t)saver;
+    if (nvs_get_u8(h, NVS_KEY_DASH, &s_dashboard) != ESP_OK) {
+        s_dashboard = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK | APP_DASH_NOTE;
+    }
     nvs_close(h);
     ESP_LOGI(
         TAG, "sleep mode %s, font %s",
@@ -171,4 +179,23 @@ void app_settings_set_book_shake(bool on) {
     if (s_book_shake == on) return;
     s_book_shake = on;
     nvs_put_u8(NVS_KEY_BOOK_SHAKE, on ? 1 : 0);
+}
+
+app_saver_style_t app_settings_saver_style(void) { return s_saver; }
+
+void app_settings_set_saver_style(app_saver_style_t style) {
+    if (style > APP_SAVER_IMAGE) style = APP_SAVER_BUILTIN;
+    if (s_saver == style) return;
+    s_saver = style;
+    nvs_put_u8(NVS_KEY_SAVER, (uint8_t)style);
+}
+
+uint8_t app_settings_dashboard_items(void) { return s_dashboard; }
+
+void app_settings_set_dashboard_items(uint8_t items) {
+    const uint8_t valid = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK | APP_DASH_NOTE;
+    items &= valid;
+    if (s_dashboard == items) return;
+    s_dashboard = items;
+    nvs_put_u8(NVS_KEY_DASH, items);
 }
