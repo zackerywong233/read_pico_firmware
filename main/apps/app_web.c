@@ -475,7 +475,7 @@ static void on_enter(app_ctx_t *ctx) {
     network_start();
 }
 
-static void on_exit(app_ctx_t *ctx) {
+static void web_on_exit(app_ctx_t *ctx) {
     (void)ctx;
     while (s_fetch_running) vTaskDelay(pdMS_TO_TICKS(20));
     web_result_t *result = NULL;
@@ -555,7 +555,7 @@ static void keyboard_touch(uint16_t x, uint16_t y) {
         if (ui_rect_hit(key_rect(i), x, y)) { url_key(WEB_KEY_BASE + i); return; }
     }
     for (int i = 0; i < 10; ++i) {
-        if (ui_rect_hit(special_rect(i), x, y)) { url_key(s_special_ids[i]); return; }
+        if (ui_rect_hit(special_rect(i), x, y)) { url_key(WEB_SPECIAL_BASE + i); return; }
     }
     if (ui_rect_hit(ui_row_rect(0, 2, 830, 72), x, y)) append_url("https://");
     else if (ui_rect_hit(ui_row_rect(1, 2, 830, 72), x, y)) s_uppercase = !s_uppercase;
@@ -609,7 +609,7 @@ const app_desc_t app_web = {
     .detail = "在线网页与浏览器剪藏",
     .render = render,
     .on_enter = on_enter,
-    .on_exit = on_exit,
+    .on_exit = web_on_exit,
     .on_media_lost = on_media_lost,
     .on_gesture = on_gesture,
     .on_tick = on_tick,
