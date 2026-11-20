@@ -23,6 +23,7 @@ int app_index_of(const app_desc_t* app);
 
 /// 开机默认页与设备功能自检页，供 app_main 与首页引用。/ Boot default page and device self-test page, for app_main and the home page.
 const app_desc_t* app_home_page(void);
+const app_desc_t* app_personal_page(void);
 const app_desc_t* app_selftest_page(void);
 
 #ifdef __cplusplus
