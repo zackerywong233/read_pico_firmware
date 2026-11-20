@@ -105,6 +105,6 @@ void app_main(void) {
         .sensor_ready = hw.sensor_ready,
         // 自检跑到一半断电的话，重新上电直接回自检页接着跑。
         // Resume the self-test page if a power-cut interrupted it.
-        .first_app = st_resume ? app_selftest_page() : app_home_page(),
+        .first_app = st_resume ? app_selftest_page() : app_personal_page(),
     });
 }
