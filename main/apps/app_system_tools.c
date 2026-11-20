@@ -82,7 +82,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     }
     const int page = ctx->leaf;
     const int first = page * TOOLS_PER_PAGE;
-    char subtitle[48];
+    char subtitle[64];
     snprintf(subtitle, sizeof(subtitle), "硬件诊断与开发辅助  ·  %d / %d",
              page + 1, TOOLS_PAGE_COUNT);
     ui_clear_page(fb);
