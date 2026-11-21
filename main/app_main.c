@@ -28,6 +28,7 @@
 #include "read_pico_sd.h"
 #include "settings.h"
 #include "sleep.h"
+#include "time_sync.h"
 #include "ttf_font.h"
 #include "ui_kit.h"
 #include "vcom_setup.h"
@@ -134,7 +135,10 @@ void app_main(void) {
 
     app_ambient_settings_t ambient;
     app_settings_ambient_get(&ambient);
-    if (hw.pmu_ready) (void)read_pico_pmu_refresh();
+    if (hw.pmu_ready) {
+        (void)read_pico_pmu_refresh();
+        app_time_sync_from_pmu();
+    }
     const pmu_snapshot_t *pmu = read_pico_pmu_get();
     if (pmu && pmu->wake_reason == 6 && ambient.enabled && !st_resume && vcom_ok &&
         !pending_image_verification()) {

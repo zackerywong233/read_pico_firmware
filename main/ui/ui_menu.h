@@ -23,6 +23,7 @@ extern "C" {
 #define UI_MENU_HIT_NONE (-1)
 #define UI_MENU_HIT_PREV (-2)
 #define UI_MENU_HIT_NEXT (-3)
+#define UI_MENU_HIT_HOME (-4)
 
 // 触摸面板比显示区长，屏幕下方那条感应区里有三个按键。它们不在画面里，
 // 没有东西可画，只能按坐标识别：实测中心 x=80/240/400，y≈1500。

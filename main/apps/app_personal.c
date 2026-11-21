@@ -20,9 +20,11 @@
 #include "read_pico_pmu.h"
 #include "read_pico_sd.h"
 #include "settings.h"
+#include "time_sync.h"
 #include "ttf_font.h"
 #include "ui_kit.h"
 #include "ui_menu.h"
+#include "ui_time_edit.h"
 
 extern const app_desc_t app_book;
 
@@ -47,6 +49,12 @@ static char s_last_book[128];
 static uint8_t s_last_percent;
 static bool s_have_last_book;
 static char s_time_sync_msg[64];
+static ui_time_edit_t s_time_editor;
+static int s_time_edit_return_leaf;
+
+static EpdRect dash_time_card_rect(void) {
+    return (EpdRect){UI_MARGIN, UI_CONTENT_TOP, ui_content_width(), 142};
+}
 
 static void load_note(void) {
     memset(s_note, 0, sizeof(s_note));
@@ -89,21 +97,23 @@ static void draw_dashboard(uint8_t* fb) {
     int y = UI_CONTENT_TOP;
     char line[160];
     if (items & APP_DASH_TIME) {
-        EpdRect card = {UI_MARGIN, y, ui_content_width(), 142};
+        EpdRect card = dash_time_card_rect();
         draw_card(fb, card, "日期与时间");
-        if (s_pmu.time_ok && s_pmu.unix_sec) {
-            int tz_min = app_settings_timezone_min();
-            time_t raw = (time_t)s_pmu.unix_sec + (time_t)tz_min * 60;
-            struct tm tm_local;
-            gmtime_r(&raw, &tm_local);
+        ui_text(fb, card.x + card.width - UI_PAD, card.y + 12, UI_PX_CAPTION,
+                "调时间 ›", EPD_DRAW_ALIGN_RIGHT, false);
+        struct tm tm_local;
+        int tz_min = app_settings_timezone_min();
+        if (app_time_now_local(&tm_local, &tz_min)) {
             strftime(line, sizeof(line), "%H:%M", &tm_local);
             ui_text_vc(fb, card.x + UI_PAD, card.y + 82, UI_PX_HERO, line, EPD_DRAW_ALIGN_LEFT, false);
             char date[32];
             strftime(date, sizeof(date), "%Y-%m-%d", &tm_local);
-            snprintf(line, sizeof(line), "%s · UTC%+d:%02d", date, tz_min / 60, abs(tz_min) % 60);
+            char sign = tz_min < 0 ? '-' : '+';
+            int abs_tz = tz_min < 0 ? -tz_min : tz_min;
+            snprintf(line, sizeof(line), "%s · UTC%c%d:%02d", date, sign, abs_tz / 60, abs_tz % 60);
             ui_text_vc(fb, card.x + card.width - UI_PAD, card.y + 92, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_RIGHT, false);
         } else {
-            ui_text(fb, card.x + UI_PAD, card.y + 64, UI_PX_BODY, "尚未同步时间", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, card.x + UI_PAD, card.y + 64, UI_PX_BODY, "尚未校准时间，点按设置", EPD_DRAW_ALIGN_LEFT, false);
         }
         y += card.height + UI_GAP;
     }
@@ -182,7 +192,8 @@ static void draw_settings(uint8_t* fb) {
         ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, UI_PX_CAPTION,
                    savers[i].label, EPD_DRAW_ALIGN_CENTER, false);
     }
-    ui_draw_button(fb, ui_row_rect(0, 1, PERSONAL_SYNC_Y, UI_BTN_H), "同步设备时间", false);
+    ui_draw_button(fb, ui_row_rect(0, 2, PERSONAL_SYNC_Y, UI_BTN_H), "手动调时间", false);
+    ui_draw_button(fb, ui_row_rect(1, 2, PERSONAL_SYNC_Y, UI_BTN_H), "同步设备时间", false);
     ui_text(fb, UI_MARGIN, PERSONAL_HINT_Y, UI_PX_CAPTION,
             "看板文字：TF 卡根目录 dashboard.txt（最多 4 行）", EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, UI_MARGIN, PERSONAL_HINT_Y + 40, UI_PX_CAPTION,
@@ -214,9 +225,10 @@ static void draw_ambient_settings(uint8_t* fb) {
     static const char *sources[] = {"HTTP JSON 卡片", "HTTP 图片", "本地个人看板"};
     snprintf(line, sizeof(line), "内容来源：%s", sources[cfg.source_type % 3]);
     ui_draw_button(fb, ui_row_rect(0, 1, AMBIENT_ROW_Y(4), UI_BTN_H), line, false);
-    time_t now = s_pmu.time_ok && s_pmu.unix_sec ? (time_t)s_pmu.unix_sec : time(NULL);
+    time_t now = 0;
+    bool have_time = app_time_now_utc(&now);
     int tz_min = app_settings_timezone_min();
-    if (cfg.enabled && now >= 946684800) {
+    if (cfg.enabled && have_time) {
         time_t local_now = now + (time_t)tz_min * 60;
         struct tm local;
         if (gmtime_r(&local_now, &local)) {
@@ -247,12 +259,14 @@ static void draw_ambient_settings(uint8_t* fb) {
 static void render(app_ctx_t* ctx, uint8_t* fb) {
     if (ctx->leaf == 1) draw_settings(fb);
     else if (ctx->leaf == 2) draw_ambient_settings(fb);
+    else if (ctx->leaf == 3) ui_time_edit_render(&s_time_editor, fb);
     else draw_dashboard(fb);
 }
 
 static void on_enter(app_ctx_t* ctx) {
     ctx->leaf = 0;
     (void)read_pico_pmu_refresh();
+    app_time_sync_from_pmu();
     s_pmu = *read_pico_pmu_get();
     load_note();
     s_total_read_seconds = reading_stats_total_seconds();
@@ -279,6 +293,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     if (ctx->now_ms < s_next_refresh_ms) return APP_REDRAW_NONE;
     s_next_refresh_ms = ctx->now_ms + 60000;
     (void)read_pico_pmu_refresh();
+    app_time_sync_from_pmu();
     s_pmu = *read_pico_pmu_get();
     s_total_read_seconds = reading_stats_total_seconds();
     s_have_last_book = reading_stats_get_last_book(s_last_book, sizeof(s_last_book), &s_last_percent);
@@ -286,10 +301,32 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
 }
 
 static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
+    if (ctx->leaf == 3) {
+        ui_time_edit_result_t res = ui_time_edit_tap(&s_time_editor, touch->x, touch->y);
+        if (res == UI_TIME_EDIT_SAVED) {
+            s_pmu = *read_pico_pmu_get();
+            snprintf(s_time_sync_msg, sizeof(s_time_sync_msg), "%s",
+                     s_time_editor.pmu_synced ? "时间已保存并同步主板 RTC" : "时间已保存至主机");
+            ctx->leaf = s_time_edit_return_leaf;
+            return APP_REDRAW_FULL;
+        }
+        if (res == UI_TIME_EDIT_CANCELLED) {
+            ctx->leaf = s_time_edit_return_leaf;
+            return APP_REDRAW_FULL;
+        }
+        return res == UI_TIME_EDIT_CHANGED ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
+    }
     if (ctx->leaf == 0) {
         const int bar = ui_bar_hit(touch->x, touch->y, 2);
         if (bar == 0) { ctx->leaf = 1; return APP_REDRAW_PAGE; }
         if (bar == 1) { ctx->request_app = &app_book; return APP_REDRAW_NONE; }
+        if ((app_settings_dashboard_items() & APP_DASH_TIME)
+            && ui_rect_hit(dash_time_card_rect(), touch->x, touch->y)) {
+            s_time_edit_return_leaf = 0;
+            ui_time_edit_open(&s_time_editor);
+            ctx->leaf = 3;
+            return APP_REDRAW_FULL;
+        }
         if (ui_rect_hit(ui_row_rect(0, 1, 900, UI_BTN_H), touch->x, touch->y)) { ctx->leaf = 2; return APP_REDRAW_PAGE; }
         return APP_REDRAW_NONE;
     }
@@ -311,6 +348,7 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
         else if (ui_rect_hit(ui_row_rect(0, 2, AMBIENT_TEST_Y, UI_BTN_H), touch->x, touch->y)) {
             if (!ctx->hl || !ctx->fb) return APP_REDRAW_NONE;
             (void)read_pico_pmu_refresh();
+            app_time_sync_from_pmu();
             s_pmu = *read_pico_pmu_get();
             load_note();
             s_total_read_seconds = reading_stats_total_seconds();
@@ -322,27 +360,21 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
         return APP_REDRAW_PAGE;
     }
     if (ui_bar_hit(touch->x, touch->y, 1) == 0) { ctx->leaf = 0; return APP_REDRAW_PAGE; }
-    if (ui_rect_hit(ui_row_rect(0, 1, PERSONAL_SYNC_Y, UI_BTN_H), touch->x, touch->y)) {
-        time_t now = time(NULL);
-        if (now < 946684800) {
-            snprintf(s_time_sync_msg, sizeof(s_time_sync_msg), "设备时间不可用，请先校准主机时间");
+    if (ui_rect_hit(ui_row_rect(0, 2, PERSONAL_SYNC_Y, UI_BTN_H), touch->x, touch->y)) {
+        s_time_edit_return_leaf = 1;
+        ui_time_edit_open(&s_time_editor);
+        ctx->leaf = 3;
+        return APP_REDRAW_FULL;
+    }
+    if (ui_rect_hit(ui_row_rect(1, 2, PERSONAL_SYNC_Y, UI_BTN_H), touch->x, touch->y)) {
+        time_t now = 0;
+        if (!app_time_now_utc(&now)) {
+            snprintf(s_time_sync_msg, sizeof(s_time_sync_msg), "设备时间不可用，请先手动调时间");
         } else {
-            uint32_t unix_sec = (uint32_t)now;
-            esp_err_t err = read_pico_pmu_time_sync(unix_sec);
-            uint16_t status = read_pico_pmu_get()->last_op_status;
-            bool synced = err == ESP_OK
-                && (status == PMU_STATUS_OK || status == PMU_STATUS_ACCEPTED);
-            if (!synced) {
-                snprintf(s_time_sync_msg, sizeof(s_time_sync_msg), "同步失败：请检查 PMU 连接");
-                return APP_REDRAW_PAGE;
-            }
-            if (err == ESP_OK) err = read_pico_pmu_cmd(PMU_CMD_TIME_GET, NULL, 0);
-            status = read_pico_pmu_get()->last_op_status;
-            synced = err == ESP_OK
-                && (status == PMU_STATUS_OK || status == PMU_STATUS_ACCEPTED);
+            bool synced = false;
+            (void)app_time_set_utc((uint32_t)now, &synced);
             snprintf(s_time_sync_msg, sizeof(s_time_sync_msg), "%s",
-                     synced && read_pico_pmu_get()->time_synced
-                         ? "设备时间已同步" : "同步失败：请检查 PMU 连接");
+                     synced ? "设备时间已同步" : "同步失败：请检查 PMU 连接");
             s_pmu = *read_pico_pmu_get();
         }
         return APP_REDRAW_PAGE;
@@ -371,7 +403,10 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
         ctx->leaf = 1;
         return APP_REDRAW_PAGE;
     }
-    if (ctx->leaf == 2) { ctx->leaf = 0; return APP_REDRAW_PAGE; }
+    if (ctx->leaf == 3) {
+        ctx->leaf = s_time_edit_return_leaf;
+        return APP_REDRAW_FULL;
+    }
     ctx->leaf = 0;
     return APP_REDRAW_PAGE;
 }

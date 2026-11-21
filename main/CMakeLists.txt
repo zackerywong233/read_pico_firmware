@@ -44,6 +44,7 @@ idf_component_register(
         "ui/ui_wifi_qr.c"
         "ui/datamatrix.c"
         "ui/ui_menu.c"
+        "ui/ui_time_edit.c"
         "apps/app_home.c"
         "apps/app_personal.c"
         "apps/app_pico_home.c"

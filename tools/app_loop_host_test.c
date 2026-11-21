@@ -72,7 +72,7 @@ bool ui_menu_handle_hit_test(uint16_t x,uint16_t y) {return x>600 && y>1100 && y
 int ui_menu_leaf_for_app(const app_desc_t*a) {return a==&second?1:0;}
 int ui_menu_leaf_count(void) {return 2;}
 void ui_draw_menu_page(uint8_t*f,const app_desc_t*a,int l) {(void)f;menu_background=a;last_menu_leaf=l;menus++;}
-int ui_menu_hit_test(uint16_t x,uint16_t y,int l) {(void)l;if(x==550&&y==500)return UI_MENU_HIT_NEXT;return x<500&&y>=100&&y<300?(y-100)/100:-1;}
+int ui_menu_hit_test(uint16_t x,uint16_t y,int l) {(void)l;if(x==550&&y==500)return UI_MENU_HIT_NEXT;if(x==300&&y==1150)return UI_MENU_HIT_HOME;return x<500&&y>=100&&y<300?(y-100)/100:-1;}
 bool ui_menu_row_rect(int l,int r,EpdRect*out) {(void)l;*out=(EpdRect){0,r*100+100,500,100};return r>=0&&r<2;}
 void ui_draw_menu_row_pressed(uint8_t*f,const app_desc_t*a,int l,int r,bool p) {(void)f;(void)a;(void)l;(void)r;if(p)highlights++;else restores++;}
 static void enter(app_ctx_t*c) {(void)c;enters++;}
@@ -236,6 +236,11 @@ int main(void) {
     reset();media_test=sd_font=saved_sd_font=true;mounted_steps[0]=mounted_steps[2]=true;time_step=4000000;first.on_media_lost=lost;
     add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);run();
     assert(media_lost==2&&builtin_opens==2&&!probes&&font_opens==2);
-    puts("app_loop: 42 scheduler scenarios passed");
+    // 菜单栏“回桌面”可直接从任意页切回宫格首页。
+    // The menu bar Home action returns directly to app_home_page() from any page.
+    reset();start_second=true;first.on_enter=home_enter;first.render=home_render;second.on_exit=leave;
+    add(650,1150,1,0);add(0,0,0,0);add(300,1150,1,0);add(0,0,0,0);run();
+    assert(menus==1&&exits==1&&home_enters==1&&home_renders==1);
+    puts("app_loop: 43 scheduler scenarios passed");
     return 0;
 }

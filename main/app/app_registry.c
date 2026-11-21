@@ -40,9 +40,10 @@ extern const app_desc_t app_feeds;
 extern const app_desc_t app_sketch;
 extern const app_desc_t app_focus;
 
-// 一级列日常功能、设置、自检和系统工具入口；硬件诊断由工具页继续进入。
-// Keep daily functions, Settings, self-test and system tools at the root; diagnostics live one level deeper.
+// 一级列宫格桌面、日常功能、设置、自检和系统工具入口；硬件诊断由工具页继续进入。
+// Keep the grid home, daily functions, Settings, self-test and system tools at the root; diagnostics live one level deeper.
 static const app_desc_t* const s_apps[] = {
+    &app_pico_home,
     &app_book,
     &app_transfer,
     &app_web,

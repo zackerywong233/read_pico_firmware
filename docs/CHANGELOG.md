@@ -1,5 +1,18 @@
 # 版本变更 / Changelog
 
+## 未发布 / Unreleased
+
+- 桌面与应用菜单：将“小纸 Pico 宫格桌面”加入一级菜单首位，并在应用菜单底栏新增“回桌面”按钮，可从任意页直接返回开机宫格首页。
+  Launcher & App Menu: add the Pico OS grid home to the top of the root app menu and add a Home button to the menu bottom bar so any page can return directly to the boot grid.
+- 随手便签：修复触控坐标未旋转导致的落点偏移与无法拖动书写问题，改用连续 DU 实现跟手滑动输入与笔画插值，修正竖屏 PNG 导出方向并补齐带边框工具栏与状态反馈。
+  Sketch: fix unrotated touch coordinate offset and tap-only input by tracking continuous drags with continuous DU and stroke interpolation, exporting upright portrait PNGs, and adding bordered toolbar controls with status feedback.
+- 固件版本识别：移除 `sdkconfig.defaults` / `sdkconfig.ci` 中写死的 `CONFIG_APP_PROJECT_VER="v0.0.0"`，并在 `CMakeLists.txt` 中于标签构建时自动采用 `GITHUB_REF_NAME`（本地回退 `git describe`），使概览页与 Wi-Fi OTA 正确识别固件版本。
+  Firmware version: remove hardcoded `CONFIG_APP_PROJECT_VER="v0.0.0"` from `sdkconfig.defaults` and `sdkconfig.ci`, and read `GITHUB_REF_NAME` in `CMakeLists.txt` on tagged CI builds (falling back to `git describe` locally) so Overview and Wi-Fi OTA report the actual version.
+- 统一时钟与手动调时：开机从 PMU RTC 恢复主机时钟，专注时钟与我的看板共用同一时间源；新增通用年月日时分与时区手动校准界面，可在专注时钟、我的看板与设置页快速进入并同步写入主板 RTC。
+  Unified clock & manual time setup: restore the host clock from the PMU RTC at boot so Focus Clock and Dashboard share one time source, and add a shared date/time/timezone editor accessible from Focus Clock, Dashboard and Settings that persists to the PMU RTC.
+- 设置应用：修复手势按下返回整页刷新导致主循环立即取消点击手势的缺陷（改为局部 DU 按下态），并为网络与时间、显示与阅读、睡眠与屏保、电源与提示、设备与系统工具、系统更新提供独立子页。
+  Settings: fix gesture press returning full-page redraws that cancelled taps before release (switched to local DU press feedback), and provide dedicated sub-pages for Network & Time, Display & Reading, Sleep & Saver, Power & Alerts, Device & Tools, and System Update.
+
 ## v0.1.18 · 2026-11-21
 
 - 设置与个人看板：修复“设置”页选项点击后仅高亮无法进入或调整的问题（改用抬手手势提交），修正三等分触控区间与计划唤醒时区显示；修复个人看板与定时看板按钮越界/重叠。

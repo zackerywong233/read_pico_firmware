@@ -406,6 +406,11 @@ void app_loop_run(const app_loop_config_t* config) {
                 if (hit == UI_MENU_HIT_PREV || hit == UI_MENU_HIT_NEXT) {
                     menu_leaf += hit == UI_MENU_HIT_NEXT ? 1 : -1;
                     present_menu(&ctx, current, menu_leaf, &feedback);
+                } else if (hit == UI_MENU_HIT_HOME) {
+                    menu_open = false;
+                    ctx.request_app = app_home_page();
+                    selected_from_menu = true;
+                    if (ctx.request_app == current) app_present(&ctx, current, APP_REDRAW_FULL);
                 } else if (hit >= 0 && touch.count == 1) {
                     menu_pressed = hit;
                     menu_feedback(&ctx, current, menu_leaf, hit, true, &feedback);
