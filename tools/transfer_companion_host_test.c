@@ -75,13 +75,15 @@ static void test_settings_codec(void) {
         "\"book_px\":56,\"book_refresh\":2,\"book_line_height\":0,\"book_margin\":2,"
         "\"book_weight\":500,\"book_rotation\":1,\"book_gesture\":2,\"saver_style\":2,"
         "\"dashboard_items\":5,\"timezone_min\":-300,\"charge_led\":false,"
-        "\"low_soc_notify_percent\":20,\"muted\":true,\"transfer_pin_required\":true}";
+        "\"low_soc_notify_percent\":20,\"muted\":true,\"transfer_pin_required\":true,"
+        "\"ble_enabled\":true,\"ble_pin_required\":true}";
     assert(companion_settings_patch_json(&s, valid_patch, strlen(valid_patch), &err));
     assert(s.sleep_mode == 0 && s.auto_sleep_sec == 300 && s.pickup_wake);
     assert(s.book_px == 56 && s.book_refresh == 2 && s.book_line_height == 0 && s.book_margin == 2);
     assert(s.book_weight == 500 && s.book_rotation == 1 && s.book_gesture == 2 && s.saver_style == 2);
     assert(s.dashboard_items == 5 && s.timezone_min == -300 && !s.charge_led);
-    assert(s.low_soc_notify_percent == 20 && s.muted && s.transfer_pin_required);
+    assert(s.low_soc_notify_percent == 20 && s.muted && s.transfer_pin_required &&
+           s.ble_enabled && s.ble_pin_required);
     assert(!strcmp(s.font_path, "/sdcard/fonts/ChillDuanSansVF.ttf"));
 
     // 任意字段失败时不得发生部分修改。/ Rejections must leave the struct untouched.

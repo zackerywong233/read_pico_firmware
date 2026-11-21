@@ -19,6 +19,7 @@ SCAN_DIRS = [
     ROOT / "main/factory",
     ROOT / "main/assets",
     ROOT / "main/app_main.c",
+    ROOT / "main/ble_service.c",
     ROOT / "main/display.c",
     ROOT / "main/sleep.c",
     ROOT / "main/settings.c",

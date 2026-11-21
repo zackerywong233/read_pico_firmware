@@ -18,6 +18,8 @@
 #include "app.h"
 #include "app_loop.h"
 #include "app_registry.h"
+#include "app_focus.h"
+#include "app_personal.h"
 #include "continuous_du.h"
 #include "display.h"
 #include "e0470_epaper_waveform.h"
@@ -34,8 +36,6 @@
 #include "ui_time_edit.h"
 
 extern const app_desc_t app_settings;
-extern const app_desc_t app_focus;
-extern const app_desc_t app_personal;
 extern const app_desc_t app_sketch;
 
 /* ---- 模拟系统时钟 / Fake system clock ---- */
@@ -206,6 +206,8 @@ static uint8_t s_dash_items = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_B
 static bool s_charge_led = true;
 static uint8_t s_low_soc = 15;
 static bool s_muted = false;
+static bool s_ble_enabled = true;
+static bool s_ble_pin_required = false;
 static app_ambient_settings_t s_ambient = { .enabled = false, .interval_min = 60 };
 
 int16_t app_settings_timezone_min(void) { return s_tz_min; }
@@ -234,6 +236,17 @@ uint8_t app_settings_low_soc_notify_percent(void) { return s_low_soc; }
 void app_settings_set_low_soc_notify_percent(uint8_t v) { s_low_soc = v; }
 bool app_settings_muted(void) { return s_muted; }
 void app_settings_set_muted(bool v) { s_muted = v; }
+bool app_settings_ble_enabled(void) { return s_ble_enabled; }
+void app_settings_set_ble_enabled(bool v) { s_ble_enabled = v; }
+bool app_settings_ble_pin_required(void) { return s_ble_pin_required; }
+void app_settings_set_ble_pin_required(bool v) { s_ble_pin_required = v; }
+void app_ble_set_enabled(bool enabled) { s_ble_enabled = enabled; }
+void app_ble_set_pin_required(bool required) { s_ble_pin_required = required; }
+void app_ble_format_status(char *buf, size_t cap) {
+    if (!s_ble_enabled) snprintf(buf, cap, "已关闭");
+    else if (s_ble_pin_required) snprintf(buf, cap, "ReadPico-1234 · 码 654321");
+    else snprintf(buf, cap, "ReadPico-1234 · 广播中");
+}
 const char *app_settings_font_path(void) { return ""; }
 void app_settings_ambient_get(app_ambient_settings_t *out) { *out = s_ambient; }
 bool app_settings_ambient_set(const app_ambient_settings_t *cfg) { s_ambient = *cfg; return true; }
@@ -437,6 +450,19 @@ static void test_time_math_and_unified_clock(void) {
     assert(app_personal.on_touch(&ctx, &t) == APP_REDRAW_FULL);
     app_personal.render(&ctx, fb);
     assert(strcmp(s_last_header, "校准日期与时间") == 0);
+
+    // 验证专注时钟远程状态读取与启停钩子。/ Verify Focus timer remote status and start/stop hooks.
+    app_focus_status_t fst = {0};
+    app_focus_get_status(&fst);
+    assert(!fst.running && fst.duration_min == 25);
+    assert(!app_focus_remote_start(20));
+    assert(app_focus_remote_start(15));
+    app_focus_get_status(&fst);
+    assert(fst.running && !fst.is_break && fst.duration_min == 15 && fst.remaining_sec > 0);
+    app_focus_remote_stop();
+    app_focus_get_status(&fst);
+    assert(!fst.running && fst.remaining_sec == 0);
+
     puts("unified_clock & ui_time_edit: passed");
 }
 
@@ -499,8 +525,8 @@ static void test_settings_real_loop_navigation(void) {
     reset_steps();
     push_idle();
     push_tap(300, UI_CONTENT_TOP + 40); // Row 0: 网络与时间
-    int net_btn_y = UI_CONTENT_TOP + UI_SEC_HEAD + 3 * UI_ROW_H + UI_SECTION_GAP;
-    push_tap(300, net_btn_y + 40); // 手动校准日期与时间
+    int net_btn_y = UI_CONTENT_TOP + UI_SEC_HEAD + 4 * UI_ROW_H + UI_SECTION_GAP;
+    push_tap(300, net_btn_y + (UI_BTN_H + UI_GAP) + 40); // 手动校准日期与时间
     push_tap(540, 268 + 20); // 年 +
     EpdRect save_btn = ui_bar_rect(1, 2);
     push_tap(save_btn.x + 40, save_btn.y + 40); // 保存时间
@@ -508,6 +534,24 @@ static void test_settings_real_loop_navigation(void) {
     if (!setjmp(s_loop_exit)) app_loop_run(&cfg);
     assert(strcmp(s_last_header, "网络与时间") == 0);
     assert(ui_saw_text("2027-11-22"));
+
+    // 场景 6：设置 -> 网络与时间 -> 点按“蓝牙 BLE”与“蓝牙配对码”两个独立按钮。
+    // Scenario 6: Settings -> Network & Time -> tap BLE toggle and BLE PIN toggle independently.
+    s_ble_enabled = true;
+    s_ble_pin_required = false;
+    reset_steps();
+    push_idle();
+    push_tap(300, UI_CONTENT_TOP + 40); // Row 0: 网络与时间
+    EpdRect ble_btn = ui_row_rect(0, 2, net_btn_y, UI_BTN_H);
+    EpdRect pin_btn = ui_row_rect(1, 2, net_btn_y, UI_BTN_H);
+    push_tap(pin_btn.x + 40, pin_btn.y + 40); // 开启蓝牙配对码
+    push_tap(ble_btn.x + 40, ble_btn.y + 40); // 关闭蓝牙 BLE
+    push_idle();
+    if (!setjmp(s_loop_exit)) app_loop_run(&cfg);
+    assert(strcmp(s_last_header, "网络与时间") == 0);
+    assert(s_ble_pin_required == true);
+    assert(s_ble_enabled == false);
+    assert(ui_saw_text("蓝牙控制已关闭"));
 
     free(fb);
     free(back);

@@ -330,6 +330,8 @@ void app_loop_run(const app_loop_config_t* config) {
         ctx.request_app = NULL;
         ctx.request_menu = false;
         ctx.request_return = false;
+        ctx.request_redraw = false;
+        ctx.request_lock = false;
         bool selected_from_menu = false;
 
         if (ctx.now_ms - last_media_poll_ms >= MEDIA_POLL_INTERVAL_MS) {
@@ -518,6 +520,24 @@ void app_loop_run(const app_loop_config_t* config) {
             app_redraw_t redraw = current->on_tick(&ctx);
             if (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL) held_key = -1;
             present_page(&ctx, current, &gesture, redraw);
+        }
+        if (config->on_bg_tick != NULL && config->on_bg_tick(&ctx, current, menu_open)) {
+            last_input_ms = ctx.now_ms;
+        }
+        if (ctx.request_lock && !current->holds_pmu &&
+            !ctx.request_return && !ctx.request_app && !ctx.request_menu) {
+            ctx.request_lock = false;
+            ctx.request_redraw = false;
+            lock_and_resume(
+                &ctx, current, &gesture, &held_key, &menu_pressed, &feedback,
+                menu_open, menu_leaf, &media_mounted, &media_invalidated,
+                &last_media_poll_ms
+            );
+            last_input_ms = ctx.now_ms;
+        } else if (ctx.request_redraw && !menu_open &&
+                   !ctx.request_return && !ctx.request_app && !ctx.request_menu) {
+            ctx.request_redraw = false;
+            present_page(&ctx, current, &gesture, APP_REDRAW_FULL);
         }
         if (menu_open && feedback.updates > 0
             && ctx.now_ms - feedback.last_ms >= UI_SETTLE_IDLE_MS) {

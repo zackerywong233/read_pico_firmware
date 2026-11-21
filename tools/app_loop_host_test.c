@@ -15,7 +15,7 @@ typedef struct { int x, y, count, error; } sample_t;
 static sample_t samples[32];
 static int sample_count, step, ticks, enters, exits, touch_calls, keys[3], events[8];
 static int menus, highlights, restores, fulls, mode, tick_consumed[32];
-static int long_keys;
+static int long_keys, lock_calls;
 static app_redraw_t long_key(app_ctx_t* c, int k) { assert(k==UI_KEY_2); ++long_keys; c->request_menu=true; return APP_REDRAW_NONE; }
 static app_redraw_t response;
 static bool request_on_touch, request_on_tick, menu_on_tick, menu_on_touch, cancel_clobber;
@@ -51,7 +51,7 @@ bool display_take_white_exit(void) {return false;}
 void rails_idle_check(int64_t n) {(void)n;}
 bool read_pico_pmu_ready(void) {return lock_due;}
 bool read_pico_pmu_take_key_short(void) {return true;}
-void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a) {(void)h;(void)t;(void)a;lock_due=false;time_offset+=1000000;}
+void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a) {(void)h;(void)t;(void)a;lock_due=false;++lock_calls;time_offset+=1000000;}
 bool app_lock_powers_down(void) {return false;}
 const char* app_settings_font_path(void) {return "builtin";}
 uint16_t app_settings_auto_sleep_sec(void) {return 120;}
@@ -125,6 +125,34 @@ static void home_case(void) {
     second=first;second.title="transfer";
     first.on_enter=home_enter;first.render=home_render;first.on_tick=NULL;first.on_touch=NULL;
 }
+static bool bg_switch_triggered;
+static int bg_ticks;
+static bool bg_test_redraw_and_lock;
+static bool bg_tick_switch(app_ctx_t* c, const app_desc_t* cur, bool menu_open) {
+    (void)menu_open;
+    ++bg_ticks;
+    if (bg_test_redraw_and_lock) {
+        if (step == 0) { c->request_redraw = true; return true; }
+        if (step == 1) { c->request_lock = true; return true; }
+        return false;
+    }
+    if (!bg_switch_triggered && cur == &first && step == 1) {
+        bg_switch_triggered = true;
+        c->request_app = &second;
+        return true;
+    }
+    if (bg_switch_triggered && cur == &second && step == 2) {
+        c->request_return = true;
+        return true;
+    }
+    return false;
+}
+
+static void run_bg(void) {
+    app_loop_config_t cfg = { .first_app = &first, .on_bg_tick = bg_tick_switch };
+    if (!setjmp(done)) app_loop_run(&cfg);
+}
+
 int main(void) {
     reset();add(100,400,1,0);add(110,400,1,0);add(0,0,0,0);run();
     assert(touch_calls==1&&ticks==3&&!tick_consumed[0]);
@@ -241,6 +269,19 @@ int main(void) {
     reset();start_second=true;first.on_enter=home_enter;first.render=home_render;second.on_exit=leave;
     add(650,1150,1,0);add(0,0,0,0);add(300,1150,1,0);add(0,0,0,0);run();
     assert(menus==1&&exits==1&&home_enters==1&&home_renders==1);
-    puts("app_loop: 43 scheduler scenarios passed");
+    // 后台服务回调（如 BLE）可安全请求切页并返回原页。
+    // Background service callback (such as BLE) can request page switches and return safely.
+    reset();bg_switch_triggered=false;bg_ticks=0;bg_test_redraw_and_lock=false;second.on_exit=leave;
+    add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);run_bg();
+    assert(bg_ticks==4&&enters==3&&exits==2);
+    // 后台服务回调可触发整屏强刷与全局锁屏，holds_pmu 页忽略远程锁屏。
+    // Background service callback can trigger full redraw and lock; holds_pmu ignores remote lock.
+    reset();bg_test_redraw_and_lock=true;bg_ticks=0;lock_calls=0;
+    add(0,0,0,0);add(0,0,0,0);run_bg();
+    assert(fulls==2&&lock_calls==1);
+    reset();bg_test_redraw_and_lock=true;bg_ticks=0;lock_calls=0;first.holds_pmu=true;
+    add(0,0,0,0);add(0,0,0,0);run_bg();
+    assert(fulls==2&&lock_calls==0);
+    puts("app_loop: 46 scheduler scenarios passed");
     return 0;
 }

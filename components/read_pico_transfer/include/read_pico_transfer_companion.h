@@ -34,6 +34,8 @@ typedef struct {
     uint8_t low_soc_notify_percent; ///< 低电提醒 0 或 5..30 步长 5 / Low-battery alert 0 or 5..30 step 5
     bool muted;                     ///< 全局蜂鸣器静音 / Global buzzer mute
     bool transfer_pin_required;     ///< 局域网传输强制 6 位配对码 / Require 6-digit PIN for LAN transfer writes
+    bool ble_enabled;               ///< 轻量 BLE 控制通道开关 / Lightweight BLE control channel switch
+    bool ble_pin_required;          ///< BLE 敏感指令强制 6 位配对码 / Require 6-digit PIN for sensitive BLE commands
     char font_path[160];            ///< 只读当前字体路径，空为内置字体 / Read-only font path; empty means built-in
 } read_pico_device_settings_t;
 
@@ -59,3 +61,26 @@ typedef struct {
     char excerpt_title[128];    ///< 最近摘录书名 / Recent excerpt book title
     char excerpt_text[256];     ///< 最近摘录正文 / Recent excerpt text
 } read_pico_dashboard_stats_t;
+
+typedef struct {
+    bool has_progress;  ///< 是否存在匹配路径与大小的阅读进度 / Whether valid progress exists for path+size
+    uint8_t percent;    ///< 全书阅读百分比 0..100 / Whole-book progress percent 0..100
+    uint16_t chapter;   ///< 当前章节索引 / Active chapter index
+    uint32_t byte_off;  ///< 章节内 UTF-8 字节偏移 / UTF-8 byte offset inside chapter
+    uint32_t order;     ///< 最近阅读单调序号 / Monotonic recency sequence
+} read_pico_book_progress_t;
+
+#define READ_PICO_WEBMARKS_MAX 20U
+
+typedef struct {
+    char title[64];  ///< 网页收藏标题 / Bookmark title
+    char url[256];   ///< 网页收藏 HTTP(S) 地址 / Bookmark HTTP(S) URL
+} read_pico_webmark_t;
+
+typedef struct {
+    bool running;             ///< 番茄钟是否运行中 / Whether pomodoro is running
+    bool is_break;            ///< 是否处于休息阶段 / Whether in break phase
+    uint16_t duration_min;    ///< 专注时长（15/25/45）/ Focus duration in minutes
+    uint32_t remaining_sec;   ///< 剩余秒数 / Remaining seconds
+    uint32_t completed_count; ///< 累计完成次数 / Total completed sessions
+} read_pico_focus_status_t;

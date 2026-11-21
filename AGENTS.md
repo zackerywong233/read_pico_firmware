@@ -29,6 +29,7 @@ idf.py build
 | 路径 / Path | 职责 / Role |
 | --- | --- |
 | `main/app_main.c` | 开机装配：板级 init、读设置、定 VCOM、开机图、字体，然后交给 `app_loop`。/ Boot wiring, then `app_loop`. |
+| `main/ble_service.*` | 轻量 BLE 配套控制桥接：在主循环串行执行配网、远程传书、对时、设置与短文本指令。/ Lightweight BLE companion bridge executing provisioning, remote transfer, time, settings and memos on the main loop. |
 | `main/reading_stats.c` | 持久化累计阅读时间、最近摘录与最近图书进度。/ Persist cumulative reading time, saved excerpt and recent book progress. |
 | `main/app/app.h` | `app_desc_t` / `app_ctx_t` / `app_redraw_t` 契约。/ Page contract. |
 | `main/app/app_loop.c` | 与页面无关的事件循环：触摸去抖、三键与菜单把手、切页、刷屏、锁屏、SD 字体延迟加载。/ Shared event loop. |
@@ -39,6 +40,7 @@ idf.py build
 | `main/factory/` | 设备功能自检与出厂 VCOM 标定。/ Device self-test and factory VCOM. |
 | `main/display.*` `sleep.*` `settings.*` | 刷屏封装、睡眠/锁屏、NVS 设置。/ Present helpers, sleep/lock, NVS. |
 | `components/read_pico/` | 板级 BSP：I2C、EPD 板定义与扫描时序、TF 卡、蜂鸣器、flash HPM。/ Board BSP. |
+| `components/read_pico_ble/` | 独立 NimBLE 外设组件：ReadPico 广播信标、DIS/BAS、配套控制 GATT 与分包重组。/ Standalone NimBLE peripheral: ReadPico beacon, DIS/BAS, companion GATT and chunk framing. |
 | `components/read_pico_search/` | 离线拼音/首字母/英文书名匹配，设备和网页共用；字表由工具生成。/ Shared offline pinyin, initials and English matching with a generated table. |
 | `components/read_pico_pmu/` | CW32L010 协议主机端。线格式在 `read_pico_pmu_protocol.h`。/ PMU host. |
 | `components/epdiy/` | 上游裁剪 fork（LCD 路径）。改动清单在其 LICENSE。不要为注释去改它。/ Trimmed upstream fork. Leave it alone for comment work. |
@@ -47,6 +49,8 @@ idf.py build
 | `components/e0470_epaper_waveform/` | 面板波形与裁剪。`waveforms/*.h` 是数据表。/ Panel waveforms. |
 | `components/pwm_audio/` | PWM 音频（蜂鸣器底层之一）。/ PWM audio helper. |
 | `docs/CHANGELOG.md` | 按版本简述对用户可见的功能变化与修复。/ Brief user-visible changes and fixes by version. |
+| `docs/BLE_PROTOCOL.md` | 面向 iOS 配套客户端的 BLE GATT UUID、分包与 JSON 控制协议规范。/ BLE GATT UUID, framing and JSON control protocol specification for iOS companion apps. |
+| `docs/HTTP_API.md` | 面向 iOS 配套客户端的局域网 HTTP API v2 与 mDNS 发现规范。/ Companion LAN HTTP API v2 and mDNS discovery specification. |
 | `docs/WEB_FLASHER.md` | 浏览器刷写的发布、部署、使用与排障说明。/ Browser flashing release, deployment, use and troubleshooting. |
 | `web/` | ESP Web Tools 安装页与固件清单；固件镜像和页面同源部署。/ ESP Web Tools installer and manifest; deploy the firmware image on the same origin as the page. |
 | `.github/workflows/release-firmware.yml` | 版本标签触发产品配置构建、合并镜像、GitHub Release 与 Pages 发布。/ Tag-triggered product build, merged image, GitHub Release and Pages deployment. |

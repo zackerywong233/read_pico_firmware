@@ -119,6 +119,17 @@ void app_settings_set_muted(bool muted);
 bool app_settings_transfer_pin_required(void);
 /// 保存局域网传输配对码开关。/ Persist the LAN transfer PIN requirement switch.
 void app_settings_set_transfer_pin_required(bool required);
+/// 轻量 BLE 控制通道是否启用；默认开启以便 iOS 配套应用随时发现与连接。
+/// / Whether the lightweight BLE companion channel is enabled; defaults true for iOS app discovery.
+bool app_settings_ble_enabled(void);
+/// 保存轻量 BLE 控制通道开关（运行时启停由 ble_service 处理）。
+/// / Persist the lightweight BLE companion switch (runtime start/stop is handled by ble_service).
+void app_settings_set_ble_enabled(bool enabled);
+/// 轻量 BLE 写操作是否强制要求 6 位配对码；默认关闭以便快速配对。
+/// / Whether sensitive BLE commands require a 6-digit PIN; defaults false for quick pairing.
+bool app_settings_ble_pin_required(void);
+/// 保存 BLE 配对码鉴权开关。/ Persist the BLE PIN authentication switch.
+void app_settings_set_ble_pin_required(bool required);
 /// 开机同步低电阈值与充电灯到 PMU。/ Sync the low-battery threshold and charge LED to the PMU at boot.
 void app_settings_sync_pmu(void);
 /// 仅保存时区到 NVS，由主循环调用 app_settings_apply_runtime 应用。

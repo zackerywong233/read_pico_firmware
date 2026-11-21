@@ -25,6 +25,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "app_web.h"
 #include "book_layout.h"
 #include "book_progress.h"
 #include "book_store.h"
@@ -45,7 +46,7 @@
 #include "ui_kit.h"
 #include "ui_menu.h"
 #include "ui_wifi_qr.h"
-#include "web_bookmark_policy.h"
+#include "web_bookmarks.h"
 
 extern const app_desc_t app_web;
 
@@ -109,6 +110,7 @@ static bool s_storage_changed;
 static int64_t s_net_poll_ms;
 static char s_url[WEB_URL_MAX];
 static char s_draft[WEB_URL_MAX];
+static char s_queued_url[WEB_URL_MAX];
 static bool s_uppercase;
 static bool s_symbols_more;
 static char s_notice[128];
@@ -186,26 +188,11 @@ static void free_article(void) {
 }
 
 static void load_bookmarks(void) {
-    memset(s_bookmarks, 0, sizeof(s_bookmarks));
-    s_bookmark_count = 0;
-    nvs_handle_t h;
-    if (nvs_open("read_pico", NVS_READONLY, &h) != ESP_OK) return;
-    size_t size = sizeof(s_bookmarks);
-    uint8_t count = 0;
-    esp_err_t err = nvs_get_blob(h, "webmarks", s_bookmarks, &size);
-    if (err == ESP_OK && size == sizeof(s_bookmarks) && nvs_get_u8(h, "webmark_n", &count) == ESP_OK && count <= WEB_BOOKMARK_MAX)
-        s_bookmark_count = count;
-    else memset(s_bookmarks, 0, sizeof(s_bookmarks));
-    nvs_close(h);
+    web_bookmarks_load(s_bookmarks, &s_bookmark_count);
 }
 
 static void save_bookmarks(void) {
-    nvs_handle_t h;
-    if (nvs_open("read_pico", NVS_READWRITE, &h) != ESP_OK) return;
-    esp_err_t err = nvs_set_blob(h, "webmarks", s_bookmarks, sizeof(s_bookmarks));
-    if (err == ESP_OK) err = nvs_set_u8(h, "webmark_n", (uint8_t)s_bookmark_count);
-    if (err == ESP_OK) (void)nvs_commit(h);
-    nvs_close(h);
+    (void)web_bookmarks_save(s_bookmarks, s_bookmark_count);
 }
 
 static bool bookmark_index(const char *url, size_t *index) {
@@ -695,7 +682,11 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
     }
     if (s_net_ready && s_view != WEB_LOADING && !s_fetch_running) {
         char pushed[READ_PICO_WEBOPEN_URL_MAX];
-        if (read_pico_transfer_take_webopen_url(pushed)) {
+        if (s_queued_url[0]) {
+            snprintf(s_draft, sizeof(s_draft), "%s", s_queued_url);
+            s_queued_url[0] = '\0';
+            if (valid_web_url(s_draft) && start_fetch()) return APP_REDRAW_PAGE;
+        } else if (read_pico_transfer_take_webopen_url(pushed)) {
             snprintf(s_draft, sizeof(s_draft), "%s", pushed);
             if (valid_web_url(s_draft) && start_fetch()) return APP_REDRAW_PAGE;
         }
@@ -856,6 +847,14 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
 static EpdRect area_hint(app_ctx_t *ctx) {
     (void)ctx;
     return (EpdRect){UI_MARGIN, 200, ui_content_width(), 840};
+}
+
+void app_web_queue_url(const char *url) {
+    if (!url || !url[0]) {
+        s_queued_url[0] = '\0';
+        return;
+    }
+    snprintf(s_queued_url, sizeof(s_queued_url), "%s", url);
 }
 
 const app_desc_t app_web = {

@@ -12,7 +12,7 @@
 #include <string.h>
 #include <time.h>
 
-#include "app.h"
+#include "app_personal.h"
 #include "ambient_sync.h"
 #include "ambient_sync_runtime.h"
 #include "display.h"
@@ -409,6 +409,10 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
     }
     ctx->leaf = 0;
     return APP_REDRAW_PAGE;
+}
+
+void app_personal_reload_note(void) {
+    load_note();
 }
 
 const app_desc_t app_personal = {

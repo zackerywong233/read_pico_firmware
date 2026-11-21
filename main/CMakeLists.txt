@@ -1,5 +1,6 @@
 set(main_requires
     read_pico
+    read_pico_ble
     read_pico_transfer
     read_pico_search
     espressif__qrcode
@@ -29,6 +30,7 @@ set(main_requires
 idf_component_register(
     SRCS
         "app_main.c"
+        "ble_service.c"
         "ota_update.c"
         "ambient_sync.c"
         "ambient_sync_runtime.c"
@@ -37,6 +39,7 @@ idf_component_register(
         "settings.c"
         "reading_stats.c"
         "time_sync.c"
+        "web_bookmarks.c"
         "app/app_loop.c"
         "app/app_registry.c"
         "ui/ui_kit.c"

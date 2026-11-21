@@ -62,6 +62,15 @@ typedef struct {
     void *font_ctx; ///< 字体回调上下文 / Context for font callbacks
     bool (*dashboard_stats_cb)(read_pico_dashboard_stats_t *out, void *ctx); ///< 可选：读取累计阅读时长、最近图书与摘录 / Optional: read reading stats, recent book and excerpt
     void *dashboard_ctx; ///< 看板回调上下文 / Context for dashboard callbacks
+    bool (*book_progress_cb)(const char *path, uint32_t size, read_pico_book_progress_t *out, void *ctx); ///< 可选：查询单本图书阅读进度 / Optional: query reading progress for one book
+    void *book_progress_ctx; ///< 进度回调上下文 / Context for book progress callback
+    size_t (*webmarks_list_cb)(read_pico_webmark_t *out, size_t cap, void *ctx); ///< 可选：列出网页收藏 / Optional: list web bookmarks
+    esp_err_t (*webmarks_upsert_cb)(const char *title, const char *url, void *ctx); ///< 可选：添加或更新网页收藏 / Optional: upsert one web bookmark
+    esp_err_t (*webmarks_delete_cb)(const char *url, void *ctx); ///< 可选：删除网页收藏 / Optional: delete one web bookmark
+    void *webmarks_ctx; ///< 网页收藏回调上下文 / Context for web bookmark callbacks
+    bool (*focus_get_cb)(read_pico_focus_status_t *out, void *ctx); ///< 可选：读取专注时钟状态 / Optional: read focus timer status
+    esp_err_t (*focus_ctrl_cb)(bool start, int minutes, void *ctx); ///< 可选：远程启动或停止专注时钟 / Optional: start or stop focus timer remotely
+    void *focus_ctx; ///< 专注时钟回调上下文 / Context for focus timer callbacks
 } read_pico_transfer_cfg_t;
 
 typedef struct {
@@ -114,6 +123,8 @@ esp_err_t read_pico_transfer_get_saved_wifi(char ssid[33], bool *configured);
 esp_err_t read_pico_transfer_get_saved_wifi_list(char ssids[5][33], size_t *count);
 /// 读取独立 NVS 中的 Agent 配置；首次读取时兼容迁移旧文件。/ Read Agent configuration from dedicated NVS, migrating the legacy file on first access.
 esp_err_t read_pico_transfer_get_agent_config(read_pico_agent_config_t *out);
+/// 校验并写入独立 NVS 中的 Agent 配置；传 NULL 清除。/ Validate and store Agent configuration in dedicated NVS; pass NULL to clear.
+esp_err_t read_pico_transfer_set_agent_config(const read_pico_agent_config_t *cfg);
 /// 配置变更计数，用于运行中的 Agent 页面发现网页更新。/ Configuration revision for live Agent pages to detect browser updates.
 uint32_t read_pico_transfer_agent_config_version(void);
 /// 仅热点或停止状态可遗忘；上传中拒绝。/ Forget only while AP or stopped; rejected during upload.

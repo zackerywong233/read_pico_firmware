@@ -24,6 +24,10 @@ gcc "${flags[@]}" -Imanaged_components/espressif__cjson/cJSON tools/transfer_wif
 build/book-tests/transfer-wifi
 gcc "${flags[@]}" -Icomponents/read_pico_transfer -Imanaged_components/espressif__cjson/cJSON tools/transfer_companion_host_test.c managed_components/espressif__cjson/cJSON/cJSON.c -lm -o build/book-tests/transfer-companion
 build/book-tests/transfer-companion
+gcc "${flags[@]}" -Icomponents/read_pico_ble/include tools/ble_framing_host_test.c -o build/book-tests/ble-framing
+build/book-tests/ble-framing
+gcc "${flags[@]}" -Icomponents/read_pico_ble/include -Icomponents/read_pico_transfer/include -Imanaged_components/espressif__cjson/cJSON tools/ble_protocol_host_test.c managed_components/espressif__cjson/cJSON/cJSON.c -lm -o build/book-tests/ble-protocol
+build/book-tests/ble-protocol
 gcc "${flags[@]}" -Itools/transfer_ui_stubs -Icomponents/read_pico_transfer/include -Imain -Icomponents/epdiy/src -Icomponents/epdiy/include tools/transfer_ui_host_test.c -o build/book-tests/transfer-ui
 build/book-tests/transfer-ui
 bash tools/run_app_loop_host_tests.sh

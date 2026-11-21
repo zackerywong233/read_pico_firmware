@@ -803,6 +803,20 @@ void read_pico_transfer_reset_pin(void) {
     portEXIT_CRITICAL(&s_lock);
 }
 
+static void format_device_identity(char device_id[13], char ble_name[20]) {
+    uint8_t base_mac[6] = {0};
+    (void)esp_read_mac(base_mac, ESP_MAC_BASE);
+    if (device_id) {
+        snprintf(device_id, 13, "%02X%02X%02X%02X%02X%02X",
+                 base_mac[0], base_mac[1], base_mac[2], base_mac[3], base_mac[4], base_mac[5]);
+    }
+    if (ble_name) {
+        uint8_t bt_mac[6] = {0};
+        if (esp_read_mac(bt_mac, ESP_MAC_BT) != ESP_OK) memcpy(bt_mac, base_mac, sizeof(bt_mac));
+        snprintf(ble_name, 20, "ReadPico-%02X%02X", bt_mac[4], bt_mac[5]);
+    }
+}
+
 static esp_err_t start_mdns(void) {
     if (s_mdns) return ESP_OK;
     esp_err_t err = mdns_init();
@@ -813,11 +827,14 @@ static esp_err_t start_mdns(void) {
         const esp_app_desc_t *app = esp_app_get_description();
         uint8_t mac[6] = {0};
         (void)esp_read_mac(mac, ESP_MAC_WIFI_STA);
-        char mac_hex[5], api_str[12];
+        char mac_hex[5], api_str[12], device_id[13], ble_name[20];
         snprintf(mac_hex, sizeof(mac_hex), "%02X%02X", mac[4], mac[5]);
         snprintf(api_str, sizeof(api_str), "%u", (unsigned)READ_PICO_TRANSFER_API_VERSION);
+        format_device_identity(device_id, ble_name);
         mdns_txt_item_t txt[] = {
             { "device", "readpico" },
+            { "id", device_id },
+            { "ble", ble_name },
             { "api", api_str },
             { "ver", app && app->version[0] ? app->version : "unknown" },
             { "mac", mac_hex },
@@ -1367,6 +1384,11 @@ esp_err_t read_pico_transfer_get_agent_config(read_pico_agent_config_t *out) {
     return migrate_legacy_agent_config(out);
 }
 
+esp_err_t read_pico_transfer_set_agent_config(const read_pico_agent_config_t *cfg) {
+    if (cfg && !valid_agent_config(cfg)) return ESP_ERR_INVALID_ARG;
+    return store_agent_config(cfg);
+}
+
 uint32_t read_pico_transfer_agent_config_version(void) {
     portENTER_CRITICAL(&s_lock);
     uint32_t version = s_agent_config_version;
@@ -1425,7 +1447,24 @@ static esp_err_t info_handler(httpd_req_t *req) {
     cJSON_AddBoolToObject(json, "time_enabled", s_cfg.time_get_cb != NULL && s_cfg.time_set_cb != NULL);
     cJSON_AddBoolToObject(json, "dashboard_enabled", s_cfg.dashboard_stats_cb != NULL || s_sd_root[0] != 0);
     cJSON_AddBoolToObject(json, "font_manage_enabled", s_font_root[0] != 0 && s_cfg.font_select_cb != NULL);
+    cJSON_AddBoolToObject(json, "book_download_enabled", true);
+    cJSON_AddBoolToObject(json, "book_progress_enabled", s_cfg.book_progress_cb != NULL);
+    cJSON_AddBoolToObject(json, "notes_json_enabled", true);
+    cJSON_AddBoolToObject(json, "webmarks_enabled", s_cfg.webmarks_list_cb != NULL);
+    cJSON_AddBoolToObject(json, "focus_enabled", s_cfg.focus_get_cb != NULL);
     cJSON_AddBoolToObject(json, "pin_required", status.pin_required);
+    char device_id[13] = {0}, ble_name[20] = {0};
+    format_device_identity(device_id, ble_name);
+    cJSON_AddStringToObject(json, "device_id", device_id);
+    cJSON_AddStringToObject(json, "ble_name", ble_name);
+    cJSON_AddBoolToObject(json, "ble_supported", true);
+    if (s_cfg.settings_get_cb) {
+        read_pico_device_settings_t ds = {0};
+        if (s_cfg.settings_get_cb(&ds, s_cfg.settings_ctx)) {
+            cJSON_AddBoolToObject(json, "ble_enabled", ds.ble_enabled);
+            cJSON_AddBoolToObject(json, "ble_pin_required", ds.ble_pin_required);
+        }
+    }
     const pmu_snapshot_t *pmu = read_pico_pmu_ready() ? read_pico_pmu_get() : NULL;
     if (pmu && pmu->status_ok) {
         uint32_t soc = ((uint32_t)pmu->soc_permille + 5U) / 10U;
@@ -1856,6 +1895,34 @@ static esp_err_t file_response(httpd_req_t *req, file_result_t result, bool dele
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
 
+static esp_err_t stream_binary_file(httpd_req_t *req, const char *path,
+                                    const char *content_type, const char *disposition);
+static void *transfer_alloc(size_t size);
+static esp_err_t send_json_error(httpd_req_t *req, const char *status, const char *message);
+
+static const char *book_mime_type(const char *name) {
+    const char *ext = name ? strrchr(name, '.') : NULL;
+    if (!ext) return "application/octet-stream";
+    if (!strcasecmp(ext, ".txt")) return "text/plain; charset=utf-8";
+    if (!strcasecmp(ext, ".md")) return "text/markdown; charset=utf-8";
+    if (!strcasecmp(ext, ".epub")) return "application/epub+zip";
+    if (!strcasecmp(ext, ".cbz")) return "application/vnd.comicbook+zip";
+    return "application/octet-stream";
+}
+
+static void append_book_progress(cJSON *item, const char *full_path, uint64_t size) {
+    if (!item || !s_cfg.book_progress_cb || size > UINT32_MAX) return;
+    read_pico_book_progress_t prog = {0};
+    bool has = s_cfg.book_progress_cb(full_path, (uint32_t)size, &prog, s_cfg.book_progress_ctx) && prog.has_progress;
+    cJSON_AddBoolToObject(item, "has_progress", has);
+    if (has) {
+        cJSON_AddNumberToObject(item, "percent", prog.percent);
+        cJSON_AddNumberToObject(item, "chapter", prog.chapter);
+        cJSON_AddNumberToObject(item, "byte_off", (double)prog.byte_off);
+        cJSON_AddNumberToObject(item, "order", (double)prog.order);
+    }
+}
+
 static esp_err_t books_handler(httpd_req_t *req) {
     if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
     char query[1024] = {0}, encoded[766], name[256] = {0}, path[448];
@@ -1866,6 +1933,12 @@ static esp_err_t books_handler(httpd_req_t *req) {
     if (named && !decode_name_limit(encoded, name, sizeof(name))) return respond_error(req, 400);
     snprintf(path, sizeof(path), "%s/%s", s_root, name);
     if (req->method == HTTP_GET) {
+        if (named) {
+            char dl_flag[8] = {0};
+            if (httpd_query_key_value(query, "download", dl_flag, sizeof(dl_flag)) == ESP_OK && !strcmp(dl_flag, "1")) {
+                return stream_binary_file(req, path, book_mime_type(name), "attachment");
+            }
+        }
         cJSON *json = cJSON_CreateObject();
         if (!json) return ESP_ERR_NO_MEM;
         cJSON_AddStringToObject(json, "root", s_root);
@@ -1879,7 +1952,10 @@ static esp_err_t books_handler(httpd_req_t *req) {
             }
             if (!S_ISREG(st.st_mode)) { cJSON_Delete(json); return respond_error(req, 400); }
             cJSON *item = cJSON_AddObjectToObject(json, "item");
-            cJSON_AddStringToObject(item, "name", name); cJSON_AddNumberToObject(item, "size", (double)st.st_size);
+            cJSON_AddStringToObject(item, "name", name);
+            cJSON_AddNumberToObject(item, "size", (double)st.st_size);
+            cJSON_AddBoolToObject(item, "has_notes", has_book_notes(s_root, name, (uint64_t)st.st_size));
+            append_book_progress(item, path, (uint64_t)st.st_size);
         } else {
             char search[121] = {0}, page_text[16] = "0";
             esp_err_t search_err = httpd_query_key_value(query, "q", encoded, sizeof(encoded));
@@ -1901,6 +1977,9 @@ static esp_err_t books_handler(httpd_req_t *req) {
                 cJSON *item = cJSON_CreateObject(); cJSON_AddItemToArray(items, item);
                 cJSON_AddStringToObject(item, "name", entries->items[i].name); cJSON_AddNumberToObject(item, "size", (double)entries->items[i].size);
                 cJSON_AddBoolToObject(item, "has_notes", entries->items[i].has_notes);
+                if (snprintf(path, sizeof(path), "%s/%s", s_root, entries->items[i].name) < (int)sizeof(path)) {
+                    append_book_progress(item, path, entries->items[i].size);
+                }
             }
             free(entries);
         }
@@ -1955,11 +2034,146 @@ static bool markdown_copy_excerpt(FILE *out, FILE *input, size_t length) {
     return true;
 }
 
+static esp_err_t send_notes_json(httpd_req_t *req, FILE *input, uint8_t version, const char *name) {
+    cJSON *json = cJSON_CreateObject();
+    if (!json) return ESP_ERR_NO_MEM;
+    cJSON_AddStringToObject(json, "book", name);
+    cJSON *items = cJSON_AddArrayToObject(json, "items");
+    if (!items) { cJSON_Delete(json); return ESP_ERR_NO_MEM; }
+
+    size_t idx = 0;
+    bool ok = true;
+    while (ok) {
+        uint8_t record[8];
+        size_t got = fread(record, 1, sizeof(record), input);
+        if (got == 0) { if (feof(input)) break; ok = false; break; }
+        if (got != sizeof(record) || record[7] > 100) { ok = false; break; }
+        uint16_t chapter = (uint16_t)record[1] | (uint16_t)((uint16_t)record[2] << 8);
+        uint32_t offset = (uint32_t)record[3] | ((uint32_t)record[4] << 8) |
+                          ((uint32_t)record[5] << 16) | ((uint32_t)record[6] << 24);
+        cJSON *entry = cJSON_CreateObject();
+        if (!entry) { ok = false; break; }
+        cJSON_AddNumberToObject(entry, "index", (double)idx++);
+        cJSON_AddNumberToObject(entry, "chapter", chapter);
+        cJSON_AddNumberToObject(entry, "offset", (double)offset);
+        cJSON_AddNumberToObject(entry, "percent", record[7]);
+        if (record[0] == 1) {
+            cJSON_AddStringToObject(entry, "kind", "bookmark");
+            cJSON_AddItemToArray(items, entry);
+        } else if (record[0] == 2) {
+            cJSON_AddStringToObject(entry, "kind", "excerpt");
+            uint8_t raw_len[4] = {0};
+            size_t length_bytes = version == 1 ? 2 : 4;
+            if (fread(raw_len, 1, length_bytes, input) != length_bytes) { cJSON_Delete(entry); ok = false; break; }
+            size_t len = (size_t)raw_len[0] | ((size_t)raw_len[1] << 8);
+            if (length_bytes == 4) len |= (size_t)raw_len[2] << 16 | (size_t)raw_len[3] << 24;
+            if (!len || len > 65536U) { cJSON_Delete(entry); ok = false; break; }
+            size_t keep = len <= 4096U ? len : 4096U;
+            char *text = transfer_alloc(keep + 1U);
+            if (!text) { cJSON_Delete(entry); ok = false; break; }
+            if (fread(text, 1, keep, input) != keep || memchr(text, 0, keep)) {
+                free(text); cJSON_Delete(entry); ok = false; break;
+            }
+            if (len > keep) {
+                if (fseek(input, (long)(len - keep), SEEK_CUR) != 0) {
+                    free(text); cJSON_Delete(entry); ok = false; break;
+                }
+                // 避免截断落在 UTF-8 多字节中间。/ Avoid splitting a multi-byte UTF-8 character on cap.
+                while (keep > 0 && ((unsigned char)text[keep - 1] & 0xC0U) == 0x80U) --keep;
+                if (keep > 0 && ((unsigned char)text[keep - 1] & 0xC0U) == 0xC0U) --keep;
+            }
+            text[keep] = '\0';
+            cJSON_AddStringToObject(entry, "text", text);
+            if (len > 4096U) cJSON_AddBoolToObject(entry, "truncated", true);
+            free(text);
+            cJSON_AddItemToArray(items, entry);
+        } else {
+            cJSON_Delete(entry);
+            ok = false;
+            break;
+        }
+    }
+    if (!ok) {
+        cJSON_Delete(json);
+        return respond_error(req, 404);
+    }
+    cJSON_AddNumberToObject(json, "count", (double)idx);
+    return send_json(req, json);
+}
+
+static int delete_note_record_managed(const char *sidecar, const uint8_t header[12],
+                                      const char *owner, size_t path_len,
+                                      FILE *input, bool delete_all, size_t target_idx,
+                                      size_t *remaining_out) {
+    if (remaining_out) *remaining_out = 0;
+    if (delete_all) {
+        return remove(sidecar) == 0 || errno == ENOENT ? 0 : 507;
+    }
+    char part[520];
+    if (snprintf(part, sizeof(part), "%s.part", sidecar) >= (int)sizeof(part)) return 400;
+    FILE *out = fopen(part, "wb");
+    if (!out) return 507;
+    bool ok = fwrite(header, 1, 12, out) == 12 && fwrite(owner, 1, path_len, out) == path_len;
+    size_t idx = 0, kept = 0;
+    bool found = false;
+    while (ok) {
+        uint8_t record[8];
+        size_t got = fread(record, 1, sizeof(record), input);
+        if (got == 0) { if (feof(input)) break; ok = false; break; }
+        if (got != sizeof(record) || record[7] > 100) { ok = false; break; }
+        bool skip = (idx == target_idx);
+        if (skip) found = true;
+        if (record[0] == 1) {
+            if (!skip) {
+                if (fwrite(record, 1, sizeof(record), out) != sizeof(record)) { ok = false; break; }
+                ++kept;
+            }
+        } else if (record[0] == 2) {
+            uint8_t raw_len[4] = {0};
+            size_t length_bytes = header[4] == 1 ? 2 : 4;
+            if (fread(raw_len, 1, length_bytes, input) != length_bytes) { ok = false; break; }
+            size_t len = (size_t)raw_len[0] | ((size_t)raw_len[1] << 8);
+            if (length_bytes == 4) len |= (size_t)raw_len[2] << 16 | (size_t)raw_len[3] << 24;
+            if (!len) { ok = false; break; }
+            if (!skip) {
+                if (fwrite(record, 1, sizeof(record), out) != sizeof(record) ||
+                    fwrite(raw_len, 1, length_bytes, out) != length_bytes) { ok = false; break; }
+                ++kept;
+            }
+            char chunk[512];
+            size_t left = len;
+            while (left && ok) {
+                size_t want = left < sizeof(chunk) ? left : sizeof(chunk);
+                if (fread(chunk, 1, want, input) != want) { ok = false; break; }
+                if (!skip && fwrite(chunk, 1, want, out) != want) { ok = false; break; }
+                left -= want;
+            }
+        } else {
+            ok = false;
+            break;
+        }
+        ++idx;
+    }
+    if (fflush(out) != 0) ok = false;
+    if (fclose(out) != 0) ok = false;
+    if (!ok) { (void)remove(part); return 507; }
+    if (!found) { (void)remove(part); return 404; }
+    if (kept == 0) {
+        (void)remove(part);
+        return remove(sidecar) == 0 || errno == ENOENT ? 0 : 507;
+    }
+    int committed = commit_file(part, sidecar);
+    if (committed < 0) { (void)remove(part); return 507; }
+    if (remaining_out) *remaining_out = kept;
+    return 0;
+}
+
 static esp_err_t notes_download_handler(httpd_req_t *req) {
     if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
     if (check_pin_or_respond(req) != ESP_OK) return ESP_FAIL;
     char query[512], encoded[361], name[121], book_path[448], sidecar[512], export_path[512], directory[160];
-    if (req->method != HTTP_GET || req->content_len || httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+    if ((req->method != HTTP_GET && req->method != HTTP_DELETE) || req->content_len ||
+        httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
         httpd_query_key_value(query, "name", encoded, sizeof(encoded)) != ESP_OK || !decode_name(encoded, name))
         return respond_error(req, 400);
     if (snprintf(book_path, sizeof(book_path), "%s/%s", s_root, name) >= (int)sizeof(book_path) ||
@@ -1979,6 +2193,55 @@ static esp_err_t notes_download_handler(httpd_req_t *req) {
     valid = valid && path_len >= 2 && path_len <= sizeof(owner) && fread(owner, 1, path_len, input) == path_len &&
             owner[path_len - 1] == 0 && !strcmp(owner, book_path) && file_size == (uint32_t)st.st_size;
     if (!valid) { fclose(input); return respond_error(req, 404); }
+
+    if (req->method == HTTP_DELETE) {
+        char idx_str[16] = {0};
+        bool delete_all = true;
+        size_t target_idx = 0;
+        esp_err_t idx_err = httpd_query_key_value(query, "index", idx_str, sizeof(idx_str));
+        if (idx_err == ESP_OK) {
+            char *end = NULL;
+            unsigned long v = strtoul(idx_str, &end, 10);
+            if (!idx_str[0] || *end || idx_str[0] == '-' || v > 100000UL) {
+                fclose(input);
+                return respond_error(req, 400);
+            }
+            delete_all = false;
+            target_idx = (size_t)v;
+        } else if (idx_err != ESP_ERR_NOT_FOUND) {
+            fclose(input);
+            return respond_error(req, 400);
+        }
+        portENTER_CRITICAL(&s_lock);
+        bool admitted = admission_begin(s_stopping, &s_upload_active);
+        portEXIT_CRITICAL(&s_lock);
+        if (!admitted) {
+            fclose(input);
+            return wifi_response(req, "409 Conflict", "{\"error\":\"正在上传或切换网络，请稍后重试\"}");
+        }
+        size_t remaining = 0;
+        int status = delete_note_record_managed(sidecar, header, owner, path_len, input,
+                                                delete_all, target_idx, &remaining);
+        fclose(input);
+        portENTER_CRITICAL(&s_lock);
+        if (!status) ++s_status.changed_count;
+        s_upload_active = false;
+        portEXIT_CRITICAL(&s_lock);
+        if (status == 404) return wifi_response(req, "404 Not Found", "{\"error\":\"指定的笔记条目不存在\"}");
+        if (status) return respond_error(req, status);
+        cJSON *res = cJSON_CreateObject();
+        if (!res) return ESP_ERR_NO_MEM;
+        cJSON_AddBoolToObject(res, "ok", true);
+        cJSON_AddNumberToObject(res, "remaining", (double)remaining);
+        return send_json(req, res);
+    }
+
+    char fmt[16] = {0};
+    if (httpd_query_key_value(query, "format", fmt, sizeof(fmt)) == ESP_OK && !strcmp(fmt, "json")) {
+        esp_err_t err = send_notes_json(req, input, header[4], name);
+        fclose(input);
+        return err;
+    }
     const char *parent = s_cfg.is_flash ? "/flash/notes" : "/sdcard/notes";
     if (snprintf(directory, sizeof(directory), "%s", parent) >= (int)sizeof(directory) ||
         (mkdir(directory, 0777) != 0 && errno != EEXIST)) { fclose(input); return respond_error(req, 507); }
@@ -2253,10 +2516,14 @@ static void *transfer_alloc(size_t size) {
 static esp_err_t webclip_handler(httpd_req_t *req) {
     if (!clip_host_request(req)) return clip_reject(req, "403 Forbidden", "{\"error\":\"请从设备显示的网址投递\"}");
     char content_type[80];
-    if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) != ESP_OK ||
-        strncasecmp(content_type, "application/x-www-form-urlencoded", 33) ||
-        (content_type[33] && content_type[33] != ';' && content_type[33] != ' '))
+    if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) != ESP_OK)
         return respond_error(req, 400);
+    bool is_form = !strncasecmp(content_type, "application/x-www-form-urlencoded", 33) &&
+        (!content_type[33] || content_type[33] == ';' || content_type[33] == ' ');
+    bool is_json = !strncasecmp(content_type, "application/json", 16) &&
+        (!content_type[16] || content_type[16] == ';' || content_type[16] == ' ');
+    if (!is_form && !is_json) return respond_error(req, 400);
+    if (is_json && check_pin_or_respond(req) != ESP_OK) return ESP_FAIL;
     if (req->content_len == 0 || req->content_len > WEBCLIP_BODY_MAX)
         return respond_error(req, req->content_len > WEBCLIP_BODY_MAX ? 413 : 400);
 
@@ -2288,15 +2555,47 @@ static esp_err_t webclip_handler(httpd_req_t *req) {
     char *text = heap_caps_malloc(WEBCLIP_TEXT_MAX + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!text) text = malloc(WEBCLIP_TEXT_MAX + 1);
     bool valid = title && source && text;
-    if (valid) { title[0] = '\0'; source[0] = '\0'; }
+    if (valid) { title[0] = '\0'; source[0] = '\0'; text[0] = '\0'; }
+    if (valid && is_form) {
+        valid = form_value(body, "token", token, sizeof(token))
+            && form_value(body, "title", title, 512)
+            && form_value(body, "url", source, 2049)
+            && form_value(body, "text", text, WEBCLIP_TEXT_MAX + 1)
+            && !strcmp(token, s_clip_token);
+    } else if (valid && is_json) {
+        cJSON *root = companion_parse_strict_json(body, received);
+        if (!root || !cJSON_IsObject(root)) {
+            valid = false;
+        } else {
+            const cJSON *t_item = cJSON_GetObjectItemCaseSensitive(root, "title");
+            const cJSON *u_item = cJSON_GetObjectItemCaseSensitive(root, "url");
+            const cJSON *x_item = cJSON_GetObjectItemCaseSensitive(root, "text");
+            const cJSON *tok_item = cJSON_GetObjectItemCaseSensitive(root, "token");
+            bool tok_ok = !tok_item || (cJSON_IsString(tok_item) && tok_item->valuestring &&
+                                        !strcmp(tok_item->valuestring, s_clip_token));
+            valid = tok_ok
+                && cJSON_IsString(x_item) && x_item->valuestring
+                && strlen(x_item->valuestring) <= WEBCLIP_TEXT_MAX;
+            if (valid) {
+                memcpy(text, x_item->valuestring, strlen(x_item->valuestring) + 1);
+                if (t_item) {
+                    if (!cJSON_IsString(t_item) || !t_item->valuestring || strlen(t_item->valuestring) >= 512) valid = false;
+                    else snprintf(title, 512, "%s", t_item->valuestring);
+                }
+                if (valid && u_item) {
+                    if (!cJSON_IsString(u_item) || !u_item->valuestring || strlen(u_item->valuestring) >= 2049) valid = false;
+                    else snprintf(source, 2049, "%s", u_item->valuestring);
+                }
+            }
+        }
+        cJSON_Delete(root);
+    }
+    bool url_ok = is_json
+        ? (!source[0] || !strncmp(source, "http://", 7) || !strncmp(source, "https://", 8))
+        : (!strncmp(source, "http://", 7) || !strncmp(source, "https://", 8));
     valid = valid
-        && form_value(body, "token", token, sizeof(token))
-        && form_value(body, "title", title, sizeof(title))
-        && form_value(body, "url", source, sizeof(source))
-        && form_value(body, "text", text, WEBCLIP_TEXT_MAX + 1)
-        && strlen(text) <= WEBCLIP_TEXT_MAX
-        && !strcmp(token, s_clip_token)
-        && (!strncmp(source, "http://", 7) || !strncmp(source, "https://", 8))
+        && strlen(text) > 0 && strlen(text) <= WEBCLIP_TEXT_MAX
+        && url_ok
         && clip_safe_text(title, true) && clip_safe_text(source, true)
         && clip_safe_text(text, false);
     free(body);
@@ -2314,10 +2613,11 @@ static esp_err_t webclip_handler(httpd_req_t *req) {
     s_status.cur_total = strlen(text);
     portEXIT_CRITICAL(&s_lock);
 
-    char path[288], part[296];
+    char path[288], part[296], clip_name[64];
     char *header = transfer_alloc(2600);
     uint64_t nonce = ((uint64_t)esp_random() << 32) | esp_random();
-    int path_len = snprintf(path, sizeof(path), "%s/webclip_%016llx.txt", s_root, (unsigned long long)nonce);
+    snprintf(clip_name, sizeof(clip_name), "webclip_%016llx.txt", (unsigned long long)nonce);
+    int path_len = snprintf(path, sizeof(path), "%s/%s", s_root, clip_name);
     int part_len = path_len > 0 && path_len < (int)sizeof(path)
         ? snprintf(part, sizeof(part), "%s.part", path) : -1;
     size_t text_len = strlen(text);
@@ -2328,9 +2628,11 @@ static esp_err_t webclip_handler(httpd_req_t *req) {
         && (!s_cfg.file_limit || total_len <= s_cfg.file_limit) && total_len <= free_bytes) {
         int fd = open(part, O_WRONLY | O_CREAT | O_EXCL, 0644);
         if (fd >= 0) {
-            int header_len = snprintf(header, 2600, "%s\n来源：%s\n\n", title, source);
+            int header_len = source[0]
+                ? snprintf(header, 2600, "%s\n来源：%s\n\n", title[0] ? title : "网页剪藏", source)
+                : (title[0] ? snprintf(header, 2600, "%s\n\n", title) : 0);
             size_t wrote = 0;
-            bool ok = header_len > 0 && header_len < 2600;
+            bool ok = header_len >= 0 && header_len < 2600;
             while (ok && wrote < (size_t)header_len) {
                 ssize_t n = write(fd, header + wrote, (size_t)header_len - wrote);
                 if (n <= 0) ok = false;
@@ -2362,6 +2664,15 @@ static esp_err_t webclip_handler(httpd_req_t *req) {
     }
     portEXIT_CRITICAL(&s_lock);
     if (!committed) return wifi_response(req, "507 Insufficient Storage", "{\"error\":\"剪藏保存失败或存储空间不足\"}");
+    if (is_json) {
+        cJSON *res = cJSON_CreateObject();
+        if (res) {
+            cJSON_AddBoolToObject(res, "ok", true);
+            cJSON_AddStringToObject(res, "name", clip_name);
+            return send_json(req, res);
+        }
+        return wifi_response(req, "200 OK", "{\"ok\":true}");
+    }
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_sendstr(req, "<!doctype html><meta charset=utf-8><title>已投递</title><h2>网页已投递到小纸 Pico</h2><p>返回设备打开图书即可阅读。</p>");
@@ -3004,6 +3315,195 @@ static esp_err_t dashboard_handler(httpd_req_t *req) {
     return send_json(req, json);
 }
 
+static bool decode_url_query_value(const char *src, char *out, size_t cap) {
+    if (!src || !out || !cap) return false;
+    size_t n = 0;
+    while (*src) {
+        unsigned char c = (unsigned char)*src++;
+        if (c == '%') {
+            if (!src[0] || !src[1]) return false;
+            int a = hex_value(src[0]), b = hex_value(src[1]);
+            if (a < 0 || b < 0) return false;
+            c = (unsigned char)((a << 4) | b);
+            src += 2;
+        } else if (c == '+') {
+            c = ' ';
+        }
+        if (c < 32U || c == 127U || n + 1U >= cap) return false;
+        out[n++] = (char)c;
+    }
+    out[n] = '\0';
+    return n > 0U;
+}
+
+static esp_err_t webmarks_handler(httpd_req_t *req) {
+    if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
+    if (!s_cfg.webmarks_list_cb)
+        return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持网页收藏夹管理\"}");
+
+    if (req->method == HTTP_GET) {
+        if (req->content_len) return respond_error(req, 400);
+        read_pico_webmark_t *items = transfer_alloc(sizeof(read_pico_webmark_t) * READ_PICO_WEBMARKS_MAX);
+        if (!items) return ESP_ERR_NO_MEM;
+        size_t count = s_cfg.webmarks_list_cb(items, READ_PICO_WEBMARKS_MAX, s_cfg.webmarks_ctx);
+        cJSON *json = cJSON_CreateObject();
+        if (!json) { free(items); return ESP_ERR_NO_MEM; }
+        cJSON_AddNumberToObject(json, "count", (double)count);
+        cJSON_AddNumberToObject(json, "max", (double)READ_PICO_WEBMARKS_MAX);
+        cJSON *arr = cJSON_AddArrayToObject(json, "items");
+        for (size_t i = 0; arr && i < count && i < READ_PICO_WEBMARKS_MAX; ++i) {
+            cJSON *obj = cJSON_CreateObject();
+            if (!obj) continue;
+            cJSON_AddStringToObject(obj, "title", items[i].title);
+            cJSON_AddStringToObject(obj, "url", items[i].url);
+            cJSON_AddItemToArray(arr, obj);
+        }
+        free(items);
+        return send_json(req, json);
+    }
+
+    if (check_pin_or_respond(req) != ESP_OK) return ESP_FAIL;
+
+    if (req->method == HTTP_DELETE) {
+        if (!s_cfg.webmarks_delete_cb)
+            return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持删除网页收藏\"}");
+        char url[256] = {0};
+        char query[900] = {0}, encoded[768] = {0};
+        if (httpd_req_get_url_query_len(req)) {
+            if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+                httpd_query_key_value(query, "url", encoded, sizeof(encoded)) != ESP_OK ||
+                !decode_url_query_value(encoded, url, sizeof(url))) {
+                return send_json_error(req, "400 Bad Request", "请提供有效的 url 参数");
+            }
+        } else if (req->content_len > 0 && req->content_len <= 512) {
+            char body[513] = {0};
+            size_t got = 0;
+            while (got < req->content_len) {
+                int n = receive_http(req, body + got, req->content_len - got);
+                if (n <= 0) return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400);
+                got += (size_t)n;
+            }
+            body[got] = '\0';
+            cJSON *root = companion_parse_strict_json(body, got);
+            const cJSON *u = root ? cJSON_GetObjectItemCaseSensitive(root, "url") : NULL;
+            bool ok = cJSON_IsString(u) && u->valuestring && strlen(u->valuestring) < sizeof(url);
+            if (ok) snprintf(url, sizeof(url), "%s", u->valuestring);
+            cJSON_Delete(root);
+            if (!ok) return send_json_error(req, "400 Bad Request", "请求须包含合法的 url 字段");
+        } else {
+            return send_json_error(req, "400 Bad Request", "缺少要删除的 url");
+        }
+        esp_err_t err = s_cfg.webmarks_delete_cb(url, s_cfg.webmarks_ctx);
+        if (err == ESP_ERR_NOT_FOUND) return wifi_response(req, "404 Not Found", "{\"error\":\"未找到该网页收藏\"}");
+        if (err != ESP_OK) return send_json_error(req, "400 Bad Request", "删除网页收藏失败");
+        return wifi_response(req, "200 OK", "{\"ok\":true}");
+    }
+
+    if (!s_cfg.webmarks_upsert_cb)
+        return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持保存网页收藏\"}");
+    char content_type[80];
+    if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) != ESP_OK ||
+        strncasecmp(content_type, "application/json", 16) ||
+        (content_type[16] && content_type[16] != ';' && content_type[16] != ' '))
+        return send_json_error(req, "400 Bad Request", "仅接受 application/json");
+    if (!req->content_len || req->content_len > 512)
+        return respond_error(req, req->content_len > 512 ? 413 : 400);
+    char body[513] = {0};
+    size_t got = 0;
+    while (got < req->content_len) {
+        int n = receive_http(req, body + got, req->content_len - got);
+        if (n <= 0) return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400);
+        got += (size_t)n;
+    }
+    body[got] = '\0';
+    cJSON *root = companion_parse_strict_json(body, got);
+    if (!root || !cJSON_IsObject(root)) { cJSON_Delete(root); return send_json_error(req, "400 Bad Request", "无效的 JSON"); }
+    const cJSON *u = cJSON_GetObjectItemCaseSensitive(root, "url");
+    const cJSON *t = cJSON_GetObjectItemCaseSensitive(root, "title");
+    if (!cJSON_IsString(u) || !u->valuestring || (t && (!cJSON_IsString(t) || !t->valuestring))) {
+        cJSON_Delete(root);
+        return send_json_error(req, "400 Bad Request", "请提供有效的 http(s):// url 与可选 title");
+    }
+    esp_err_t err = s_cfg.webmarks_upsert_cb(t ? t->valuestring : "", u->valuestring, s_cfg.webmarks_ctx);
+    cJSON_Delete(root);
+    if (err == ESP_ERR_NO_MEM) return wifi_response(req, "409 Conflict", "{\"error\":\"网页收藏夹已满（最多 20 条）\"}");
+    if (err != ESP_OK) return send_json_error(req, "400 Bad Request", "网址无效或保存失败");
+    return wifi_response(req, "200 OK", "{\"ok\":true}");
+}
+
+static esp_err_t focus_handler(httpd_req_t *req) {
+    if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
+    if (!s_cfg.focus_get_cb)
+        return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持专注时钟接口\"}");
+
+    if (req->method == HTTP_GET) {
+        if (req->content_len) return respond_error(req, 400);
+        read_pico_focus_status_t st = {0};
+        if (!s_cfg.focus_get_cb(&st, s_cfg.focus_ctx)) return respond_error(req, 500);
+        cJSON *json = cJSON_CreateObject();
+        if (!json) return ESP_ERR_NO_MEM;
+        cJSON_AddBoolToObject(json, "running", st.running);
+        cJSON_AddStringToObject(json, "phase", st.running ? (st.is_break ? "break" : "focus") : "idle");
+        cJSON_AddNumberToObject(json, "duration_min", st.duration_min);
+        cJSON_AddNumberToObject(json, "remaining_sec", (double)st.remaining_sec);
+        cJSON_AddNumberToObject(json, "completed_count", (double)st.completed_count);
+        return send_json(req, json);
+    }
+
+    if (check_pin_or_respond(req) != ESP_OK) return ESP_FAIL;
+    if (!s_cfg.focus_ctrl_cb)
+        return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持远程控制专注时钟\"}");
+    char content_type[80];
+    if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) != ESP_OK ||
+        strncasecmp(content_type, "application/json", 16) ||
+        (content_type[16] && content_type[16] != ';' && content_type[16] != ' '))
+        return send_json_error(req, "400 Bad Request", "仅接受 application/json");
+    if (!req->content_len || req->content_len > 256)
+        return respond_error(req, req->content_len > 256 ? 413 : 400);
+    char body[257] = {0};
+    size_t got = 0;
+    while (got < req->content_len) {
+        int n = receive_http(req, body + got, req->content_len - got);
+        if (n <= 0) return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400);
+        got += (size_t)n;
+    }
+    body[got] = '\0';
+    cJSON *root = companion_parse_strict_json(body, got);
+    if (!root || !cJSON_IsObject(root)) { cJSON_Delete(root); return send_json_error(req, "400 Bad Request", "无效的 JSON"); }
+    const cJSON *act = cJSON_GetObjectItemCaseSensitive(root, "action");
+    const cJSON *mins = cJSON_GetObjectItemCaseSensitive(root, "minutes");
+    if (!cJSON_IsString(act) || !act->valuestring) {
+        cJSON_Delete(root);
+        return send_json_error(req, "400 Bad Request", "action 须为 start 或 stop");
+    }
+    bool start = false;
+    int minutes = 25;
+    if (!strcmp(act->valuestring, "start")) {
+        start = true;
+        if (mins) {
+            if (!companion_json_int_range(mins, 15, 45, &minutes) ||
+                (minutes != 15 && minutes != 25 && minutes != 45)) {
+                cJSON_Delete(root);
+                return send_json_error(req, "400 Bad Request", "minutes 须为 15、25 或 45");
+            }
+        }
+    } else if (strcmp(act->valuestring, "stop") != 0) {
+        cJSON_Delete(root);
+        return send_json_error(req, "400 Bad Request", "action 须为 start 或 stop");
+    }
+    cJSON_Delete(root);
+    esp_err_t err = s_cfg.focus_ctrl_cb(start, minutes, s_cfg.focus_ctx);
+    if (err == ESP_ERR_INVALID_STATE)
+        return wifi_response(req, "409 Conflict", "{\"error\":\"当前正在上传或忙碌，无法切换专注时钟\"}");
+    if (err != ESP_OK) return send_json_error(req, "400 Bad Request", "操作专注时钟失败");
+    cJSON *json = cJSON_CreateObject();
+    if (!json) return ESP_ERR_NO_MEM;
+    cJSON_AddBoolToObject(json, "ok", true);
+    cJSON_AddStringToObject(json, "action", start ? "start" : "stop");
+    if (start) cJSON_AddNumberToObject(json, "minutes", minutes);
+    return send_json(req, json);
+}
+
 static esp_err_t auth_verify_handler(httpd_req_t *req) {
     if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
     char pin[16] = {0};
@@ -3161,7 +3661,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     err = esp_wifi_start(); if (err != ESP_OK) goto fail;
     s_started = true;
     httpd_config_t http = HTTPD_DEFAULT_CONFIG();
-    http.stack_size = 16384; http.max_uri_handlers = 40; http.recv_wait_timeout = 5;
+    http.stack_size = 16384; http.max_uri_handlers = 48; http.recv_wait_timeout = 5;
     http.lru_purge_enable = true;
     err = httpd_start(&s_http, &http); if (err != ESP_OK) goto fail;
     const httpd_uri_t routes[] = {
@@ -3185,6 +3685,12 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         { .uri = "/books", .method = HTTP_DELETE, .handler = books_handler },
         { .uri = "/books", .method = HTTP_POST, .handler = books_handler },
         { .uri = "/notes", .method = HTTP_GET, .handler = notes_download_handler },
+        { .uri = "/notes", .method = HTTP_DELETE, .handler = notes_download_handler },
+        { .uri = "/webmarks", .method = HTTP_GET, .handler = webmarks_handler },
+        { .uri = "/webmarks", .method = HTTP_POST, .handler = webmarks_handler },
+        { .uri = "/webmarks", .method = HTTP_DELETE, .handler = webmarks_handler },
+        { .uri = "/focus", .method = HTTP_GET, .handler = focus_handler },
+        { .uri = "/focus", .method = HTTP_POST, .handler = focus_handler },
         { .uri = "/wifi", .method = HTTP_POST, .handler = wifi_handler },
         { .uri = "/wifi", .method = HTTP_DELETE, .handler = wifi_handler },
         { .uri = "/screensaver", .method = HTTP_GET, .handler = screensaver_handler },

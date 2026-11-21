@@ -154,6 +154,10 @@ static inline bool app_settings_muted(void) { return test_settings.muted; }
 static inline void app_settings_set_muted(bool m) { test_settings.muted = m; }
 static inline bool app_settings_transfer_pin_required(void) { return test_settings.transfer_pin_required; }
 static inline void app_settings_set_transfer_pin_required(bool r) { test_settings.transfer_pin_required = r; }
+static inline bool app_settings_ble_enabled(void) { return test_settings.ble_enabled; }
+static inline void app_settings_set_ble_enabled(bool e) { test_settings.ble_enabled = e; }
+static inline bool app_settings_ble_pin_required(void) { return test_settings.ble_pin_required; }
+static inline void app_settings_set_ble_pin_required(bool r) { test_settings.ble_pin_required = r; }
 static inline const char* app_settings_font_path(void) { return test_settings.font_path; }
 static inline void app_settings_set_font_path(const char* p) { snprintf(test_settings.font_path, sizeof(test_settings.font_path), "%s", p ? p : ""); }
 static inline void app_settings_apply_runtime(void) { ++test_runtime_apply_calls; }
@@ -187,6 +191,15 @@ typedef struct {
     void* font_ctx;
     bool(*dashboard_stats_cb)(read_pico_dashboard_stats_t*,void*);
     void* dashboard_ctx;
+    bool(*book_progress_cb)(const char*,uint32_t,read_pico_book_progress_t*,void*);
+    void* book_progress_ctx;
+    size_t(*webmarks_list_cb)(read_pico_webmark_t*,size_t,void*);
+    esp_err_t(*webmarks_upsert_cb)(const char*,const char*,void*);
+    esp_err_t(*webmarks_delete_cb)(const char*,void*);
+    void* webmarks_ctx;
+    bool(*focus_get_cb)(read_pico_focus_status_t*,void*);
+    esp_err_t(*focus_ctrl_cb)(bool,int,void*);
+    void* focus_ctx;
 } read_pico_transfer_cfg_t;
 static read_pico_transfer_cfg_t test_last_cfg;
 typedef struct {read_pico_transfer_mode_t mode;read_pico_transfer_state_t state;bool wifi_configured,network_ready,pin_required;char ssid[33],pin[7],wifi_ssid[33],url[64],mdns_host[64],cur_name[121];unsigned sta_count,done_count,changed_count;size_t cur_bytes,cur_total;int last_error;} read_pico_transfer_status_t;
@@ -223,3 +236,50 @@ static inline void ui_wifi_qr_draw(uint8_t* fb,EpdRect r) {(void)fb;(void)r;}
 static inline int read_pico_transfer_forget_wifi(void) { ++test_forget_count; if (!test_forget_error) test_configured=false; return test_forget_error; }
 
 static inline int book_progress_forget(const char* path) {(void)path;return ESP_OK;}
+
+#define READ_PICO_WEBOPEN_URL_MAX 256
+const app_desc_t app_web = { .title = "网页阅读" };
+static char test_pending_webopen[READ_PICO_WEBOPEN_URL_MAX];
+static char test_queued_web_url[READ_PICO_WEBOPEN_URL_MAX];
+static inline bool read_pico_transfer_take_webopen_url(char url[READ_PICO_WEBOPEN_URL_MAX]) {
+    if (!test_pending_webopen[0]) return false;
+    snprintf(url, READ_PICO_WEBOPEN_URL_MAX, "%s", test_pending_webopen);
+    test_pending_webopen[0] = 0;
+    return true;
+}
+void app_web_queue_url(const char* url) {
+    snprintf(test_queued_web_url, sizeof(test_queued_web_url), "%s", url ? url : "");
+}
+
+typedef struct { uint32_t file_size; uint16_t chapter; uint32_t byte_off; uint8_t px; uint8_t pct; uint32_t last_open_s; } book_progress_t;
+static inline bool book_progress_load(const char* path, uint32_t size, book_progress_t* out) {
+    if (!path || !out || !strstr(path, "prog.txt")) return false;
+    *out = (book_progress_t){ .file_size = size, .chapter = 2, .byte_off = 512, .px = 48, .pct = 65, .last_open_s = 12 };
+    return true;
+}
+
+#define WEB_BOOKMARK_MAX 20
+typedef struct { char title[64]; char url[256]; } web_bookmark_t;
+static web_bookmark_t test_webmarks[WEB_BOOKMARK_MAX];
+static size_t test_webmark_count;
+static inline void web_bookmarks_load(web_bookmark_t out[WEB_BOOKMARK_MAX], size_t* count) {
+    memcpy(out, test_webmarks, sizeof(test_webmarks));
+    *count = test_webmark_count;
+}
+static inline esp_err_t web_bookmarks_upsert(const char* title, const char* url) {
+    if (!url || strncmp(url, "http", 4) != 0) return ESP_ERR_INVALID_ARG;
+    if (test_webmark_count >= WEB_BOOKMARK_MAX) return ESP_FAIL;
+    snprintf(test_webmarks[test_webmark_count].title, 64, "%s", title ? title : "");
+    snprintf(test_webmarks[test_webmark_count].url, 256, "%s", url);
+    ++test_webmark_count;
+    return ESP_OK;
+}
+static inline esp_err_t web_bookmarks_delete(const char* url) {
+    for (size_t i = 0; i < test_webmark_count; ++i) {
+        if (!strcmp(test_webmarks[i].url, url)) {
+            test_webmarks[i] = test_webmarks[--test_webmark_count];
+            return ESP_OK;
+        }
+    }
+    return ESP_FAIL;
+}

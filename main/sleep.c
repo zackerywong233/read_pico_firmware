@@ -17,6 +17,7 @@
 
 #include "app.h"
 #include "ambient_sync.h"
+#include "ble_service.h"
 #include "book_image.h"
 #include "reading_stats.h"
 #include "display.h"
@@ -93,6 +94,7 @@ bool app_lock_powers_down(void) {
 // 触摸、加速度计都在常开 3V3 上，ESP 浅睡或 EN 拉低都不会断它们的电，必须主动送进最低功耗态。
 // Touch and accelerometer sit on the always-on 3V3; neither light sleep nor EN low cuts them, so park them explicitly.
 static void periph_suspend(bool host_off) {
+    app_ble_suspend();
     if (read_pico_buzzer_score_busy()) (void)read_pico_buzzer_score_stop();
     esp_err_t ioe = read_pico_ioe_sleep(host_off);
     if (ioe != ESP_OK) ESP_LOGW(TAG, "ioe sleep %s", esp_err_to_name(ioe));
@@ -114,6 +116,7 @@ static void periph_resume(void) {
     }
     if (s_acc_was_on) (void)sc7a20h_power_up(s_acc);
     s_acc_was_on = false;
+    app_ble_resume();
 }
 
 static void lock_arm_ioe_wakeup(void) {

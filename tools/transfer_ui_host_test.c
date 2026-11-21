@@ -7,6 +7,17 @@
  */
 #include "transfer_ui_test_env.h"
 #include "../main/apps/app_transfer.c"
+
+const app_desc_t app_focus = { .title = "专注时钟 Focus" };
+static app_focus_status_t test_focus = { .running = false, .duration_min = 25, .completed_count = 3 };
+void app_focus_get_status(app_focus_status_t* out) { *out = test_focus; }
+bool app_focus_remote_start(int minutes) {
+    if (minutes != 15 && minutes != 25 && minutes != 45) return false;
+    test_focus.running = true; test_focus.is_break = false; test_focus.duration_min = (uint16_t)minutes;
+    test_focus.remaining_sec = (uint32_t)minutes * 60U;
+    return true;
+}
+void app_focus_remote_stop(void) { test_focus.running = false; test_focus.remaining_sec = 0; }
 #include <assert.h>
 static void tap(app_ctx_t* ctx, EpdRect rect) {
     ui_gesture_event_t ev = {.type = UI_GESTURE_PRESS, .x0 = rect.x + 2, .y0 = rect.y + 2, .x = rect.x + 2, .y = rect.y + 2};
@@ -233,6 +244,55 @@ int main(void) {
     assert(test_last_cfg.dashboard_stats_cb(&dstats, test_last_cfg.dashboard_ctx));
     assert(dstats.total_reading_sec == 3661U && dstats.has_last_book && dstats.last_book_percent == 42 && dstats.has_excerpt);
     assert(test_pin_reset_calls > 0 && test_pmu_poll_calls > 0);
+
+    // BLE 远程启动/切模式/停止钩子：上传忙时拒绝切换和停止，空闲时正常切换与返回。
+    // BLE remote start/switch/stop hooks: refuse while busy, switch mode and request return when idle.
+    app_transfer_set_preferred_mode(READ_PICO_TRANSFER_MODE_STA);
+    on_enter(&ctx);
+    assert(s_mode == READ_PICO_TRANSFER_MODE_STA && s_start_pending);
+    on_tick(&ctx);
+    assert(!s_start_pending);
+    test_busy = true;
+    assert(!app_transfer_remote_switch_mode(READ_PICO_TRANSFER_MODE_AP));
+    assert(!app_transfer_remote_stop(&ctx));
+    test_busy = false;
+    assert(app_transfer_remote_switch_mode(READ_PICO_TRANSFER_MODE_AP));
+    assert(s_mode == READ_PICO_TRANSFER_MODE_AP && s_start_pending);
+    ctx.request_return = false;
+    assert(app_transfer_remote_stop(&ctx));
+    assert(ctx.request_return && !s_start_pending);
+
+    // 传书页收到 /webopen 链接时应排队并自动请求切入网页阅读页。
+    // Transfer page receiving a /webopen URL queues it and requests switching to app_web.
+    on_enter(&ctx);
+    on_tick(&ctx);
+    ctx.request_app = NULL;
+    snprintf(test_pending_webopen, sizeof(test_pending_webopen), "https://example.com/article");
+    test_queued_web_url[0] = 0;
+    on_tick(&ctx);
+    assert(ctx.request_app == &app_web);
+    assert(strcmp(test_queued_web_url, "https://example.com/article") == 0);
+
+    // 图书进度、网页收藏夹与专注时钟伴侣回调验证。
+    // Book progress, web bookmarks and focus timer companion callback checks.
+    assert(test_last_cfg.book_progress_cb && test_last_cfg.webmarks_list_cb &&
+           test_last_cfg.webmarks_upsert_cb && test_last_cfg.webmarks_delete_cb &&
+           test_last_cfg.focus_get_cb && test_last_cfg.focus_ctrl_cb);
+    read_pico_book_progress_t bp = {0};
+    assert(test_last_cfg.book_progress_cb("/sdcard/books/prog.txt", 1024, &bp, test_last_cfg.book_progress_ctx));
+    assert(bp.has_progress && bp.percent == 65 && bp.chapter == 2 && bp.byte_off == 512);
+    assert(test_last_cfg.webmarks_upsert_cb("示例", "https://example.com", test_last_cfg.webmarks_ctx) == ESP_OK);
+    read_pico_webmark_t wm[4];
+    assert(test_last_cfg.webmarks_list_cb(wm, 4, test_last_cfg.webmarks_ctx) == 1);
+    assert(strcmp(wm[0].url, "https://example.com") == 0);
+    assert(test_last_cfg.webmarks_delete_cb("https://example.com", test_last_cfg.webmarks_ctx) == ESP_OK);
+    assert(test_last_cfg.webmarks_list_cb(wm, 4, test_last_cfg.webmarks_ctx) == 0);
+    read_pico_focus_status_t fs = {0};
+    assert(test_last_cfg.focus_get_cb(&fs, test_last_cfg.focus_ctx) && !fs.running && fs.completed_count == 3);
+    ctx.request_app = NULL;
+    assert(test_last_cfg.focus_ctrl_cb(true, 45, test_last_cfg.focus_ctx) == ESP_OK);
+    on_tick(&ctx);
+    assert(ctx.request_app == &app_focus && test_focus.running && test_focus.duration_min == 45);
 
     puts("transfer_ui_host_test: PASS");
 }

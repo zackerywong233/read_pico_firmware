@@ -8,7 +8,7 @@
  * 冻结：倒计时仅在页面活动时运行，不在后台唤醒设备。
  * Frozen: The timer runs only while this page is active and never wakes the device.
  */
-#include "app.h"
+#include "app_focus.h"
 #include "display.h"
 #include "e0470_epaper_waveform.h"
 #include "esp_timer.h"
@@ -35,6 +35,7 @@ static bool s_time_edit;
 static int s_minutes = 25;
 static int64_t s_end;
 static int s_done;
+static bool s_done_loaded;
 static int64_t s_last_draw;
 static int64_t s_last_check_ms;
 static int s_last_shown_min = -1;
@@ -47,6 +48,7 @@ static void done_load(void) {
         if (nvs_get_u32(h, "done", &n) == ESP_OK) s_done = (int)n;
         nvs_close(h);
     }
+    s_done_loaded = true;
 }
 
 static void done_save(void) {
@@ -270,6 +272,38 @@ static void enter(app_ctx_t *ctx) {
     s_last_shown_min = -1;
     (void)read_pico_pmu_refresh();
     app_time_sync_from_pmu();
+}
+
+void app_focus_get_status(app_focus_status_t *out) {
+    if (!out) return;
+    if (!s_done_loaded) done_load();
+    int64_t left = 0;
+    if (s_timer) {
+        left = s_end - esp_timer_get_time() / 1000000;
+        if (left < 0) left = 0;
+    }
+    out->running = s_timer;
+    out->is_break = s_timer && s_break;
+    out->duration_min = (uint16_t)s_minutes;
+    out->remaining_sec = (uint32_t)left;
+    out->completed_count = s_done > 0 ? (uint32_t)s_done : 0U;
+}
+
+bool app_focus_remote_start(int minutes) {
+    if (minutes != 15 && minutes != 25 && minutes != 45) return false;
+    if (!s_done_loaded) done_load();
+    s_minutes = minutes;
+    s_timer = true;
+    s_break = false;
+    s_time_edit = false;
+    s_end = esp_timer_get_time() / 1000000 + (int64_t)minutes * 60;
+    s_last_draw = esp_timer_get_time() / 1000;
+    return true;
+}
+
+void app_focus_remote_stop(void) {
+    s_timer = false;
+    s_break = false;
 }
 
 const app_desc_t app_focus = {

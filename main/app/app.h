@@ -84,6 +84,12 @@ typedef struct {
     /// 返回最近切页来源；菜单来源直接恢复菜单，无历史打开当前所属菜单；优先于其它请求。
     /// Return to the latest page origin and its menu; no history opens the current menu leaf. Overrides other requests.
     bool request_return;
+    /// 本轮末对当前页执行整屏 GC16 强刷（不切页且菜单关闭时生效）。
+    /// Request a full GC16 redraw of the current page at tick end (when no navigation or menu is active).
+    bool request_redraw;
+    /// 本轮末走全局锁屏路径（页面未 holds_pmu 且无切页请求时生效）。
+    /// Request the global lock/sleep flow at tick end (ignored when holds_pmu or navigation is pending).
+    bool request_lock;
 } app_ctx_t;
 
 struct app_desc_s {

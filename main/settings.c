@@ -44,6 +44,8 @@
 #define NVS_KEY_LOW_SOC "low_soc"
 #define NVS_KEY_MUTE "mute"
 #define NVS_KEY_TRANSFER_PIN "tr_pin"
+#define NVS_KEY_BLE_EN "ble_en"
+#define NVS_KEY_BLE_PIN "ble_pin"
 #define FONT_PATH_MAX 160
 #define AMBIENT_NS "rp_ambient"
 #define AMBIENT_KEY_ENABLED "enabled"
@@ -85,6 +87,8 @@ static bool s_charge_led = true;
 static uint8_t s_low_soc = 10;
 static bool s_muted;
 static bool s_transfer_pin_required;
+static bool s_ble_enabled = true;
+static bool s_ble_pin_required;
 
 static void apply_timezone(void) {
     int minutes = s_tz_min;
@@ -175,11 +179,13 @@ void app_settings_init(void) {
     }
     int16_t tz = 480;
     if (nvs_get_i16(h, NVS_KEY_TZ_MIN, &tz) == ESP_OK && tz >= -720 && tz <= 840) s_tz_min = tz;
-    uint8_t led = 1, low = 10, mute = 0, tr_pin = 0;
+    uint8_t led = 1, low = 10, mute = 0, tr_pin = 0, ble_en = 1, ble_pin = 0;
     if (nvs_get_u8(h, NVS_KEY_CHARGE_LED, &led) == ESP_OK) s_charge_led = led != 0;
     if (nvs_get_u8(h, NVS_KEY_LOW_SOC, &low) == ESP_OK && (low == 0 || (low >= 5 && low <= 30 && low % 5 == 0))) s_low_soc = low;
     if (nvs_get_u8(h, NVS_KEY_MUTE, &mute) == ESP_OK) s_muted = mute != 0;
     if (nvs_get_u8(h, NVS_KEY_TRANSFER_PIN, &tr_pin) == ESP_OK) s_transfer_pin_required = tr_pin != 0;
+    if (nvs_get_u8(h, NVS_KEY_BLE_EN, &ble_en) == ESP_OK) s_ble_enabled = ble_en != 0;
+    if (nvs_get_u8(h, NVS_KEY_BLE_PIN, &ble_pin) == ESP_OK) s_ble_pin_required = ble_pin != 0;
     nvs_close(h);
     if (nvs_open(AMBIENT_NS, NVS_READONLY, &h) == ESP_OK) {
         uint8_t enabled = 0, start = 23, end = 7, source = 2, last_ok = 0;
@@ -514,6 +520,18 @@ void app_settings_set_transfer_pin_required(bool required) {
     if (s_transfer_pin_required == required) return;
     s_transfer_pin_required = required;
     nvs_put_u8(NVS_KEY_TRANSFER_PIN, required ? 1 : 0);
+}
+bool app_settings_ble_enabled(void) { return s_ble_enabled; }
+void app_settings_set_ble_enabled(bool enabled) {
+    if (s_ble_enabled == enabled) return;
+    s_ble_enabled = enabled;
+    nvs_put_u8(NVS_KEY_BLE_EN, enabled ? 1 : 0);
+}
+bool app_settings_ble_pin_required(void) { return s_ble_pin_required; }
+void app_settings_set_ble_pin_required(bool required) {
+    if (s_ble_pin_required == required) return;
+    s_ble_pin_required = required;
+    nvs_put_u8(NVS_KEY_BLE_PIN, required ? 1 : 0);
 }
 
 void app_settings_sync_pmu(void) {

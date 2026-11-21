@@ -16,6 +16,7 @@
 
 #include "ambient_sync.h"
 #include "app_registry.h"
+#include "ble_service.h"
 #include "esp_app_desc.h"
 #include "ota_update.h"
 #include "read_pico_pmu.h"
@@ -147,7 +148,8 @@ static void render_root(uint8_t *fb) {
     char tz[32];
     fmt_tz(tz, sizeof(tz), app_settings_timezone_min());
 
-    snprintf(detail, sizeof(detail), "Wi-Fi %u · %s ›", (unsigned)s_network_count, tz);
+    snprintf(detail, sizeof(detail), "蓝牙%s · Wi-Fi %u · %s ›",
+             app_settings_ble_enabled() ? "开" : "关", (unsigned)s_network_count, tz);
     draw_kv_btn(fb, row_rect(0), "网络与时间", detail, s_pressed == 0);
 
     snprintf(detail, sizeof(detail), "%u px · %s ›",
@@ -210,7 +212,7 @@ static void render_root(uint8_t *fb) {
 }
 
 static void render_network_time(uint8_t *fb) {
-    ui_draw_header(fb, "网络与时间", "Wi-Fi、时区与手动校准时钟");
+    ui_draw_header(fb, "网络与时间", "蓝牙、Wi-Fi、时区与手动校准时钟");
     char val[96];
     int y = UI_CONTENT_TOP;
     y = ui_draw_section(fb, y, "当前状态");
@@ -234,14 +236,22 @@ static void render_network_time(uint8_t *fb) {
     }
     y = ui_draw_row(fb, y, "已保存 Wi-Fi", val);
 
+    app_ble_format_status(val, sizeof(val));
+    y = ui_draw_row(fb, y, "蓝牙控制", val);
+
     int btn_y = y + UI_SECTION_GAP;
-    draw_kv_btn(fb, sub_row_rect(btn_y, 0), "手动校准日期与时间", "设置 ›", s_pressed == 0);
-    draw_action_btn(fb, ui_row_rect(0, 2, btn_y + (UI_BTN_H + UI_GAP), UI_BTN_H), "时区 -30分", s_pressed == 1);
-    draw_action_btn(fb, ui_row_rect(1, 2, btn_y + (UI_BTN_H + UI_GAP), UI_BTN_H), "时区 +30分", s_pressed == 2);
-    draw_kv_btn(fb, sub_row_rect(btn_y, 2), "Wi-Fi 传书与网络管理", "打开 ›", s_pressed == 3);
+    char ble_btn[32], pin_btn[32];
+    snprintf(ble_btn, sizeof(ble_btn), "蓝牙 BLE：%s", app_settings_ble_enabled() ? "开" : "关");
+    snprintf(pin_btn, sizeof(pin_btn), "蓝牙配对码：%s", app_settings_ble_pin_required() ? "开" : "关");
+    draw_action_btn(fb, ui_row_rect(0, 2, btn_y, UI_BTN_H), ble_btn, s_pressed == 0);
+    draw_action_btn(fb, ui_row_rect(1, 2, btn_y, UI_BTN_H), pin_btn, s_pressed == 1);
+    draw_kv_btn(fb, sub_row_rect(btn_y, 1), "手动校准日期与时间", "设置 ›", s_pressed == 2);
+    draw_action_btn(fb, ui_row_rect(0, 2, btn_y + 2 * (UI_BTN_H + UI_GAP), UI_BTN_H), "时区 -30分", s_pressed == 3);
+    draw_action_btn(fb, ui_row_rect(1, 2, btn_y + 2 * (UI_BTN_H + UI_GAP), UI_BTN_H), "时区 +30分", s_pressed == 4);
+    draw_kv_btn(fb, sub_row_rect(btn_y, 3), "Wi-Fi 传书与网络管理", "打开 ›", s_pressed == 5);
 
     if (s_notice[0]) {
-        ui_text(fb, UI_MARGIN, btn_y + 3 * (UI_BTN_H + UI_GAP) + 8, UI_PX_CAPTION,
+        ui_text(fb, UI_MARGIN, btn_y + 4 * (UI_BTN_H + UI_GAP) + 8, UI_PX_CAPTION,
                 s_notice, EPD_DRAW_ALIGN_LEFT, false);
     }
     draw_action_btn(fb, ui_bar_rect(0, 1), "返回设置", s_pressed == CTRL_BACK);
@@ -422,13 +432,15 @@ static int hit_control(uint16_t x, uint16_t y, EpdRect *out_rect) {
     }
 
     if (s_view == SETTINGS_VIEW_NETWORK_TIME) {
-        int btn_y = UI_CONTENT_TOP + UI_SEC_HEAD + 3 * UI_ROW_H + UI_SECTION_GAP;
-        EpdRect r0 = sub_row_rect(btn_y, 0);
-        EpdRect r1 = ui_row_rect(0, 2, btn_y + (UI_BTN_H + UI_GAP), UI_BTN_H);
-        EpdRect r2 = ui_row_rect(1, 2, btn_y + (UI_BTN_H + UI_GAP), UI_BTN_H);
-        EpdRect r3 = sub_row_rect(btn_y, 2);
-        EpdRect rects[4] = { r0, r1, r2, r3 };
-        for (int i = 0; i < 4; ++i) {
+        int btn_y = UI_CONTENT_TOP + UI_SEC_HEAD + 4 * UI_ROW_H + UI_SECTION_GAP;
+        EpdRect r0 = ui_row_rect(0, 2, btn_y, UI_BTN_H);
+        EpdRect r1 = ui_row_rect(1, 2, btn_y, UI_BTN_H);
+        EpdRect r2 = sub_row_rect(btn_y, 1);
+        EpdRect r3 = ui_row_rect(0, 2, btn_y + 2 * (UI_BTN_H + UI_GAP), UI_BTN_H);
+        EpdRect r4 = ui_row_rect(1, 2, btn_y + 2 * (UI_BTN_H + UI_GAP), UI_BTN_H);
+        EpdRect r5 = sub_row_rect(btn_y, 3);
+        EpdRect rects[6] = { r0, r1, r2, r3, r4, r5 };
+        for (int i = 0; i < 6; ++i) {
             if (ui_rect_hit(rects[i], x, y)) {
                 if (out_rect) *out_rect = rects[i];
                 return i;
@@ -583,19 +595,33 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
 
     if (s_view == SETTINGS_VIEW_NETWORK_TIME) {
         if (hit == 0) {
+            bool next_ble = !app_settings_ble_enabled();
+            app_ble_set_enabled(next_ble);
+            snprintf(s_notice, sizeof(s_notice), "%s",
+                     next_ble ? "蓝牙控制已开启，iOS App 可搜索连接" : "蓝牙控制已关闭");
+            return APP_REDRAW_PAGE;
+        }
+        if (hit == 1) {
+            bool next_pin = !app_settings_ble_pin_required();
+            app_ble_set_pin_required(next_pin);
+            snprintf(s_notice, sizeof(s_notice), "%s",
+                     next_pin ? "已开启蓝牙配对码保护，已在上方显示 6 位码" : "已关闭蓝牙配对码保护");
+            return APP_REDRAW_PAGE;
+        }
+        if (hit == 2) {
             ui_time_edit_open(&s_time_editor);
             s_view = SETTINGS_VIEW_TIME_EDIT;
             return APP_REDRAW_FULL;
         }
-        if (hit == 1 || hit == 2) {
-            int next = app_settings_timezone_min() + (hit == 1 ? -30 : 30);
+        if (hit == 3 || hit == 4) {
+            int next = app_settings_timezone_min() + (hit == 3 ? -30 : 30);
             if (next < -720) next = 840;
             if (next > 840) next = -720;
             app_settings_set_timezone_min((int16_t)next);
             s_notice[0] = '\0';
             return APP_REDRAW_PAGE;
         }
-        if (hit == 3) {
+        if (hit == 5) {
             ctx->request_app = &app_transfer;
             return APP_REDRAW_NONE;
         }

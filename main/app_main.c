@@ -16,6 +16,7 @@
 #include "ambient_sync_runtime.h"
 #include "app_loop.h"
 #include "app_registry.h"
+#include "ble_service.h"
 #include "display.h"
 #include "epd_highlevel.h"
 #include "epdiy.h"
@@ -198,6 +199,8 @@ void app_main(void) {
         (void)read_pico_sd_start_probe();
     }
 
+    if (!st_resume) app_ble_init();
+
     app_loop_run(&(app_loop_config_t){
         .hl = &hl,
         .fb = framebuffer,
@@ -207,5 +210,6 @@ void app_main(void) {
         // 自检跑到一半断电的话，重新上电直接回自检页接着跑。
         // Resume the self-test page if a power-cut interrupted it.
         .first_app = st_resume ? app_selftest_page() : app_home_page(),
+        .on_bg_tick = app_ble_poll,
     });
 }
