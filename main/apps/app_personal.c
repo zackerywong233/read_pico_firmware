@@ -8,10 +8,13 @@
  * Frozen: Fall back to the built-in lock face when an image or excerpt is unavailable; never start Wi-Fi from the lock path.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 #include "app.h"
+#include "ambient_sync.h"
+#include "ambient_sync_runtime.h"
 #include "display.h"
 #include "reading_stats.h"
 #include "read_pico_pmu.h"
@@ -82,12 +85,15 @@ static void draw_dashboard(uint8_t* fb) {
         EpdRect card = {UI_MARGIN, y, ui_content_width(), 142};
         draw_card(fb, card, "日期与时间");
         if (s_pmu.time_ok && s_pmu.unix_sec) {
-            time_t raw = (time_t)s_pmu.unix_sec + 8 * 3600;
+            int tz_min = app_settings_timezone_min();
+            time_t raw = (time_t)s_pmu.unix_sec + (time_t)tz_min * 60;
             struct tm tm_local;
             gmtime_r(&raw, &tm_local);
             strftime(line, sizeof(line), "%H:%M", &tm_local);
             ui_text_vc(fb, card.x + UI_PAD, card.y + 82, UI_PX_HERO, line, EPD_DRAW_ALIGN_LEFT, false);
-            strftime(line, sizeof(line), "%Y-%m-%d · UTC+8", &tm_local);
+            char date[32];
+            strftime(date, sizeof(date), "%Y-%m-%d", &tm_local);
+            snprintf(line, sizeof(line), "%s · UTC%+d:%02d", date, tz_min / 60, abs(tz_min) % 60);
             ui_text_vc(fb, card.x + card.width - UI_PAD, card.y + 92, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_RIGHT, false);
         } else {
             ui_text(fb, card.x + UI_PAD, card.y + 64, UI_PX_BODY, "尚未同步时间", EPD_DRAW_ALIGN_LEFT, false);
@@ -141,6 +147,7 @@ static void draw_dashboard(uint8_t* fb) {
     }
     ui_draw_button(fb, ui_bar_rect(0, 2), "配置看板", false);
     ui_draw_button(fb, ui_bar_rect(1, 2), "继续阅读", false);
+    ui_draw_button(fb, ui_row_rect(0, 1, 900, UI_BTN_H), "定时刷新设置", false);
     ui_draw_menu_handle(fb, false);
 }
 
@@ -180,8 +187,57 @@ static void draw_settings(uint8_t* fb) {
     ui_draw_menu_handle(fb, false);
 }
 
+static void draw_ambient_settings(uint8_t* fb) {
+    app_ambient_settings_t cfg;
+    app_settings_ambient_get(&cfg);
+    bool has_result = false, success = false;
+    uint32_t result_ts = 0;
+    app_settings_ambient_result_get(&has_result, &success, &result_ts);
+    ui_clear_page(fb);
+    ui_draw_header(fb, "定时刷新", "低功耗看板唤醒计划");
+    char line[160];
+    snprintf(line, sizeof(line), "自动刷新：%s", cfg.enabled ? "开启" : "关闭");
+    ui_draw_button(fb, ui_row_rect(0, 1, 260, UI_BTN_H), line, false);
+    snprintf(line, sizeof(line), "刷新周期：%u 分钟", cfg.interval_min);
+    ui_draw_button(fb, ui_row_rect(1, 1, 350, UI_BTN_H), line, false);
+    snprintf(line, sizeof(line), "免打扰开始：%02u:00", cfg.quiet_start_h);
+    ui_draw_button(fb, ui_row_rect(2, 1, 440, UI_BTN_H), line, false);
+    snprintf(line, sizeof(line), "免打扰结束：%02u:00", cfg.quiet_end_h);
+    ui_draw_button(fb, ui_row_rect(3, 1, 530, UI_BTN_H), line, false);
+    static const char *sources[] = {"HTTP JSON 卡片", "HTTP 图片", "本地个人看板"};
+    snprintf(line, sizeof(line), "内容来源：%s", sources[cfg.source_type]);
+    ui_draw_button(fb, ui_row_rect(4, 1, 620, UI_BTN_H), line, false);
+    snprintf(line, sizeof(line), "地址：%.72s", cfg.url[0] ? cfg.url : "未配置");
+    ui_text(fb, UI_MARGIN, 755, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
+    time_t now = s_pmu.time_ok && s_pmu.unix_sec ? (time_t)s_pmu.unix_sec : time(NULL);
+    if (cfg.enabled && now >= 946684800) {
+        struct tm local;
+        if (localtime_r(&now, &local)) {
+            uint32_t seconds = (uint32_t)local.tm_hour * 3600U +
+                (uint32_t)local.tm_min * 60U + (uint32_t)local.tm_sec;
+            uint32_t delay = ambient_sync_next_delay(seconds, (uint32_t)cfg.interval_min * 60U,
+                                                      cfg.quiet_start_h, cfg.quiet_end_h);
+            time_t target = now + delay;
+            if (localtime_r(&target, &local)) strftime(line, sizeof(line), "下一次计划唤醒：%m-%d %H:%M", &local);
+            else snprintf(line, sizeof(line), "下一次计划唤醒：时间不可用");
+        }
+    } else snprintf(line, sizeof(line), "下一次计划唤醒：未启用或时间未同步");
+    ui_text(fb, UI_MARGIN, 720, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
+    if (has_result) {
+        time_t raw = (time_t)result_ts;
+        struct tm local;
+        localtime_r(&raw, &local);
+        strftime(line, sizeof(line), success ? "上次结果：成功 %H:%M" : "上次结果：失败 %H:%M", &local);
+    } else snprintf(line, sizeof(line), "上次结果：暂无");
+    ui_text(fb, UI_MARGIN, 795, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
+    ui_draw_button(fb, ui_row_rect(0, 2, 875, UI_BTN_H), "立即测试刷新", false);
+    ui_draw_button(fb, ui_bar_rect(0, 1), "返回看板", false);
+    ui_draw_menu_handle(fb, false);
+}
+
 static void render(app_ctx_t* ctx, uint8_t* fb) {
     if (ctx->leaf == 1) draw_settings(fb);
+    else if (ctx->leaf == 2) draw_ambient_settings(fb);
     else draw_dashboard(fb);
 }
 
@@ -225,7 +281,36 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
         const int bar = ui_bar_hit(touch->x, touch->y, 2);
         if (bar == 0) { ctx->leaf = 1; return APP_REDRAW_PAGE; }
         if (bar == 1) { ctx->request_app = &app_book; return APP_REDRAW_PAGE; }
+        if (ui_rect_hit(ui_row_rect(0, 1, 900, UI_BTN_H), touch->x, touch->y)) { ctx->leaf = 2; return APP_REDRAW_PAGE; }
         return APP_REDRAW_NONE;
+    }
+    if (ctx->leaf == 2) {
+        if (ui_bar_hit(touch->x, touch->y, 1) == 0) { ctx->leaf = 0; return APP_REDRAW_PAGE; }
+        app_ambient_settings_t cfg;
+        app_settings_ambient_get(&cfg);
+        if (ui_rect_hit(ui_row_rect(0, 1, 260, UI_BTN_H), touch->x, touch->y)) cfg.enabled = !cfg.enabled;
+        else if (ui_rect_hit(ui_row_rect(1, 1, 350, UI_BTN_H), touch->x, touch->y)) {
+            static const uint16_t intervals[] = {15, 30, 60, 120, 360, 720, 1440};
+            size_t i = 0;
+            while (i < 6 && intervals[i] != cfg.interval_min) ++i;
+            cfg.interval_min = intervals[(i + 1) % 7];
+        } else if (ui_rect_hit(ui_row_rect(2, 1, 440, UI_BTN_H), touch->x, touch->y))
+            cfg.quiet_start_h = (uint8_t)((cfg.quiet_start_h + 1) % 24);
+        else if (ui_rect_hit(ui_row_rect(3, 1, 530, UI_BTN_H), touch->x, touch->y))
+            cfg.quiet_end_h = (uint8_t)((cfg.quiet_end_h + 1) % 24);
+        else if (ui_rect_hit(ui_row_rect(4, 1, 620, UI_BTN_H), touch->x, touch->y)) cfg.source_type = (uint8_t)((cfg.source_type + 1) % 3);
+        else if (ui_rect_hit(ui_row_rect(0, 2, 875, UI_BTN_H), touch->x, touch->y)) {
+            if (!ctx->hl || !ctx->fb) return APP_REDRAW_NONE;
+            (void)read_pico_pmu_refresh();
+            s_pmu = *read_pico_pmu_get();
+            load_note();
+            s_total_read_seconds = reading_stats_total_seconds();
+            s_have_last_book = reading_stats_get_last_book(s_last_book, sizeof(s_last_book), &s_last_percent);
+            (void)ambient_sync_run(ctx->hl, ctx->fb);
+            return APP_REDRAW_DONE;
+        } else return APP_REDRAW_NONE;
+        (void)app_settings_ambient_set(&cfg);
+        return APP_REDRAW_PAGE;
     }
     if (ui_bar_hit(touch->x, touch->y, 1) == 0) { ctx->leaf = 0; return APP_REDRAW_PAGE; }
     if (ui_rect_hit(ui_row_rect(0, 1, 570, UI_BTN_H), touch->x, touch->y)) {
@@ -234,11 +319,7 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
             snprintf(s_time_sync_msg, sizeof(s_time_sync_msg), "设备时间不可用，请先校准主机时间");
         } else {
             uint32_t unix_sec = (uint32_t)now;
-            uint8_t buf[4] = {
-                (uint8_t)unix_sec, (uint8_t)(unix_sec >> 8),
-                (uint8_t)(unix_sec >> 16), (uint8_t)(unix_sec >> 24),
-            };
-            esp_err_t err = read_pico_pmu_cmd(PMU_CMD_TIME_SYNC, buf, sizeof(buf));
+            esp_err_t err = read_pico_pmu_time_sync(unix_sec);
             uint16_t status = read_pico_pmu_get()->last_op_status;
             bool synced = err == ESP_OK
                 && (status == PMU_STATUS_OK || status == PMU_STATUS_ACCEPTED);
@@ -281,6 +362,7 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
         ctx->leaf = 1;
         return APP_REDRAW_PAGE;
     }
+    if (ctx->leaf == 2) { ctx->leaf = 0; return APP_REDRAW_PAGE; }
     ctx->leaf = 0;
     return APP_REDRAW_PAGE;
 }

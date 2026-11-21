@@ -12,11 +12,15 @@
 #include <strings.h>
 static book_txt_t s_book;
 static book_epub_t *s_epub;
+static book_md_t *s_md;
+static book_cbz_t *s_cbz;
 esp_err_t book_open(const char *path) {
     book_close();
     if (!path || !*path) return ESP_ERR_INVALID_ARG;
     const char *ext = strrchr(path, '.');
     if (ext && !strcasecmp(ext, ".epub")) return book_epub_open(path, &s_epub);
+    if (ext && !strcasecmp(ext, ".md")) return book_md_open(path, &s_md);
+    if (ext && !strcasecmp(ext, ".cbz")) return book_cbz_open(path, &s_cbz);
     if (!ext || strcasecmp(ext, ".txt")) return ESP_ERR_NOT_SUPPORTED;
     esp_err_t err = book_txt_open(&s_book, path);
     if (err != ESP_OK) book_close();
@@ -24,12 +28,16 @@ esp_err_t book_open(const char *path) {
 }
 void book_close(void) {
     book_epub_close(s_epub); s_epub = NULL;
+    book_md_close(s_md); s_md = NULL;
+    book_cbz_close(s_cbz); s_cbz = NULL;
     if (s_book.file) fclose(s_book.file);
     free(s_book.entries); memset(&s_book, 0, sizeof(s_book));
 }
-size_t book_chapter_count(void) { return s_epub ? book_epub_chapter_count(s_epub) : s_book.count; }
+size_t book_chapter_count(void) { return s_epub ? book_epub_chapter_count(s_epub) : s_md ? book_md_chapter_count(s_md) : s_cbz ? book_cbz_chapter_count(s_cbz) : s_book.count; }
 esp_err_t book_chapter_title(size_t i, char *buf, size_t cap) {
     if (s_epub) return book_epub_chapter_title(s_epub, i, buf, cap);
+    if (s_md) return book_md_chapter_title(s_md, i, buf, cap);
+    if (s_cbz) return book_cbz_chapter_title(s_cbz, i, buf, cap);
     if (!buf || !cap || i >= s_book.count) return ESP_ERR_INVALID_ARG;
     size_t n = strlen(s_book.entries[i].title);
     if (n >= cap) { buf[0] = 0; return ESP_ERR_INVALID_SIZE; }
@@ -44,6 +52,11 @@ esp_err_t book_chapter_load(size_t i, char **utf8, size_t *len) {
         *utf8 = text.utf8; *len = text.len; text.utf8 = NULL;
         html_text_free(&text); return ESP_OK;
     }
+    if (s_md || s_cbz) {
+        html_text_t text = {0}; esp_err_t err = s_md ? book_md_load(s_md, i, &text) : book_cbz_load(s_cbz, i, &text);
+        if (err != ESP_OK) return err;
+        *utf8 = text.utf8; *len = text.len; text.utf8 = NULL; html_text_free(&text); return ESP_OK;
+    }
     if (!s_book.file || i >= s_book.count) return ESP_ERR_INVALID_ARG;
     return book_txt_load(&s_book, i, utf8, len);
 }
@@ -51,16 +64,19 @@ esp_err_t book_chapter_load_blocks(size_t i, html_text_t *out) {
     if (!out) return ESP_ERR_INVALID_ARG;
     memset(out, 0, sizeof(*out));
     if (s_epub) return book_epub_load(s_epub, i, out);
+    if (s_md) return book_md_load(s_md, i, out);
+    if (s_cbz) return book_cbz_load(s_cbz, i, out);
     return book_chapter_load(i, &out->utf8, &out->len);
 }
 esp_err_t book_chapter_load_image(size_t i, const char *reference, uint8_t **pixels, uint16_t *width, uint16_t *height) {
     if (!pixels || !width || !height) return ESP_ERR_INVALID_ARG;
     *pixels = NULL; *width = *height = 0;
-    if (!s_epub) return ESP_ERR_NOT_SUPPORTED;
-    return book_epub_load_image(s_epub, i, reference, pixels, width, height);
+    if (s_epub) return book_epub_load_image(s_epub, i, reference, pixels, width, height);
+    if (s_cbz) return book_cbz_load_image(s_cbz, i, reference, pixels, width, height);
+    return ESP_ERR_NOT_SUPPORTED;
 }
-uint32_t book_total_bytes(void) { return s_epub ? book_epub_total_bytes(s_epub) : s_book.total; }
+uint32_t book_total_bytes(void) { return s_epub ? book_epub_total_bytes(s_epub) : s_md ? book_md_total_bytes(s_md) : s_cbz ? book_cbz_total_bytes(s_cbz) : s_book.total; }
 uint32_t book_chapter_byte_offset(size_t i) {
-    return s_epub ? book_epub_chapter_byte_offset(s_epub, i) : i < s_book.count ? s_book.entries[i].offset : 0;
+    return s_epub ? book_epub_chapter_byte_offset(s_epub, i) : s_md ? book_md_chapter_offset(s_md, i) : s_cbz ? book_cbz_chapter_offset(s_cbz, i) : i < s_book.count ? s_book.entries[i].offset : 0;
 }
-book_kind_t book_kind(void) { return s_epub ? BOOK_KIND_EPUB : BOOK_KIND_TXT; }
+book_kind_t book_kind(void) { return s_epub ? BOOK_KIND_EPUB : s_md ? BOOK_KIND_MD : s_cbz ? BOOK_KIND_CBZ : BOOK_KIND_TXT; }

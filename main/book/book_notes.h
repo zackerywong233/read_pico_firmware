@@ -5,8 +5,8 @@
  * 中文：在图书存储目录中按完整书籍路径和文件大小保存书签与摘录。
  * English: Store bookmarks and excerpts beside book storage, keyed by full path and size.
  *
- * 冻结：使用隐藏的图书数据目录；仅完整路径匹配时更新，读取还须匹配文件大小；旧 NVS 记录在成功迁移后清除。
- * Frozen: Use a hidden book-data directory; updates require an exact path, loads also require matching file size, and legacy NVS records are erased only after migration succeeds.
+ * 冻结：笔记仍以隐藏 sidecar 为权威来源；新增 Markdown 导出仅生成可分享副本，不改变迁移与加载校验策略。
+ * Frozen: Hidden sidecars remain authoritative; Markdown export creates a shareable copy without changing migration or load validation.
  */
 #pragma once
 
@@ -45,3 +45,7 @@ void book_notes_free(book_notes_t *notes);
 /// 删除指定路径的笔记；路径碰撞不会删除其他书籍记录。
 /// Forget notes for one path; collisions never delete another book's record.
 esp_err_t book_notes_forget(const char *path);
+/// 导出书签与摘录为 UTF-8 Markdown；输出写入与图书相同存储介质的 notes 目录。
+/// Export bookmarks and excerpts as UTF-8 Markdown under notes on the same storage medium as the book.
+esp_err_t book_notes_export_markdown(const char *book_path, const char *book_title,
+                                     const book_notes_t *notes, char *out_path, size_t out_path_cap);

@@ -1,10 +1,12 @@
 /*
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
- * 中文：单实例 TXT/EPUB 书源与章节进度接口。
- * English: Singleton TXT/EPUB source and chapter progress interface.
- * 冻结：正文由调用方释放；不依赖 UI。
- * Frozen: The caller frees loaded text; no UI dependencies.
+ * 中文：单实例 TXT/EPUB/Markdown/CBZ 书源与章节进度接口。
+ * English: Singleton TXT/EPUB/Markdown/CBZ source and chapter progress interface.
+ * 决策变更：TXT、EPUB、Markdown 与 CBZ 共用单实例书源入口。
+ * Decision change: TXT, EPUB, Markdown and CBZ share one singleton source interface.
+ * 冻结：正文及块表由调用方释放；不依赖 UI。
+ * Frozen: The caller frees loaded text and blocks; no UI dependencies.
  */
 #pragma once
 #include <stddef.h>
@@ -14,6 +16,8 @@
 typedef enum {
     BOOK_KIND_TXT, ///< 文本 / Plain text
     BOOK_KIND_EPUB, ///< EPUB 容器 / EPUB container
+    BOOK_KIND_MD, ///< Markdown 文本 / Markdown text
+    BOOK_KIND_CBZ, ///< CBZ 漫画 / CBZ comic
 } book_kind_t;
 /// 打开并替换当前书源。/ Open and replace the current source.
 esp_err_t book_open(const char *path);

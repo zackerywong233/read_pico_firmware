@@ -16,6 +16,8 @@ static size_t measured_codepoints;
 static size_t measure_calls;
 static int first_draw_px, last_draw_px;
 static size_t image_pixels;
+static char line_log[256][512];
+static size_t line_count;
 void epd_draw_pixel(int x, int y, uint8_t color, uint8_t* fb) {
     (void)color; (void)fb;
     assert(x >= 0 && y >= 0);
@@ -38,6 +40,10 @@ void ttf_draw_text_px(uint8_t* fb, int x, int y, int px, const char* text,
     assert(fg <= 15 && bg <= 15);
     if (!drawn[0]) first_draw_px = px;
     last_draw_px = px;
+    if (line_count < sizeof(line_log) / sizeof(line_log[0])) {
+        snprintf(line_log[line_count], sizeof(line_log[line_count]), "%s", text);
+        ++line_count;
+    }
     assert(strlen(drawn) + strlen(text) < sizeof(drawn));
     strcat(drawn, text);
 }
@@ -141,6 +147,61 @@ int main(void) {
     drawn[0] = 0;
     book_layout_draw_page(&fb, 0, r, 10);
     assert(first_draw_px == 10);
+    // 整词优先换行，超长连字符词仍可按字符折断。
+    // Prefer whole-word wrapping while still breaking overlong hyphenated words by character.
+    r = (EpdRect){0, 0, 60, 120};
+    line_count = 0;
+    assert(book_layout_build("alpha beta", 10, r, 10));
+    drawn[0] = 0;
+    book_layout_draw_page(&fb, 0, r, 10);
+    assert(line_count == 2 && !strcmp(line_log[0], "alpha ") && !strcmp(line_log[1], "beta"));
+    r.width = 40;
+    line_count = 0;
+    assert(book_layout_build("long-word", 9, r, 10));
+    drawn[0] = 0;
+    for (size_t i = 0; i < book_layout_page_count(); ++i) book_layout_draw_page(&fb, i, r, 10);
+    assert(!strcmp(drawn, "long-word") && line_count >= 3);
+    // 标点不落在行首，开括号和前引号不孤立在行尾。
+    // Closing punctuation never starts a line, and opening punctuation never ends one alone.
+    const char punctuation[] = "甲乙，丙甲（乙甲“乙";
+    r = (EpdRect){0, 0, 20, 200};
+    line_count = 0;
+    assert(book_layout_build(punctuation, strlen(punctuation), r, 10));
+    drawn[0] = 0;
+    for (size_t i = 0; i < book_layout_page_count(); ++i) book_layout_draw_page(&fb, i, r, 10);
+    assert(!strcmp(drawn, punctuation));
+    for (size_t i = 0; i < line_count; ++i) {
+        assert(strncmp(line_log[i], "，", strlen("，")) != 0);
+        assert(strncmp(line_log[i], "。", strlen("。")) != 0);
+        size_t n = strlen(line_log[i]);
+        assert(n < strlen("（") || memcmp(line_log[i] + n - strlen("（"), "（", strlen("（")) != 0);
+        assert(n < strlen("“") || memcmp(line_log[i] + n - strlen("“"), "“", strlen("“")) != 0);
+    }
+    // 行高选项和左右边距纯函数按工具栏档位生效。
+    // Line-height options and side margins match the toolbar presets.
+    size_t compact_pages, standard_pages, relaxed_pages;
+    const char metrics_text[] = "甲乙丙丁戊己";
+    r = (EpdRect){0, 0, 20, 29};
+    assert(book_layout_build_blocks_metrics(metrics_text, strlen(metrics_text), NULL, 0, r, 10, 135));
+    compact_pages = book_layout_page_count();
+    assert(book_layout_build_blocks_metrics(metrics_text, strlen(metrics_text), NULL, 0, r, 10, 150));
+    standard_pages = book_layout_page_count();
+    assert(book_layout_build_blocks_metrics(metrics_text, strlen(metrics_text), NULL, 0, r, 10, 175));
+    relaxed_pages = book_layout_page_count();
+    assert(compact_pages <= standard_pages && standard_pages <= relaxed_pages);
+    assert(book_layout_side_margins((EpdRect){0, 10, 100, 50}, 24).x == 24);
+    assert(book_layout_side_margins((EpdRect){0, 10, 100, 50}, 24).width == 52);
+    assert(book_layout_side_margins((EpdRect){0, 10, 40, 50}, 24).width == 0);
+    // 当前章节搜索返回 UTF-8 字节偏移，并忽略 ASCII 大小写。
+    // Chapter search returns UTF-8 byte offsets and ignores ASCII case.
+    const char searchable[] = "Read Pico 读书 read PICO";
+    size_t matches[4] = {0};
+    assert(book_text_search(searchable, strlen(searchable), "pIcO", 0, matches, 4) == 2);
+    assert(matches[0] == 5 && matches[1] == 22);
+    assert(book_text_search(searchable, strlen(searchable), "读书", 0, matches, 4) == 1);
+    assert(matches[0] == 10);
+    assert(book_text_search(searchable, strlen(searchable), "read", 6, matches, 4) == 1);
+    assert(matches[0] == 17);
     // 分批与一次分页的边界相同，第一页不必测量整章。
     // Incremental and eager pagination agree; the first page never measures the whole chapter.
     char chapter[1201]; memset(chapter, 'x', 1200); chapter[1200] = 0;

@@ -9,6 +9,7 @@
 #include "book_source.h"
 #include <stdbool.h>
 #include <stdio.h>
+#include "html_text.h"
 #define BOOK_CHAPTER_MAX 2048
 #define BOOK_CHAPTER_BYTES_MAX (96 * 1024)
 typedef struct {
@@ -27,3 +28,23 @@ typedef struct {
 esp_err_t book_txt_open(book_txt_t *book, const char *path);
 /// 加载一章并转为 UTF-8。/ Load a chapter as UTF-8.
 esp_err_t book_txt_load(book_txt_t *book, size_t i, char **utf8, size_t *len);
+
+typedef struct book_md book_md_t;
+esp_err_t book_md_open(const char *path, book_md_t **out);
+void book_md_close(book_md_t *book);
+size_t book_md_chapter_count(const book_md_t *book);
+esp_err_t book_md_chapter_title(const book_md_t *book, size_t i, char *buf, size_t cap);
+esp_err_t book_md_load(const book_md_t *book, size_t i, html_text_t *out);
+uint32_t book_md_total_bytes(const book_md_t *book);
+uint32_t book_md_chapter_offset(const book_md_t *book, size_t i);
+
+typedef struct book_cbz book_cbz_t;
+esp_err_t book_cbz_open(const char *path, book_cbz_t **out);
+void book_cbz_close(book_cbz_t *book);
+size_t book_cbz_chapter_count(const book_cbz_t *book);
+esp_err_t book_cbz_chapter_title(const book_cbz_t *book, size_t i, char *buf, size_t cap);
+esp_err_t book_cbz_load(const book_cbz_t *book, size_t i, html_text_t *out);
+esp_err_t book_cbz_load_image(book_cbz_t *book, size_t chapter, const char *reference,
+                              uint8_t **pixels, uint16_t *width, uint16_t *height);
+uint32_t book_cbz_total_bytes(const book_cbz_t *book);
+uint32_t book_cbz_chapter_offset(const book_cbz_t *book, size_t i);

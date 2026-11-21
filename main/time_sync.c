@@ -16,7 +16,6 @@
 #include "esp_netif_sntp.h"
 #include "esp_timer.h"
 #include "read_pico_pmu.h"
-#include "read_pico_pmu_protocol.h"
 
 static const char *TAG = "time_sync";
 static bool s_sntp_started;
@@ -43,13 +42,7 @@ void app_time_sync_poll(void) {
     time_t now = time(NULL);
     if (now < 1704067200 || now > UINT32_MAX) return;
     uint32_t unix_sec = (uint32_t)now;
-    uint8_t payload[4] = {
-        (uint8_t)unix_sec,
-        (uint8_t)(unix_sec >> 8),
-        (uint8_t)(unix_sec >> 16),
-        (uint8_t)(unix_sec >> 24),
-    };
-    esp_err_t err = read_pico_pmu_cmd(PMU_CMD_TIME_SYNC, payload, sizeof(payload));
+    esp_err_t err = read_pico_pmu_time_sync(unix_sec);
     uint16_t status = read_pico_pmu_get()->last_op_status;
     bool accepted = err == ESP_OK && (status == PMU_STATUS_OK || status == PMU_STATUS_ACCEPTED);
     if (accepted) err = read_pico_pmu_cmd(PMU_CMD_TIME_GET, NULL, 0);

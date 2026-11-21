@@ -13,8 +13,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include "app.h"
+#include "ambient_sync.h"
 #include "book_image.h"
 #include "reading_stats.h"
 #include "display.h"
@@ -47,6 +49,32 @@ extern const uint8_t lock_4bpp_bin_start[] asm("_binary_lock_4bpp_bin_start");
 static cst836u_handle_t s_tp;
 static sc7a20h_handle_t s_acc;
 static bool s_acc_was_on;
+
+static void arm_ambient_alarm_before_sleep(app_sleep_mode_t mode) {
+    app_ambient_settings_t cfg;
+    app_settings_ambient_get(&cfg);
+    if (mode != APP_SLEEP_DEEP || !read_pico_pmu_ready()) return;
+    if (!cfg.enabled) {
+        (void)read_pico_pmu_alarm_set(0, 10);
+        return;
+    }
+    const pmu_snapshot_t *pmu = read_pico_pmu_get();
+    time_t now = pmu && pmu->time_ok && pmu->unix_sec
+        ? (time_t)pmu->unix_sec : time(NULL);
+    uint32_t interval = (uint32_t)cfg.interval_min * 60U;
+    uint32_t delay = interval;
+    if (now >= 946684800) {
+        struct tm local;
+        if (localtime_r(&now, &local)) {
+            uint32_t midnight = (uint32_t)local.tm_hour * 3600U +
+                (uint32_t)local.tm_min * 60U + (uint32_t)local.tm_sec;
+            delay = ambient_sync_next_delay(midnight, interval, cfg.quiet_start_h, cfg.quiet_end_h);
+        }
+    }
+    if (delay < 10) delay = 10;
+    if (delay > 2678400U) delay = 2678400U;
+    (void)read_pico_pmu_alarm_set(1, delay);
+}
 
 void app_sleep_bind(cst836u_handle_t tp, sc7a20h_handle_t acc) {
     s_tp = tp;
@@ -456,6 +484,7 @@ void enter_lock_and_sleep(
     // 主机下电只在失败时返回，退到浅睡，至少外设已停、按键可唤醒。
     // Host power-down returns only on failure; fall back to light sleep with peripherals parked and the key as wake.
     if (mode == APP_SLEEP_OFF || mode == APP_SLEEP_DEEP) {
+        arm_ambient_alarm_before_sleep(mode);
         ESP_LOGW(TAG, "host sleep failed: %s, light sleep", esp_err_to_name(app_enter_host_sleep(mode)));
     }
     epd_poweroff();

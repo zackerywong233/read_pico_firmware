@@ -44,6 +44,8 @@ AI エージェント向けのディレクトリ構成、`app_desc_t` の仕様�
 
 ## ビルドと書き込み
 
+デュアル OTA パーティションへ初めて移行するときは、[ブラウザー書き込みページ](https://zackerywong233.github.io/read_pico_firmware/)から USB で書き込み、Flash の消去を選択してください。パーティションテーブルと 7 MB の内蔵ストレージを再作成します。TF カード内のファイルは消去されません。以降の更新は設定 → システム更新から Wi-Fi OTA で行えます。詳しくは[ブラウザー書き込みガイド](docs/WEB_FLASHER.md)をご覧ください。
+
 ESP-IDF v6.1 が必要です。`components/read_pico/read_pico_flash_hpm.c` は、
 v6 でのみ提供される `esp_flash_chips/spi_flash_override.h` に依存しています。
 

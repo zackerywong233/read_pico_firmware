@@ -152,6 +152,14 @@ esp_err_t read_pico_pmu_refresh(void);
 esp_err_t read_pico_pmu_poll(void);
 
 esp_err_t read_pico_pmu_cmd(uint16_t code, const uint8_t* payload, uint8_t plen);
+/// 用 u32 小端 Unix 秒同步 PMU RTC。/ Synchronize PMU RTC with u32 little-endian Unix seconds.
+esp_err_t read_pico_pmu_time_sync(uint32_t unix_seconds);
+/// 设置 PMU 闹钟；mode 为 0/1/2，非零 seconds 范围 10..2678400。
+/// / Set the PMU alarm; mode is 0/1/2 and nonzero seconds is 10..2678400.
+esp_err_t read_pico_pmu_alarm_set(uint8_t mode, uint32_t seconds);
+/// 刷新并返回 PMU 闹钟快照。
+/// / Refresh and return the PMU alarm snapshot.
+esp_err_t read_pico_pmu_alarm_get(void);
 /// 读出厂绑定的面板 VCOM。valid 则 *out_mv 为 500..2500，
 /// 未标定 / 旧固件 / 读失败一律 ESP_ERR_NOT_FOUND。
 /// / Read factory-bound panel VCOM. When valid, *out_mv is 500..2500.

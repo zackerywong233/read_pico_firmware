@@ -38,7 +38,7 @@
 
 ## 浏览器内安装
 
-发布新版本后，可在 [小纸 Pico 浏览器刷机页](https://zackerywong233.github.io/read_pico_firmware/) 直接安装固件。请使用最新版 Chrome 或 Edge，通过 USB 连接设备；首次安装时会显示是否擦除 ESP 内置 Flash 的选项。擦除会清除内置存储与设置，TF 卡文件不受影响。发布与刷写说明见 [浏览器刷机文档](docs/WEB_FLASHER.md)。
+发布新版本后，可在 [小纸 Pico 浏览器刷机页](https://zackerywong233.github.io/read_pico_firmware/) 安装固件。首次升级到双 OTA 分区版本时，请勾选擦除 Flash，以重建分区表和 7 MB 内置存储；擦除会清除内置存储与设置，TF 卡文件不受影响。之后可在设备“设置 → 系统更新”通过 Wi-Fi OTA 升级。详情见 [浏览器刷机文档](docs/WEB_FLASHER.md)。
 
 ## 编译与烧写
 

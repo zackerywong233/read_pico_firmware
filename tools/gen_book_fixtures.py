@@ -7,6 +7,8 @@ import argparse
 import hashlib
 import json
 import posixpath
+import struct
+import zlib
 from pathlib import Path
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
@@ -154,6 +156,17 @@ def check_epub(path, navigation, div_heavy):
                 require(len(chapter.findall(".//x:div", NS)) == 120, "nested div coverage")
 
 
+def make_cbz(path):
+    def gray_png(value):
+        def chunk(kind, payload):
+            return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload))
+        return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 0, 0, 0, 0)) +
+                chunk(b"IDAT", zlib.compress(bytes((0, value)))) + chunk(b"IEND", b""))
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, value in (("page10.png", 100), ("page2.png", 20), ("folder/page1.png", 10)):
+            archive.writestr(name, gray_png(value))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate and self-check original TXT/EPUB test books.")
     parser.add_argument("--output", type=Path, default=Path(__file__).resolve().parents[1] / "build/book-fixtures")
@@ -193,6 +206,9 @@ def main():
         check_epub(path, navigation, div_heavy)
         manifest.append(dict(file=f"books/{name}", encoding="utf-8", chapters=TITLES, navigation=navigation,
                              purpose="Nested div paragraph boundaries" if div_heavy else f"{navigation} TOC and spine order"))
+    make_cbz(books / "pages.cbz")
+    manifest.append(dict(file="books/pages.cbz", encoding="binary", chapters=["pages 1-3"],
+                         purpose="CBZ natural filename sorting and page indexing"))
     for item in manifest:
         data = (args.output / item["file"]).read_bytes()
         item.update(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())

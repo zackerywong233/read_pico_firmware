@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "book_image.h"
 #include "book_layout.h"
@@ -32,6 +33,7 @@
 #include "mqtt_client.h"
 #include "esp_timer.h"
 #include "read_pico_sd.h"
+#include "read_pico_buzzer.h"
 #include "read_pico_transfer.h"
 #include "settings.h"
 #include "ttf_font.h"
@@ -48,6 +50,18 @@
 #define AGENT_IMAGE_MAX (2u * 1024u * 1024u)
 #define AGENT_BODY_PX 44
 #define AGENT_RECV_TIMEOUT_MS 20000
+#define AGENT_HISTORY_COUNT 20
+
+typedef struct {
+    uint32_t timestamp;
+    bool image;
+    bool replied;
+    char title[128];
+    char id[65];
+    char actions[4][25];
+    uint8_t action_count;
+    char *body_or_path;
+} agent_history_entry_t;
 
 typedef struct {
     char *data;
@@ -95,6 +109,28 @@ static uint8_t *s_image_pixels;
 static uint16_t s_image_width;
 static uint16_t s_image_height;
 static char s_notice[128];
+static char s_message_id[65];
+static char s_actions[4][25];
+static uint8_t s_action_count;
+static bool s_message_sound;
+static bool s_beep_pending;
+static bool s_message_replied;
+static app_redraw_t send_reply_action(int index);
+static agent_history_entry_t *s_history;
+static uint8_t s_history_next;
+static uint8_t s_history_size;
+static int8_t s_history_selected = -1;
+static int8_t s_current_history = -1;
+static bool s_history_list;
+
+static char *history_strdup(const char *text) {
+    if (!text) return NULL;
+    size_t n = strlen(text) + 1;
+    char *copy = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!copy) copy = malloc(n);
+    if (copy) memcpy(copy, text, n);
+    return copy;
+}
 
 static EpdRect body_rect(void) {
     return (EpdRect){UI_MARGIN, UI_CONTENT_TOP + 40, ui_content_width(),
@@ -312,6 +348,31 @@ static void process_message(char *payload) {
     cJSON *json = cJSON_ParseWithLengthOpts(payload, strlen(payload) + 1, NULL, true);
     if (!json) { snprintf(s_notice, sizeof(s_notice), "消息不是有效 JSON"); free(payload); return; }
     cJSON *type = cJSON_GetObjectItemCaseSensitive(json, "type");
+    s_message_id[0] = '\0'; s_action_count = 0; s_message_sound = false;
+    s_message_replied = false;
+    cJSON *id = cJSON_GetObjectItemCaseSensitive(json, "id");
+    bool metadata_valid = !id || (cJSON_IsString(id) && id->valuestring && strlen(id->valuestring) <= 64);
+    if (metadata_valid && cJSON_IsString(id))
+        snprintf(s_message_id, sizeof(s_message_id), "%s", id->valuestring);
+    cJSON *sound = cJSON_GetObjectItemCaseSensitive(json, "sound");
+    if (sound && !cJSON_IsBool(sound)) metadata_valid = false;
+    s_message_sound = cJSON_IsTrue(sound);
+    cJSON *actions = cJSON_GetObjectItemCaseSensitive(json, "actions");
+    if (actions && (!cJSON_IsArray(actions) || cJSON_GetArraySize(actions) > 4)) metadata_valid = false;
+    if (cJSON_IsArray(actions)) {
+        cJSON *action = NULL;
+        cJSON_ArrayForEach(action, actions) {
+            if (s_action_count >= 4) { metadata_valid = false; break; }
+            if (!cJSON_IsString(action) || !action->valuestring || strlen(action->valuestring) > 24) {
+                metadata_valid = false; s_action_count = 0; break;
+            }
+            snprintf(s_actions[s_action_count++], sizeof(s_actions[0]), "%s", action->valuestring);
+        }
+    }
+    if (!metadata_valid) {
+        snprintf(s_notice, sizeof(s_notice), "Agent 消息扩展字段无效");
+        cJSON_Delete(json); free(payload); return;
+    }
     if (cJSON_IsString(type) && !strcmp(type->valuestring, "text")) {
         cJSON *title = cJSON_GetObjectItemCaseSensitive(json, "title");
         cJSON *text = cJSON_GetObjectItemCaseSensitive(json, "text");
@@ -324,7 +385,23 @@ static void process_message(char *payload) {
             snprintf(s_title, sizeof(s_title), "%s", cJSON_IsString(title) && title->valuestring ? title->valuestring : "Agent 消息");
             if (!s_text || !book_layout_build(s_text, strlen(s_text), body_rect(), AGENT_BODY_PX)) {
                 free(s_text); s_text = NULL; snprintf(s_notice, sizeof(s_notice), "文字排版失败");
-            } else snprintf(s_notice, sizeof(s_notice), "收到 Agent 文字消息");
+            } else {
+                snprintf(s_notice, sizeof(s_notice), "收到 Agent 文字消息"); s_beep_pending = s_message_sound;
+                agent_history_entry_t *entry = s_history ? &s_history[s_history_next] : NULL;
+                if (entry) {
+                free(entry->body_or_path); memset(entry, 0, sizeof(*entry));
+                entry->timestamp = (uint32_t)time(NULL); entry->image = false;
+                snprintf(entry->title, sizeof(entry->title), "%s", s_title);
+                snprintf(entry->id, sizeof(entry->id), "%s", s_message_id);
+                entry->action_count = s_action_count;
+                memcpy(entry->actions, s_actions, sizeof(entry->actions));
+                entry->body_or_path = history_strdup(text->valuestring);
+                s_current_history = (int8_t)s_history_next;
+                s_history_selected = -1;
+                s_history_next = (uint8_t)((s_history_next + 1) % AGENT_HISTORY_COUNT);
+                if (s_history_size < AGENT_HISTORY_COUNT) ++s_history_size;
+                }
+            }
         }
     } else if (cJSON_IsString(type) && !strcmp(type->valuestring, "image")) {
         cJSON *url = cJSON_GetObjectItemCaseSensitive(json, "url");
@@ -337,7 +414,23 @@ static void process_message(char *payload) {
             if (!copy || xTaskCreate(image_task, "agent_image", 10240, copy, 4, NULL) != pdPASS) {
                 s_image_running = false;
                 free(copy); snprintf(s_notice, sizeof(s_notice), "无法启动图片下载");
-            } else { snprintf(s_notice, sizeof(s_notice), "正在下载 Agent 图片…"); }
+            } else {
+                snprintf(s_notice, sizeof(s_notice), "正在下载 Agent 图片…");
+                agent_history_entry_t *entry = s_history ? &s_history[s_history_next] : NULL;
+                if (entry) {
+                free(entry->body_or_path); memset(entry, 0, sizeof(*entry));
+                entry->timestamp = (uint32_t)time(NULL); entry->image = true;
+                snprintf(entry->title, sizeof(entry->title), "Agent 图片");
+                snprintf(entry->id, sizeof(entry->id), "%s", s_message_id);
+                entry->action_count = s_action_count;
+                memcpy(entry->actions, s_actions, sizeof(entry->actions));
+                entry->body_or_path = history_strdup(url->valuestring);
+                s_current_history = (int8_t)s_history_next;
+                s_history_selected = -1;
+                s_history_next = (uint8_t)((s_history_next + 1) % AGENT_HISTORY_COUNT);
+                if (s_history_size < AGENT_HISTORY_COUNT) ++s_history_size;
+                }
+            }
         }
     } else snprintf(s_notice, sizeof(s_notice), "不支持的消息类型");
     cJSON_Delete(json);
@@ -365,10 +458,59 @@ static void draw_image(uint8_t *fb) {
     }
 }
 
+static void draw_actions(uint8_t *fb) {
+    if (!s_action_count) return;
+    int width = ui_content_width() / s_action_count;
+    for (int i = 0; i < s_action_count; ++i) {
+        EpdRect r = {UI_MARGIN + i * width, UI_CONTENT_BOTTOM - 74, width - UI_GAP, 56};
+        char label[40];
+        snprintf(label, sizeof(label), "%s%s", s_message_replied && i == 0 ? "✓ " : "", s_actions[i]);
+        ui_draw_button(fb, r, label, false);
+    }
+}
+
 static void render(app_ctx_t *ctx, uint8_t *fb) {
     (void)ctx;
     if (!ttf_font_ready()) { ui_draw_no_font_page(fb, false, false); return; }
-    if (s_image_pixels) { draw_image(fb); ui_draw_menu_handle(fb, false); return; }
+    if (s_history_list) {
+        ui_clear_page(fb);
+        ui_draw_header(fb, "Agent 历史收件", "点选消息查看详情，点顶部返回消息");
+        uint8_t oldest = (uint8_t)((s_history_next + AGENT_HISTORY_COUNT - s_history_size) % AGENT_HISTORY_COUNT);
+        int y = UI_CONTENT_TOP + 12;
+        for (int i = 0; i < s_history_size; ++i) {
+            uint8_t index = (uint8_t)((oldest + i) % AGENT_HISTORY_COUNT);
+            agent_history_entry_t *entry = &s_history[index];
+            char label[170];
+            snprintf(label, sizeof(label), "%s%s · %s", entry->image ? "图片" : "文字",
+                     entry->replied ? " · 已回复" : "", entry->title);
+            EpdRect row = {UI_MARGIN, y, ui_content_width(), 38};
+            ui_draw_button(fb, row, label, index == s_history_selected);
+            y += 41;
+            if (y > UI_CONTENT_BOTTOM - 40) break;
+        }
+        ui_draw_menu_handle(fb, false);
+        return;
+    }
+    if (s_history_selected >= 0 && s_history[s_history_selected].body_or_path) {
+        agent_history_entry_t *entry = &s_history[s_history_selected];
+        ui_clear_page(fb);
+        ui_draw_header(fb, entry->title, entry->replied ? "已回复" : "历史消息");
+        if (entry->image) {
+            char source[96];
+            snprintf(source, sizeof(source), "图片来源：%.72s", entry->body_or_path);
+            ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 40, UI_PX_CAPTION, source, EPD_DRAW_ALIGN_LEFT, false);
+        }
+        else if (s_text) book_layout_draw_page(fb, s_page, body_rect(), AGENT_BODY_PX);
+        if (!entry->image && s_text) {
+            char page[48]; snprintf(page, sizeof(page), "第 %u / %u 页", (unsigned)s_page + 1,
+                                    (unsigned)book_layout_page_count());
+            ui_text(fb, UI_MARGIN, UI_CONTENT_BOTTOM - 12, UI_PX_CAPTION, page, EPD_DRAW_ALIGN_LEFT, false);
+        }
+        draw_actions(fb);
+        ui_draw_menu_handle(fb, false);
+        return;
+    }
+    if (s_image_pixels) { draw_image(fb); draw_actions(fb); ui_draw_menu_handle(fb, false); return; }
     ui_clear_page(fb);
     ui_draw_header(fb, s_title[0] ? s_title : "Agent 收件", s_notice);
     if (s_text) {
@@ -385,10 +527,16 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             !s_config_loaded ? "请在屏幕显示的网址配置 MQTT/TLS" :
             !subscribed ? "正在连接或订阅主题…" : "等待 Agent 投递文字或图片…",
             EPD_DRAW_ALIGN_LEFT, false);
-        if (status.url[0]) ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 116, UI_PX_CAPTION, status.url, EPD_DRAW_ALIGN_LEFT, false);
+        if (status.url[0]) {
+            char local_url[96];
+            snprintf(local_url, sizeof(local_url), "http://%s.local", status.mdns_host[0] ? status.mdns_host : "readpico");
+            ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 116, UI_PX_CAPTION, local_url, EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 148, UI_PX_CAPTION, status.url, EPD_DRAW_ALIGN_LEFT, false);
+        }
         ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 176, UI_PX_CAPTION, "JSON: {\"type\":\"text\",\"title\":\"标题\",\"text\":\"内容\"}", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 226, UI_PX_CAPTION, "图片: {\"type\":\"image\",\"url\":\"https://…\"}", EPD_DRAW_ALIGN_LEFT, false);
     }
+    draw_actions(fb);
     ui_draw_menu_handle(fb, false);
 }
 
@@ -417,6 +565,9 @@ static void on_enter(app_ctx_t *ctx) {
     (void)ctx;
     s_messages = xQueueCreate(2, sizeof(char *));
     s_image_results = xQueueCreate(1, sizeof(agent_image_result_t *));
+    s_history = heap_caps_calloc(AGENT_HISTORY_COUNT, sizeof(*s_history), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_history) s_history = calloc(AGENT_HISTORY_COUNT, sizeof(*s_history));
+    s_history_next = s_history_size = 0; s_history_selected = s_current_history = -1; s_history_list = false;
     s_title[0] = 0; s_page = 0; s_poll_ms = 0;
     s_config_loaded = false;
     s_storage_changed = false;
@@ -458,6 +609,15 @@ static void cleanup(void) {
         vQueueDelete(s_image_results); s_image_results = NULL;
     }
     free(s_rx_message); s_rx_message = NULL;
+    if (s_history) {
+        for (int i = 0; i < AGENT_HISTORY_COUNT; ++i) {
+            free(s_history[i].body_or_path);
+            memset(&s_history[i], 0, sizeof(s_history[i]));
+        }
+        free(s_history);
+        s_history = NULL;
+    }
+    s_history_next = s_history_size = 0; s_history_selected = s_current_history = -1; s_history_list = false;
     book_layout_free(); free(s_text); s_text = NULL;
     free(s_image_pixels); s_image_pixels = NULL; s_image_width = s_image_height = 0;
     memset(&s_config, 0, sizeof(s_config));
@@ -477,6 +637,14 @@ static void on_media_lost(app_ctx_t *ctx) { (void)ctx; cleanup(); display_set_bu
 
 static app_redraw_t on_tick(app_ctx_t *ctx) {
     (void)ctx;
+    if (s_beep_pending) {
+        s_beep_pending = false;
+        if (!app_settings_muted() && !read_pico_buzzer_score_busy()) {
+            (void)read_pico_buzzer_tone(880, 70);
+            vTaskDelay(pdMS_TO_TICKS(35));
+            (void)read_pico_buzzer_tone(1175, 70);
+        }
+    }
     int64_t now = esp_timer_get_time() / 1000;
     bool was_ready = s_net.network_ready;
     portENTER_CRITICAL(&s_agent_mux);
@@ -514,6 +682,7 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
         if (result && result->err == ESP_OK) {
             free(s_image_pixels); s_image_pixels = result->pixels; result->pixels = NULL;
             s_image_width = result->width; s_image_height = result->height;
+            s_beep_pending = s_message_sound;
             if (result->saved) {
                 app_settings_set_saver_style(APP_SAVER_IMAGE);
                 snprintf(s_notice, sizeof(s_notice), "图片已保存到 TF 卡，并设为锁屏屏保");
@@ -539,8 +708,71 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
     return APP_REDRAW_NONE;
 }
 
+static app_redraw_t send_reply_action(int index) {
+    bool connected;
+    portENTER_CRITICAL(&s_agent_mux); connected = s_connected; portEXIT_CRITICAL(&s_agent_mux);
+    if (index < 0 || index >= s_action_count || !s_message_id[0] || !s_mqtt || !connected) return APP_REDRAW_NONE;
+    char topic[READ_PICO_AGENT_TOPIC_MAX + 8];
+    snprintf(topic, sizeof(topic), "%s/reply", s_config.topic);
+    cJSON *reply = cJSON_CreateObject();
+    if (!reply) return APP_REDRAW_NONE;
+    cJSON_AddStringToObject(reply, "id", s_message_id);
+    cJSON_AddStringToObject(reply, "action", s_actions[index]);
+    cJSON_AddNumberToObject(reply, "ts", (double)time(NULL));
+    char *json = cJSON_PrintUnformatted(reply);
+    cJSON_Delete(reply);
+    if (!json) return APP_REDRAW_NONE;
+    int msg_id = esp_mqtt_client_publish(s_mqtt, topic, json, 0, 1, 0);
+    cJSON_free(json);
+    if (msg_id < 0) snprintf(s_notice, sizeof(s_notice), "回复发送失败");
+    else {
+        s_message_replied = true;
+        if (s_current_history >= 0 && s_current_history < AGENT_HISTORY_COUNT)
+            s_history[(uint8_t)s_current_history].replied = true;
+        snprintf(s_notice, sizeof(s_notice), "已回复：%s", s_actions[index]);
+    }
+    return APP_REDRAW_PAGE;
+}
+
+static app_redraw_t on_touch(app_ctx_t *ctx, const cst836u_touch_t *touch) {
+    if (!touch || !ctx->released || !s_action_count || touch->y < UI_CONTENT_BOTTOM - 84) return APP_REDRAW_NONE;
+    int width = ui_content_width() / s_action_count;
+    return send_reply_action((touch->x - UI_MARGIN) / width);
+}
+
 static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) {
     (void)ctx;
+    if (s_history_list) {
+        if (event->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
+        if (event->y < UI_CONTENT_TOP + 40) { s_history_list = false; return APP_REDRAW_PAGE; }
+        int row = (event->y - (UI_CONTENT_TOP + 12)) / 46;
+        uint8_t oldest = (uint8_t)((s_history_next + AGENT_HISTORY_COUNT - s_history_size) % AGENT_HISTORY_COUNT);
+        if (row < 0 || row >= s_history_size) return APP_REDRAW_NONE;
+        s_history_selected = (int8_t)((oldest + row) % AGENT_HISTORY_COUNT);
+        agent_history_entry_t *entry = &s_history[s_history_selected];
+        s_current_history = s_history_selected;
+        s_message_replied = entry->replied;
+        s_action_count = entry->action_count;
+        memcpy(s_actions, entry->actions, sizeof(s_actions));
+        snprintf(s_message_id, sizeof(s_message_id), "%s", entry->id);
+        snprintf(s_title, sizeof(s_title), "%s", entry->title);
+        book_layout_free(); free(s_text); s_text = NULL; s_page = 0;
+        if (!entry->image && entry->body_or_path) {
+            s_text = strdup(entry->body_or_path);
+            if (s_text) (void)book_layout_build(s_text, strlen(s_text), body_rect(), AGENT_BODY_PX);
+        }
+        return APP_REDRAW_PAGE;
+    }
+    if (event->type == UI_GESTURE_TAP && event->y < UI_CONTENT_TOP + 32 && s_history_size) {
+        s_history_list = true;
+        return APP_REDRAW_PAGE;
+    }
+    if (event->type == UI_GESTURE_TAP && s_action_count &&
+        event->y >= UI_CONTENT_BOTTOM - 84 && s_message_id[0]) {
+        int width = ui_content_width() / s_action_count;
+        int index = (event->x - UI_MARGIN) / width;
+        if (index >= 0 && index < s_action_count) return send_reply_action(index);
+    }
     if (!s_text || s_image_pixels) return APP_REDRAW_NONE;
     if (event->type == UI_GESTURE_SWIPE_L || (event->type == UI_GESTURE_TAP && event->x > epd_rotated_display_width() / 2)) {
         if (s_page + 1 < book_layout_page_count()) { ++s_page; return APP_REDRAW_PAGE; }
@@ -554,6 +786,15 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
 }
 
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
+    if (!s_action_count && key == UI_KEY_1 && s_history_size) {
+        s_history_list = !s_history_list;
+        if (!s_history_list) s_history_selected = -1;
+        return APP_REDRAW_PAGE;
+    }
+    if (s_action_count && s_message_id[0]) {
+        int index = key == UI_KEY_1 ? 0 : key == UI_KEY_2 ? 1 : key == UI_KEY_3 ? 2 : -1;
+        if (index >= 0 && index < s_action_count) return send_reply_action(index);
+    }
     if (key == UI_KEY_1) { if (s_text && s_page) { --s_page; return APP_REDRAW_PAGE; } return APP_REDRAW_NONE; }
     if (key == UI_KEY_2) return APP_REDRAW_FULL;
     if (key == UI_KEY_3) { if (s_text && s_page + 1 < book_layout_page_count()) { ++s_page; return APP_REDRAW_PAGE; } return APP_REDRAW_NONE; }
@@ -561,6 +802,11 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
 }
 
 static app_redraw_t on_key_long(app_ctx_t *ctx, int key) {
+    if (key == UI_KEY_1 && s_history_size) {
+        s_history_list = !s_history_list;
+        if (!s_history_list) s_history_selected = -1;
+        return APP_REDRAW_PAGE;
+    }
     if (key != UI_KEY_2) return APP_REDRAW_NONE;
     ctx->request_menu = true;
     return APP_REDRAW_NONE;
@@ -576,6 +822,7 @@ const app_desc_t app_agent = {
     .on_exit = agent_on_exit,
     .on_media_lost = on_media_lost,
     .on_tick = on_tick,
+    .on_touch = on_touch,
     .on_gesture = on_gesture,
     .on_key = on_key,
     .on_key_long = on_key_long,

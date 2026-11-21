@@ -35,19 +35,27 @@ extern const app_desc_t app_transfer;
 extern const app_desc_t app_web;
 extern const app_desc_t app_agent;
 extern const app_desc_t app_system_tools;
+extern const app_desc_t app_settings;
+extern const app_desc_t app_feeds;
+extern const app_desc_t app_sketch;
+extern const app_desc_t app_focus;
 
-// 一级只列日常功能、自检和系统工具入口；硬件诊断由工具页继续进入。
-// Keep daily functions, self-test and the system tools entry at the root; diagnostics live one level deeper.
+// 一级列日常功能、设置、自检和系统工具入口；硬件诊断由工具页继续进入。
+// Keep daily functions, Settings, self-test and system tools at the root; diagnostics live one level deeper.
 static const app_desc_t* const s_apps[] = {
     &app_book,
     &app_transfer,
     &app_web,
+    &app_feeds,
+    &app_sketch,
+    &app_focus,
     &app_agent,
     &app_home,
     &app_personal,
     &app_selftest,
     &app_font_pick,
     &app_system_tools,
+    &app_settings,
 };
 
 #define APP_COUNT ((int)(sizeof(s_apps) / sizeof(s_apps[0])))
@@ -82,4 +90,8 @@ const app_desc_t* app_selftest_page(void) {
 
 const app_desc_t* app_font_page(void) {
     return &app_font_pick;
+}
+
+const app_desc_t* app_settings_page(void) {
+    return &app_settings;
 }

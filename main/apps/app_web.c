@@ -21,6 +21,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "book_layout.h"
 #include "book_progress.h"
@@ -35,12 +38,14 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "html_text.h"
+#include "nvs.h"
 #include "read_pico_transfer.h"
 #include "ttf_font.h"
 #include "ui_gesture.h"
 #include "ui_kit.h"
 #include "ui_menu.h"
 #include "ui_wifi_qr.h"
+#include "web_bookmark_policy.h"
 
 extern const app_desc_t app_web;
 
@@ -58,6 +63,7 @@ typedef enum {
     WEB_EDIT_URL,
     WEB_LOADING,
     WEB_READING,
+    WEB_BOOKMARKS,
     WEB_ERROR,
 } web_view_t;
 
@@ -86,7 +92,10 @@ typedef struct {
     EpdRect back;
     EpdRect prev;
     EpdRect next;
+    EpdRect bookmark;
+    EpdRect save;
 } web_geom_t;
+
 
 static web_view_t s_view;
 static book_store_root_t s_root;
@@ -108,6 +117,9 @@ static volatile bool s_fetch_running;
 static volatile bool s_fetch_cancel;
 static TaskHandle_t s_fetch_task;
 static bool s_article_truncated;
+static web_bookmark_t s_bookmarks[WEB_BOOKMARK_MAX];
+static size_t s_bookmark_count;
+static size_t s_bookmark_page;
 
 static const char *const s_url_keys =
     "1234567890" "qwertyuiop" "asdfghjkl-" "zxcvbnm._'";
@@ -145,9 +157,11 @@ static web_geom_t web_geom(void) {
         .url_field = {UI_MARGIN, 210, width, 112},
         .open = {UI_MARGIN, 330, button_w, 80},
         .home = {UI_MARGIN + button_w + UI_GAP, 330, button_w, 80},
-        .back = ui_bar_rect(0, 3),
-        .prev = ui_bar_rect(1, 3),
-        .next = ui_bar_rect(2, 3),
+        .back = ui_bar_rect(0, 5),
+        .prev = ui_bar_rect(1, 5),
+        .next = ui_bar_rect(2, 5),
+        .bookmark = ui_bar_rect(3, 5),
+        .save = ui_bar_rect(4, 5),
     };
 }
 
@@ -167,6 +181,91 @@ static void free_article(void) {
     book_layout_free();
     html_text_free(&s_article);
     s_page = 0;
+}
+
+static void load_bookmarks(void) {
+    memset(s_bookmarks, 0, sizeof(s_bookmarks));
+    s_bookmark_count = 0;
+    nvs_handle_t h;
+    if (nvs_open("read_pico", NVS_READONLY, &h) != ESP_OK) return;
+    size_t size = sizeof(s_bookmarks);
+    uint8_t count = 0;
+    esp_err_t err = nvs_get_blob(h, "webmarks", s_bookmarks, &size);
+    if (err == ESP_OK && size == sizeof(s_bookmarks) && nvs_get_u8(h, "webmark_n", &count) == ESP_OK && count <= WEB_BOOKMARK_MAX)
+        s_bookmark_count = count;
+    else memset(s_bookmarks, 0, sizeof(s_bookmarks));
+    nvs_close(h);
+}
+
+static void save_bookmarks(void) {
+    nvs_handle_t h;
+    if (nvs_open("read_pico", NVS_READWRITE, &h) != ESP_OK) return;
+    esp_err_t err = nvs_set_blob(h, "webmarks", s_bookmarks, sizeof(s_bookmarks));
+    if (err == ESP_OK) err = nvs_set_u8(h, "webmark_n", (uint8_t)s_bookmark_count);
+    if (err == ESP_OK) (void)nvs_commit(h);
+    nvs_close(h);
+}
+
+static bool bookmark_index(const char *url, size_t *index) {
+    *index = web_bookmark_find(s_bookmarks, s_bookmark_count, url);
+    return *index != WEB_BOOKMARK_MAX;
+}
+
+static void toggle_bookmark(void) {
+    size_t index;
+    if (bookmark_index(s_url, &index)) {
+        (void)web_bookmark_remove(s_bookmarks, &s_bookmark_count, s_url);
+        snprintf(s_notice, sizeof(s_notice), "已从收藏夹移除");
+    } else if (s_bookmark_count < WEB_BOOKMARK_MAX) {
+        char title[WEB_BOOKMARK_TITLE_MAX];
+        const char *host = s_url + (strncmp(s_url, "https://", 8) == 0 ? 8 : 7);
+        size_t n = strcspn(host, "/?#:");
+        if (n >= sizeof(title)) n = sizeof(title) - 1;
+        memcpy(title, host, n); title[n] = 0;
+        if (web_bookmark_add(s_bookmarks, &s_bookmark_count, title, s_url)) snprintf(s_notice, sizeof(s_notice), "已加入收藏夹");
+    } else snprintf(s_notice, sizeof(s_notice), "收藏夹最多保存 20 条网址");
+    save_bookmarks();
+}
+
+static bool save_article_to_shelf(void) {
+    if (!s_article.utf8 || !s_article.len || !s_root.path[0]) return false;
+    char name[96], path[384];
+    size_t out = 0;
+    const char *title = s_article.count ? s_article.utf8 + s_article.blocks[0].offset : "";
+    size_t title_len = s_article.count ? s_article.blocks[0].len : 0;
+    for (size_t i = 0; i < title_len && out < 48;) {
+        unsigned char c = (unsigned char)title[i];
+        size_t width = c < 0x80 ? 1 : (c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4);
+        if (i + width > title_len || out + width > 48) break;
+        if (width == 1) name[out++] = (isalnum(c) || c == '-' || c == '_') ? (char)c : '_';
+        else { memcpy(name + out, title + i, width); out += width; }
+        i += width;
+    }
+    if (!out) {
+        const char *host = s_url + (strncmp(s_url, "https://", 8) == 0 ? 8 : 7);
+        size_t n = strcspn(host, "/?#:"); if (n > 48) n = 48;
+        for (size_t i = 0; i < n; ++i) { unsigned char c = (unsigned char)host[i]; name[out++] = (c < 128 && (isalnum(c) || c == '-' || c == '_')) ? (char)c : '_'; }
+        if (!out) { memcpy(name, "webpage", 7); out = 7; }
+    }
+    name[out] = 0;
+    for (unsigned suffix = 0; suffix < 100; ++suffix) {
+        if (suffix) snprintf(path, sizeof(path), "%s/%s-%u.txt", s_root.path, name, suffix + 1);
+        else snprintf(path, sizeof(path), "%s/%s.txt", s_root.path, name);
+        int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+        if (fd < 0) { if (errno == EEXIST) continue; return false; }
+        size_t done = 0;
+        while (done < s_article.len) {
+            ssize_t wrote = write(fd, s_article.utf8 + done, s_article.len - done);
+            if (wrote <= 0) { close(fd); unlink(path); return false; }
+            done += (size_t)wrote;
+        }
+        close(fd);
+        book_store_notify_changed();
+        s_storage_changed = true;
+        snprintf(s_notice, sizeof(s_notice), "已存到书架：%s", name);
+        return true;
+    }
+    return false;
 }
 
 static void free_result(web_result_t *result) {
@@ -448,14 +547,15 @@ static void draw_home(uint8_t *fb) {
     ui_text_vc(fb, field.x + UI_PAD, field.y + field.height / 2, UI_PX_LABEL_SM,
                s_url[0] ? s_url : "点此输入网址", EPD_DRAW_ALIGN_LEFT, false);
     draw_button(fb, g.open, "输入网址 / 打开", false);
-    draw_button(fb, g.home, "重新连接", false);
+    draw_button(fb, g.home, "收藏夹", false);
     if (s_net_ready) {
         ui_draw_section(fb, 540, "浏览器剪藏 Browser clip");
         if (s_net.url[0]) {
             ui_wifi_qr_draw(fb, (EpdRect){UI_MARGIN + (ui_content_width() - 240) / 2, 650, 240, 240});
-            ui_text(fb, UI_MARGIN, 914, UI_PX_CAPTION,
-                    "扫码后按网页说明添加书签；投递时设备需保持唤醒。",
-                    EPD_DRAW_ALIGN_LEFT, false);
+            char local_url[96];
+            snprintf(local_url, sizeof(local_url), "网页：http://%s.local", s_net.mdns_host[0] ? s_net.mdns_host : "readpico");
+            ui_text(fb, UI_MARGIN, 914, UI_PX_CAPTION, local_url, EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, UI_MARGIN, 946, UI_PX_CAPTION, s_net.url, EPD_DRAW_ALIGN_LEFT, false);
         }
         if (s_view == WEB_LOADING || s_view == WEB_ERROR)
             ui_text(fb, UI_MARGIN, 970, UI_PX_CAPTION, s_notice, EPD_DRAW_ALIGN_LEFT, false);
@@ -476,6 +576,26 @@ static void draw_article(uint8_t *fb) {
     draw_button(fb, web_geom().back, "网址", false);
     draw_button(fb, web_geom().prev, "上一页", false);
     draw_button(fb, web_geom().next, "下一页", false);
+    size_t index = 0;
+    draw_button(fb, web_geom().bookmark, bookmark_index(s_url, &index) ? "取消收藏" : "收藏", false);
+    draw_button(fb, web_geom().save, "存到书架", false);
+    ui_draw_menu_handle(fb, false);
+}
+
+static void draw_bookmarks(uint8_t *fb) {
+    ui_clear_page(fb);
+    ui_draw_header(fb, "收藏夹", "点按网址直接加载");
+    size_t first = s_bookmark_page * 6;
+    for (size_t row = 0; row < 6 && first + row < s_bookmark_count; ++row) {
+        web_bookmark_t *item = &s_bookmarks[first + row];
+        EpdRect rect = ui_grid_rect(0, 1, (int)row, UI_CONTENT_TOP, 104);
+        ui_draw_round_rect(fb, rect, UI_BTN_RADIUS, UI_GRAY_BLACK);
+        ui_text(fb, rect.x + UI_PAD, rect.y + 8, UI_PX_BTN, item->title, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, rect.x + UI_PAD, rect.y + rect.height - 24, UI_PX_CAPTION, item->url, EPD_DRAW_ALIGN_LEFT, false);
+    }
+    draw_button(fb, ui_bar_rect(0, 3), "返回", false);
+    draw_button(fb, ui_bar_rect(1, 3), "上一页", false);
+    draw_button(fb, ui_bar_rect(2, 3), "下一页", false);
     ui_draw_menu_handle(fb, false);
 }
 
@@ -483,6 +603,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     (void)ctx;
     if (s_view == WEB_EDIT_URL) draw_keyboard(fb);
     else if (s_view == WEB_READING) draw_article(fb);
+    else if (s_view == WEB_BOOKMARKS) draw_bookmarks(fb);
     else draw_home(fb);
 }
 
@@ -490,6 +611,7 @@ static void on_enter(app_ctx_t *ctx) {
     (void)ctx;
     if (!s_result_queue) s_result_queue = xQueueCreate(1, sizeof(web_result_t *));
     s_storage_changed = false;
+    load_bookmarks();
     (void)ttf_font_suspend_sd(true);
     display_set_bulk_io(true);
     s_net_started = false;
@@ -539,6 +661,13 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
         accept_result(result);
         return APP_REDRAW_FULL;
     }
+    if (s_net_ready && s_view != WEB_LOADING && !s_fetch_running) {
+        char pushed[READ_PICO_WEBOPEN_URL_MAX];
+        if (read_pico_transfer_take_webopen_url(pushed)) {
+            snprintf(s_draft, sizeof(s_draft), "%s", pushed);
+            if (valid_web_url(s_draft) && start_fetch()) return APP_REDRAW_PAGE;
+        }
+    }
     if (!s_net_started || ctx->now_ms - s_net_poll_ms < 500) return APP_REDRAW_NONE;
     s_net_poll_ms = ctx->now_ms;
     read_pico_transfer_service_poll();
@@ -583,8 +712,8 @@ static bool home_touch(uint16_t x, uint16_t y) {
         open_address_editor();
         return true;
     } else if (ui_rect_hit(g.home, x, y)) {
-        network_stop();
-        network_start();
+        s_bookmark_page = 0;
+        s_view = WEB_BOOKMARKS;
         return true;
     }
     return false;
@@ -619,6 +748,11 @@ done:
 
 static bool article_touch(uint16_t x, uint16_t y) {
     const web_geom_t g = web_geom();
+    if (ui_rect_hit(g.bookmark, x, y)) { toggle_bookmark(); return true; }
+    if (ui_rect_hit(g.save, x, y)) {
+        if (!save_article_to_shelf()) snprintf(s_notice, sizeof(s_notice), "保存失败：书架空间不足或文件无法创建");
+        return true;
+    }
     if (ui_rect_hit(g.back, x, y)) { s_view = WEB_HOME; return true; }
     if (ui_rect_hit(g.prev, x, y) && s_page > 0) { --s_page; return true; }
     if (ui_rect_hit(g.next, x, y)) {
@@ -650,6 +784,21 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
         bool changed = false;
         if (s_view == WEB_EDIT_URL) changed = keyboard_touch(event->x, event->y);
         else if (s_view == WEB_READING) changed = article_touch(event->x, event->y);
+        else if (s_view == WEB_BOOKMARKS) {
+            if (ui_rect_hit(ui_bar_rect(0, 3), event->x, event->y)) { s_view = WEB_HOME; changed = true; }
+            else if (ui_rect_hit(ui_bar_rect(1, 3), event->x, event->y) && s_bookmark_page) { --s_bookmark_page; changed = true; }
+            else if (ui_rect_hit(ui_bar_rect(2, 3), event->x, event->y) && (s_bookmark_page + 1) * 6 < s_bookmark_count) { ++s_bookmark_page; changed = true; }
+            else {
+                size_t first = s_bookmark_page * 6;
+                for (size_t row = 0; row < 6 && first + row < s_bookmark_count; ++row) {
+                    EpdRect rect = ui_grid_rect(0, 1, (int)row, UI_CONTENT_TOP, 104);
+                    if (!ui_rect_hit(rect, event->x, event->y)) continue;
+                    snprintf(s_draft, sizeof(s_draft), "%s", s_bookmarks[first + row].url);
+                    if (!start_fetch()) snprintf(s_notice, sizeof(s_notice), "无法开始加载网页");
+                    changed = true; break;
+                }
+            }
+        }
         else changed = home_touch(event->x, event->y);
         if (!changed) return APP_REDRAW_NONE;
         if (s_view == WEB_EDIT_URL && event->x >= UI_MARGIN && event->y >= 200

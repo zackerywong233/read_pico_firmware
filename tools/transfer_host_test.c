@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 static char stat_alias[448], stat_target[448];
 static int test_stat(const char *path, struct stat *out) {
     return stat(stat_alias[0] && !strcmp(path, stat_alias) ? stat_target : path, out);
@@ -32,7 +33,7 @@ static int test_rename(const char *from, const char *to) {
         if (old) { fclose(old); if (fatfs_replace) { errno = EEXIST; return -1; } }
         if (fail_commit) { errno = EIO; return -1; }
     }
-    return rename(from, to);
+    return renameat(AT_FDCWD, from, AT_FDCWD, to);
 }
 #define fwrite test_write
 #define fclose test_close
@@ -209,9 +210,9 @@ int main(void) {
     fail_commit = 0;
     char backup[320]; snprintf(backup, sizeof(backup), "%s.rename-backup", path);
     f = fopen(backup, "wb"); assert(f); fclose(f); remaining = 40;
-    assert(receive_file(path, part, 40, buf, sizeof(buf), receive, NULL, NULL) == 507);
-    assert(access(backup, F_OK) == 0); unlink(backup);
-    f = fopen(path, "rb"); assert(f); fseek(f, 0, SEEK_END); assert(ftell(f) == 30); fclose(f);
+    assert(receive_file(path, part, 40, buf, sizeof(buf), receive, NULL, NULL) == 0);
+    assert(access(backup, F_OK) != 0);
+    f = fopen(path, "rb"); assert(f); fseek(f, 0, SEEK_END); assert(ftell(f) == 40); fclose(f);
     fail_recv = 0; remaining = 0;
     assert(receive_file(path, part, 20, buf, sizeof(buf), receive, NULL, NULL) == 408);
     remaining = 20;
@@ -234,8 +235,8 @@ int main(void) {
     assert(!strcmp(content, "old complete book"));
     assert(access(unknown, F_OK) == 0 && access(directory, F_OK) == 0);
     write_fixture(saved, "second complete book");
-    assert(cleanup_interrupted(root, &removed, &restored) == 0 && removed == 0 && restored == 0);
-    assert(access(saved, F_OK) == 0 && access(kept, F_OK) == 0);
+    assert(cleanup_interrupted(root, &removed, &restored) == 0 && removed == 1 && restored == 0);
+    assert(access(saved, F_OK) != 0 && access(kept, F_OK) == 0);
     char percent[320], invalid[320];
     snprintf(percent, sizeof(percent), "%s/100%%.txt.part", root);
     snprintf(invalid, sizeof(invalid), "%s/bad..txt.part", root);

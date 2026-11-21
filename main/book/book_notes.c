@@ -21,6 +21,9 @@
 #include "nvs.h"
 
 #define NOTES_DIR_NAME ".pico_notes"
+#ifndef BOOK_NOTES_EXPORT_SD_ROOT
+#define BOOK_NOTES_EXPORT_SD_ROOT "/sdcard/notes"
+#endif
 #define NOTES_HEADER_SIZE 12
 #define NOTES_FORMAT_VERSION 2
 #define NOTES_LEGACY_VERSION 1
@@ -443,4 +446,72 @@ esp_err_t book_notes_forget(const char *path) {
     esp_err_t err = forget_with_paths(path, paths);
     free(paths);
     return err;
+}
+
+static bool safe_title(const char *title, char *out, size_t cap) {
+    if (!title || !*title || !out || cap < 6) return false;
+    size_t used = 0;
+    for (const unsigned char *p = (const unsigned char *)title; *p;) {
+        unsigned char c = *p;
+        size_t width = c < 0x80 ? 1 : (c & 0xe0) == 0xc0 ? 2 : (c & 0xf0) == 0xe0 ? 3 : (c & 0xf8) == 0xf0 ? 4 : 1;
+        bool invalid = width == 1 && (c < 0x20 || c == 0x7f || strchr("/\\:*?\"<>|", c));
+        if (used + (invalid ? 1 : width) + 4 >= cap) break;
+        if (invalid) out[used++] = '_';
+        else { memcpy(out + used, p, width); used += width; }
+        p += width;
+    }
+    while (used && (out[used - 1] == ' ' || out[used - 1] == '.')) --used;
+    size_t start = 0;
+    while (start < used && (out[start] == ' ' || out[start] == '.')) ++start;
+    if (start) { memmove(out, out + start, used - start); used -= start; }
+    if (!used) { memcpy(out, "notes", 5); used = 5; }
+    memcpy(out + used, ".md", 4);
+    return true;
+}
+
+static bool markdown_quote(FILE *file, const char *text, size_t len) {
+    size_t start = 0;
+    for (size_t i = 0; i <= len; ++i) {
+        if (i != len && text[i] != '\n' && text[i] != '\r') continue;
+        if (fputs("> ", file) < 0 || (i > start && fwrite(text + start, 1, i - start, file) != i - start) ||
+            fputc('\n', file) == EOF) return false;
+        if (i < len && text[i] == '\r' && i + 1 < len && text[i + 1] == '\n') ++i;
+        start = i + 1;
+    }
+    return true;
+}
+
+esp_err_t book_notes_export_markdown(const char *book_path, const char *book_title,
+                                     const book_notes_t *notes, char *out_path, size_t out_path_cap) {
+    if (!valid_path(book_path) || !notes || !out_path || out_path_cap == 0 ||
+        (notes->bookmark_count && !notes->bookmarks) || (notes->excerpt_count && !notes->excerpts))
+        return ESP_ERR_INVALID_ARG;
+    const char *root = !strncmp(book_path, "/sdcard/books/", 13) ? BOOK_NOTES_EXPORT_SD_ROOT : "/flash/notes";
+    char filename[BOOK_STORE_PATH_MAX];
+    if (!safe_title(book_title, filename, sizeof(filename)) ||
+        snprintf(out_path, out_path_cap, "%s/%s", root, filename) >= (int)out_path_cap)
+        return ESP_ERR_INVALID_SIZE;
+    if (ensure_directory(root) != ESP_OK) return ESP_FAIL;
+    char temporary[BOOK_STORE_PATH_MAX];
+    if (snprintf(temporary, sizeof(temporary), "%s.tmp", out_path) >= (int)sizeof(temporary)) return ESP_ERR_INVALID_SIZE;
+    FILE *file = fopen(temporary, "wb");
+    if (!file) return ESP_FAIL;
+    const char *title = book_title && *book_title ? book_title : "未命名图书";
+    bool ok = fprintf(file, "# %s\n\n", title) >= 0;
+    for (size_t i = 0; ok && i < notes->bookmark_count; ++i) {
+        const book_note_position_t *p = &notes->bookmarks[i];
+        ok = fprintf(file, "## 书签 · 第 %u 章 · %u%%\n\n> 位置：%u 字节\n\n",
+                     (unsigned)p->chapter + 1, p->percent, (unsigned)p->byte_off) >= 0;
+    }
+    for (size_t i = 0; ok && i < notes->excerpt_count; ++i) {
+        const book_note_excerpt_t *e = &notes->excerpts[i];
+        ok = fprintf(file, "## 摘录 · 第 %u 章 · %u%%\n\n",
+                     (unsigned)e->position.chapter + 1, e->position.percent) >= 0 &&
+             e->text && markdown_quote(file, e->text, e->text_len) && fputc('\n', file) != EOF;
+    }
+    if (ok && fflush(file) != 0) ok = false;
+    if (ok && fsync(fileno(file)) != 0) ok = false;
+    if (fclose(file) != 0) ok = false;
+    if (!ok || rename(temporary, out_path) != 0) { (void)unlink(temporary); return ESP_FAIL; }
+    return ESP_OK;
 }

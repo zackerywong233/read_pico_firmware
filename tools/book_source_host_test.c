@@ -63,6 +63,25 @@ int main(int argc, char **argv) {
     write_bytes(s, strlen(s)); roundtrip(s, strlen(s));
     write_bytes("", 0); assert(book_open(path) == ESP_OK); assert(book_chapter_count() == 1); book_close();
     assert(book_open("/tmp/missing.epub") == ESP_ERR_NOT_FOUND);
+    const char *md = "# Start\nA **bold** and *soft* `code` [link](https://x).\n## Next\n- item\n> quote\n";
+    const char *md_path = "/tmp/book-source-test.md";
+    FILE *mf = fopen(md_path, "wb"); assert(mf); assert(fwrite(md, 1, strlen(md), mf) == strlen(md)); fclose(mf);
+    assert(book_open(md_path) == ESP_OK && book_kind() == BOOK_KIND_MD && book_chapter_count() == 2);
+    html_text_t parsed = {0}; assert(book_chapter_load_blocks(0, &parsed) == ESP_OK);
+    assert(parsed.count == 2 && parsed.blocks[0].heading);
+    assert(strstr(parsed.utf8, "Start") && strstr(parsed.utf8, "bold") && strstr(parsed.utf8, "link"));
+    assert(!strstr(parsed.utf8, "https://x") && !strstr(parsed.utf8, "**")); html_text_free(&parsed); book_close();
+    assert(book_open("build/book-fixtures/books/pages.cbz") == ESP_OK && book_kind() == BOOK_KIND_CBZ);
+    assert(book_chapter_count() == 1); assert(book_chapter_load_blocks(0, &parsed) == ESP_OK && parsed.count == 3);
+    assert(!strcmp(parsed.blocks[0].image_src, "0") && !strcmp(parsed.blocks[1].image_src, "1") && !strcmp(parsed.blocks[2].image_src, "2"));
+    html_text_free(&parsed);
+    const uint8_t expected_pages[] = {10, 20, 100};
+    for (size_t page = 0; page < 3; ++page) {
+        uint8_t *pixels = NULL; uint16_t width = 0, height = 0; char ref[8]; snprintf(ref, sizeof(ref), "%zu", page);
+        assert(book_chapter_load_image(0, ref, &pixels, &width, &height) == ESP_OK);
+        assert(width == 1 && height == 1 && pixels[0] == expected_pages[page]); free(pixels);
+    }
+    book_close();
     assert(book_open("/tmp/missing.unknown") == ESP_ERR_NOT_SUPPORTED);
     assert(book_chapter_count() == 0);
     for (int a = 1; a < argc; ++a) {

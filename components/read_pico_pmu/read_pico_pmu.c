@@ -327,6 +327,24 @@ esp_err_t read_pico_pmu_cmd(uint16_t code, const uint8_t* payload, uint8_t plen)
         ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
 }
 
+esp_err_t read_pico_pmu_time_sync(uint32_t unix_seconds) {
+    uint8_t payload[4];
+    wr32(payload, unix_seconds);
+    return read_pico_pmu_cmd(PMU_CMD_TIME_SYNC, payload, sizeof(payload));
+}
+
+esp_err_t read_pico_pmu_alarm_set(uint8_t mode, uint32_t seconds) {
+    if (mode > 2 || seconds < 10U || seconds > 2678400U)
+        return ESP_ERR_INVALID_ARG;
+    uint8_t payload[5] = {mode, 0, 0, 0, 0};
+    wr32(&payload[1], seconds);
+    return read_pico_pmu_cmd(PMU_CMD_ALARM_SET, payload, sizeof(payload));
+}
+
+esp_err_t read_pico_pmu_alarm_get(void) {
+    return read_pico_pmu_cmd(PMU_CMD_ALARM_GET, NULL, 0);
+}
+
 esp_err_t read_pico_pmu_vcom_get(int* out_mv) {
     if (out_mv != NULL) *out_mv = 0;
     if (!s_ready) return ESP_ERR_NOT_FOUND;
