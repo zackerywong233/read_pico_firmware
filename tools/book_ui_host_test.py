@@ -51,7 +51,7 @@ unit = r'''
 #define MALLOC_CAP_8BIT 2
 #define ESP_LOGI(...) ((void)0)
 typedef int esp_err_t;
-typedef struct {int leaf;bool request_menu;int64_t now_ms;} app_ctx_t;
+typedef struct {int leaf;bool request_menu;bool key_handled;int64_t now_ms;} app_ctx_t;
 typedef enum {APP_REDRAW_PAGE,APP_REDRAW_AREA,APP_REDRAW_NONE,APP_REDRAW_FULL} app_redraw_t;
 typedef struct {int x,y,width,height;} EpdRect;
 static EpdRect ui_bar_rect(int i,int count){int width=(508-(count-1)*12)/count;return(EpdRect){40+i*(width+12),1096,width,96};}
@@ -163,7 +163,6 @@ static void reading_stats_set_last_book(const char* name,uint8_t pct){(void)name
 static void reading_stats_add_seconds(uint32_t seconds){(void)seconds;}
 static void reader_rotation_end(void){}
 static void reader_touch_map(uint16_t* x,uint16_t* y){(void)x;(void)y;}
-static app_redraw_t delete_note(app_ctx_t* ctx){(void)ctx;return APP_REDRAW_PAGE;}
 static size_t book_text_search(const char* text,size_t len,const char* query,size_t from,size_t* offsets,size_t cap){(void)text;(void)len;(void)query;(void)from;(void)offsets;(void)cap;return 0;}
 static void vTaskDelete(void* p){(void)p;}
 static void vSemaphoreDelete(void* p){(void)p;}
@@ -208,7 +207,8 @@ int main(void) {
     assert(s_image_pixels && strstr(s_image_origin,"第 3 节") && s_page==6 && s_chapter==9);
     image_event.type=UI_GESTURE_SWIPE_L;image_event.x=236;
     assert(gesture_event(&image_ctx,&image_event)==APP_REDRAW_NONE && test_turns==1 && s_image_open);
-    assert(on_key(&image_ctx,UI_KEY_3)==APP_REDRAW_PAGE && !s_image_open && test_turns==1 && s_page==6);
+    assert(on_key(&image_ctx,UI_KEY_3)==APP_REDRAW_NONE && s_image_open && test_turns==1 && s_page==6);
+    assert(on_key(&image_ctx,UI_KEY_1)==APP_REDRAW_PAGE && !s_image_open && test_turns==1 && s_page==6);
     assert(open_image(&image_ctx,0)==APP_REDRAW_PAGE && test_image_loads==1);
     image_event.type=UI_GESTURE_TAP;image_event.x=300;
     assert(gesture_event(&image_ctx,&image_event)==APP_REDRAW_PAGE && !s_image_open && s_page==6);
@@ -220,16 +220,25 @@ int main(void) {
     image_blocks[0].image_title=true;
     assert(open_image(&image_ctx,0)==APP_REDRAW_PAGE && !s_image_origin[0]);
     free_image();
+    // 统一三键：正文无弹窗时 KEY1/KEY3 翻页并置 key_handled，弹窗或书架仅 KEY1 返回/取消。
+    // Unified keys: clean reading pages with KEY1/KEY3 and sets key_handled; modals/shelf use KEY1 back/cancel.
+    image_ctx.key_handled=false;
+    assert(on_key(&image_ctx,UI_KEY_1)==APP_REDRAW_NONE && image_ctx.key_handled && test_turns==2);
+    image_ctx.key_handled=false;
+    assert(on_key(&image_ctx,UI_KEY_3)==APP_REDRAW_NONE && image_ctx.key_handled && test_turns==3);
+    s_toolbar=true;
+    assert(on_key(&image_ctx,UI_KEY_1)==APP_REDRAW_PAGE && !s_toolbar && test_turns==3);
     s_view=SHELF;
     app_ctx_t resume_ctx={0};
     strcpy(s_resume_path,"/sdcard/books/large.epub");
     assert(on_key(&resume_ctx,UI_KEY_1)==APP_REDRAW_PAGE && test_open_calls==0 && !s_resume_path[0]);
     strcpy(s_resume_path,"/sdcard/books/large.epub");
-    assert(on_key(&resume_ctx,UI_KEY_3)==APP_REDRAW_PAGE && test_open_calls==1 && !s_resume_path[0]);
+    assert(resume_choice(&resume_ctx,true)==APP_REDRAW_PAGE && test_open_calls==1 && !s_resume_path[0]);
     assert(!strcmp(test_open_path,"/sdcard/books/large.epub"));
     assert(resume_choice(&resume_ctx,true)==APP_REDRAW_NONE && test_open_calls==1);
     strcpy(s_resume_path,"/sdcard/books/large.epub");
-    assert(on_key(&resume_ctx,UI_KEY_2)==APP_REDRAW_PAGE && resume_ctx.request_menu && !s_resume_path[0] && test_open_calls==1);
+    assert(on_key(&resume_ctx,UI_KEY_2)==APP_REDRAW_NONE && !resume_ctx.request_menu && s_resume_path[0] && test_open_calls==1);
+    s_resume_path[0]=0;
 
     shelf_entry_t a={.search_match=true,.name="Same.txt",.path="/sdcard/books/A/Same.txt"};
     shelf_entry_t b={.search_match=true,.name="Same.txt",.path="/sdcard/books/B/Same.txt"};

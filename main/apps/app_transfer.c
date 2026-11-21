@@ -694,7 +694,7 @@ static EpdRect control_rect(int id) {
 }
 
 static void render(app_ctx_t* ctx, uint8_t* fb) {
-    if (s_view == TRANSFER_NETWORKS) { draw_networks(fb); return; }
+    if (s_view == TRANSFER_NETWORKS || s_view == TRANSFER_SAVED) { draw_networks(fb); return; }
     if (s_view == TRANSFER_PASSWORD) { draw_password(fb); return; }
     (void)ctx;
     ui_clear_page(fb);
@@ -723,9 +723,10 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     if (s_status.network_ready && s_mode == READ_PICO_TRANSFER_MODE_STA) {
         char local_url[96];
         snprintf(local_url, sizeof(local_url), "http://%s.local", s_status.mdns_host[0] ? s_status.mdns_host : "readpico");
-        ui_text(fb, UI_MARGIN, 396, UI_PX_CAPTION, local_url, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, UI_MARGIN, 402, 24, local_url, EPD_DRAW_ALIGN_LEFT, false);
     }
-    ui_text(fb, UI_MARGIN, 412, 24,
+    ui_text(fb, UI_MARGIN,
+            (s_status.network_ready && s_mode == READ_PICO_TRANSFER_MODE_STA) ? 434 : 412, 24,
             !s_status.network_ready ? "等待网络连接…" : !s_qr_ready ? "二维码失败，请手输网址" :
             s_qr_url || s_mode == READ_PICO_TRANSFER_MODE_STA ? "扫码打开网页" : "扫码连接 WiFi",
             EPD_DRAW_ALIGN_LEFT, false);
@@ -1103,10 +1104,39 @@ bool app_transfer_remote_stop(app_ctx_t* ctx) {
     return true;
 }
 
+static app_redraw_t on_key(app_ctx_t* ctx, int key) {
+    if (key != UI_KEY_1) return APP_REDRAW_NONE;
+    s_pressed = -1;
+    if (s_forget_confirm) {
+        s_forget_confirm = false;
+        s_network_message[0] = 0;
+        return APP_REDRAW_PAGE;
+    }
+    if (s_view == TRANSFER_PASSWORD) {
+        clear_password();
+        s_network_message[0] = 0;
+        s_view = TRANSFER_NETWORKS;
+        return APP_REDRAW_PAGE;
+    }
+    if (s_view == TRANSFER_SAVED) {
+        s_view = TRANSFER_NETWORKS;
+        s_scan_pending = true;
+        return APP_REDRAW_PAGE;
+    }
+    if (s_view == TRANSFER_NETWORKS) {
+        queue_network_start(s_mode);
+        return APP_REDRAW_PAGE;
+    }
+    s_start_pending = false;
+    stop_session();
+    if (ctx) ctx->request_return = true;
+    return APP_REDRAW_NONE;
+}
+
 const app_desc_t app_transfer = {
     .on_media_lost = transfer_on_media_lost,
     .title = "传书 Transfer", .detail = "热点或已有 WiFi，浏览器上传",
     .blocks_idle_sleep = true,
     .on_enter = on_enter, .on_exit = transfer_on_exit, .render = render, .present = present,
-    .on_tick = on_tick, .on_gesture = on_gesture,
+    .on_tick = on_tick, .on_gesture = on_gesture, .on_key = on_key,
 };

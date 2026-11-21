@@ -455,14 +455,6 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
     return pick(hit);
 }
 
-static app_redraw_t on_key(app_ctx_t* ctx, int key) {
-    if (key == UI_KEY_1 && ctx->leaf > 0) {
-        ctx->leaf--;
-        return APP_REDRAW_PAGE;
-    }
-    return APP_REDRAW_NONE;
-}
-
 const app_desc_t app_font_pick = {
     .title = FONT_TITLE,
     .detail = "选择、排版与基准 Select, Type & Bench",
@@ -470,5 +462,4 @@ const app_desc_t app_font_pick = {
     .on_enter = on_enter,
     .on_exit = font_on_exit,
     .on_touch = on_touch,
-    .on_key = on_key,
 };

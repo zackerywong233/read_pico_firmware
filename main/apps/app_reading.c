@@ -506,17 +506,21 @@ static bool reading_present(app_ctx_t* ctx, app_redraw_t redraw) {
     return true;
 }
 
-static app_redraw_t turn_page(app_ctx_t* ctx, int kind) {
+static app_redraw_t turn_page_dir(app_ctx_t* ctx, int kind, int dir) {
     ensure_prep();
     lock_draw();
     ensure_layout(&ctx->leaf);
-    ctx->leaf = (ctx->leaf + 1) % s_page_count;
+    ctx->leaf = (ctx->leaf + dir + s_page_count) % s_page_count;
     const bool hit = apply_page(ctx->fb, ctx->leaf);
     unlock_draw();
     ESP_LOGI(TAG, "turn %s %d/%d", hit ? "hit" : "miss", ctx->leaf + 1, s_page_count);
     kick_next(ctx->leaf);
     guard_draw_result(ctx->hl, refresh_turn(ctx->hl, kind));
     return APP_REDRAW_DONE;
+}
+
+static app_redraw_t turn_page(app_ctx_t* ctx, int kind) {
+    return turn_page_dir(ctx, kind, 1);
 }
 
 static app_redraw_t apply_size_delta(app_ctx_t* ctx, int dir) {
@@ -585,13 +589,27 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
     return APP_REDRAW_NONE;
 }
 
+static app_redraw_t on_key(app_ctx_t* ctx, int key) {
+    if (key == UI_KEY_1) {
+        ctx->key_handled = true;
+        return turn_page_dir(ctx, READING_GL16, -1);
+    }
+    if (key == UI_KEY_3) {
+        ctx->key_handled = true;
+        return turn_page_dir(ctx, READING_GL16, 1);
+    }
+    return APP_REDRAW_NONE;
+}
+
 const app_desc_t app_reading = {
     .title = READING_TITLE,
     .detail = "正文翻页对照 Reading Page Turn",
+    .owns_keys = true,
     .render = render,
     .present = reading_present,
     .on_enter = on_enter,
     .on_exit = reading_on_exit,
     .on_touch = on_touch,
+    .on_key = on_key,
     .on_tick = on_tick,
 };

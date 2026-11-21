@@ -483,7 +483,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     if (!ttf_font_ready()) { ui_draw_no_font_page(fb, false, false); return; }
     if (s_history_list) {
         ui_clear_page(fb);
-        ui_draw_header(fb, "Agent 历史收件", "点选消息查看详情，点顶部返回消息");
+        ui_draw_header(fb, "Agent 历史收件", "点选消息查看详情，KEY1 或点底部返回");
         uint8_t oldest = (uint8_t)((s_history_next + AGENT_HISTORY_COUNT - s_history_size) % AGENT_HISTORY_COUNT);
         int y = UI_CONTENT_TOP + 12;
         for (int i = 0; i < s_history_size; ++i) {
@@ -497,6 +497,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             y += 41;
             if (y > UI_CONTENT_BOTTOM - 40) break;
         }
+        ui_draw_button(fb, ui_bar_rect(0, 1), "返回消息", false);
         ui_draw_menu_handle(fb, false);
         return;
     }
@@ -539,11 +540,11 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         if (status.url[0]) {
             char local_url[96];
             snprintf(local_url, sizeof(local_url), "http://%s.local", status.mdns_host[0] ? status.mdns_host : "readpico");
-            ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 116, UI_PX_CAPTION, local_url, EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 112, UI_PX_CAPTION, local_url, EPD_DRAW_ALIGN_LEFT, false);
             ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 148, UI_PX_CAPTION, status.url, EPD_DRAW_ALIGN_LEFT, false);
         }
-        ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 176, UI_PX_CAPTION, "JSON: {\"type\":\"text\",\"title\":\"标题\",\"text\":\"内容\"}", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 226, UI_PX_CAPTION, "图片: {\"type\":\"image\",\"url\":\"https://…\"}", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 196, UI_PX_CAPTION, "JSON: {\"type\":\"text\",\"title\":\"标题\",\"text\":\"内容\"}", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 240, UI_PX_CAPTION, "图片: {\"type\":\"image\",\"url\":\"https://…\"}", EPD_DRAW_ALIGN_LEFT, false);
     }
     draw_actions(fb);
     ui_draw_menu_handle(fb, false);
@@ -746,15 +747,29 @@ static app_redraw_t send_reply_action(int index) {
     return APP_REDRAW_PAGE;
 }
 
+static bool agent_viewing_text(void) {
+    if (s_history_list || !s_text) return false;
+    if (s_history_selected >= 0 && s_history) {
+        return !s_history[s_history_selected].image;
+    }
+    return s_image_pixels == NULL;
+}
+
 static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) {
     (void)ctx;
     if (s_history_list) {
         if (event->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
-        if (event->y < UI_CONTENT_TOP + 40) { s_history_list = false; return APP_REDRAW_PAGE; }
-        int row = (event->y - (UI_CONTENT_TOP + 12)) / 46;
+        if (event->y < UI_CONTENT_TOP || ui_rect_hit(ui_bar_rect(0, 1), event->x, event->y)) {
+            s_history_list = false;
+            return APP_REDRAW_PAGE;
+        }
+        int rel = (int)event->y - (UI_CONTENT_TOP + 12);
+        if (rel < 0 || (rel % 41) >= 38) return APP_REDRAW_NONE;
+        int row = rel / 41;
         uint8_t oldest = (uint8_t)((s_history_next + AGENT_HISTORY_COUNT - s_history_size) % AGENT_HISTORY_COUNT);
-        if (row < 0 || row >= s_history_size) return APP_REDRAW_NONE;
+        if (row < 0 || row >= s_history_size || !s_history) return APP_REDRAW_NONE;
         s_history_selected = (int8_t)((oldest + row) % AGENT_HISTORY_COUNT);
+        s_history_list = false;
         agent_history_entry_t *entry = &s_history[s_history_selected];
         s_current_history = s_history_selected;
         s_message_replied = entry->replied;
@@ -769,7 +784,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
         }
         return APP_REDRAW_PAGE;
     }
-    if (event->type == UI_GESTURE_TAP && event->y < UI_CONTENT_TOP + 32 && s_history_size) {
+    if (event->type == UI_GESTURE_TAP && event->y < UI_CONTENT_TOP && s_history_size) {
         s_history_list = true;
         return APP_REDRAW_PAGE;
     }
@@ -779,43 +794,42 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
         int index = (event->x - UI_MARGIN) / width;
         if (index >= 0 && index < s_action_count) return send_reply_action(index);
     }
-    if (!s_text || s_image_pixels) return APP_REDRAW_NONE;
+    if (!agent_viewing_text()) return APP_REDRAW_NONE;
     if (event->type == UI_GESTURE_SWIPE_L || (event->type == UI_GESTURE_TAP && event->x > epd_rotated_display_width() / 2)) {
         if (s_page + 1 < book_layout_page_count()) { ++s_page; return APP_REDRAW_PAGE; }
         return APP_REDRAW_NONE;
     }
     if (event->type == UI_GESTURE_SWIPE_R || (event->type == UI_GESTURE_TAP && event->x <= epd_rotated_display_width() / 2)) {
-        if (s_page) --s_page;
+        if (!s_page) return APP_REDRAW_NONE;
+        --s_page;
         return APP_REDRAW_PAGE;
     }
     return APP_REDRAW_NONE;
 }
 
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
-    (void)ctx;
-    if (!s_action_count && key == UI_KEY_1 && s_history_size) {
-        s_history_list = !s_history_list;
-        if (!s_history_list) s_history_selected = -1;
+    if (agent_viewing_text()) {
+        if (key == UI_KEY_1) {
+            ctx->key_handled = true;
+            if (s_page) { --s_page; return APP_REDRAW_PAGE; }
+            return APP_REDRAW_NONE;
+        }
+        if (key == UI_KEY_3) {
+            ctx->key_handled = true;
+            if (s_page + 1 < book_layout_page_count()) { ++s_page; return APP_REDRAW_PAGE; }
+            return APP_REDRAW_NONE;
+        }
+        return APP_REDRAW_NONE;
+    }
+    if (key != UI_KEY_1) return APP_REDRAW_NONE;
+    if (s_history_list) {
+        s_history_list = false;
         return APP_REDRAW_PAGE;
     }
-    if (s_action_count && s_message_id[0]) {
-        int index = key == UI_KEY_1 ? 0 : key == UI_KEY_2 ? 1 : key == UI_KEY_3 ? 2 : -1;
-        if (index >= 0 && index < s_action_count) return send_reply_action(index);
-    }
-    if (key == UI_KEY_1) { if (s_text && s_page) { --s_page; return APP_REDRAW_PAGE; } return APP_REDRAW_NONE; }
-    if (key == UI_KEY_2) return APP_REDRAW_FULL;
-    if (key == UI_KEY_3) { if (s_text && s_page + 1 < book_layout_page_count()) { ++s_page; return APP_REDRAW_PAGE; } return APP_REDRAW_NONE; }
-    return APP_REDRAW_NONE;
-}
-
-static app_redraw_t on_key_long(app_ctx_t *ctx, int key) {
-    if (key == UI_KEY_1 && s_history_size) {
-        s_history_list = !s_history_list;
-        if (!s_history_list) s_history_selected = -1;
+    if (s_history_selected >= 0 && s_history_size) {
+        s_history_list = true;
         return APP_REDRAW_PAGE;
     }
-    if (key != UI_KEY_2) return APP_REDRAW_NONE;
-    ctx->request_menu = true;
     return APP_REDRAW_NONE;
 }
 
@@ -831,5 +845,4 @@ const app_desc_t app_agent = {
     .on_tick = on_tick,
     .on_gesture = on_gesture,
     .on_key = on_key,
-    .on_key_long = on_key_long,
 };

@@ -327,5 +327,18 @@ int main(void) {
     on_tick(&ctx);
     assert(ctx.request_return && test_stop_count == stops_before + 1);
 
+    // 回归：管理已保存网络视图 TRANSFER_SAVED 必须正确渲染且 KEY1 逐级返回。
+    // Regression: TRANSFER_SAVED must render the saved Wi-Fi screen and KEY1 backs out step by step.
+    on_enter(&ctx);
+    on_tick(&ctx);
+    s_view = TRANSFER_SAVED;
+    test_last_header[0] = 0;
+    render(&ctx, ctx.fb);
+    assert(!strcmp(test_last_header, "已保存 WiFi"));
+    assert(on_key(&ctx, UI_KEY_1) == APP_REDRAW_PAGE && s_view == TRANSFER_NETWORKS);
+    assert(on_key(&ctx, UI_KEY_1) == APP_REDRAW_PAGE && s_view == TRANSFER_HOME);
+    ctx.request_return = false;
+    assert(on_key(&ctx, UI_KEY_1) == APP_REDRAW_NONE && ctx.request_return);
+
     puts("transfer_ui_host_test: PASS");
 }

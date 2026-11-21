@@ -10,9 +10,14 @@
  * Draw, hit-test, poll and page state stay there. app_loop.c only dispatches
  * these callbacks; adding a page does not touch the loop.
  *
- * 冻结：手势回调替代旧触摸回调；三键接管页须保留强刷与菜单出口。
- * Frozen: Gesture callbacks replace legacy touch callbacks. Pages owning keys
- * must retain full refresh and app-menu exits.
+ * 冻结：手势回调替代旧触摸回调；屏下三键遵循全系统统一契约：
+ * 普通页短按 KEY1 返回 / KEY2 整屏 GC16 强刷 / KEY3 开关应用菜单；
+ * 阅读类 owns_keys 页面在正文态短按 KEY1 上页 / KEY2 强刷 / KEY3 下页；
+ * 任意页面长按（500ms）统一由主循环执行 KEY1 回桌面 / KEY2 强刷 / KEY3 开关菜单，且不触发短按。
+ * Frozen: Gesture callbacks replace legacy touch callbacks. The three physical keys follow one
+ * OS-wide contract: regular pages map short KEY1 Back / KEY2 full GC16 refresh / KEY3 App Menu;
+ * reading owns_keys pages map short KEY1 Prev / KEY2 full refresh / KEY3 Next while reading;
+ * global 500ms holds map KEY1 Home / KEY2 full refresh / KEY3 App Menu everywhere without firing short press.
  * 冻结：返回恢复最近切页来源，菜单来源保留菜单位置。
  * Frozen: Return restores the latest page origin, preserving its menu position.
  */
@@ -70,12 +75,18 @@ typedef struct {
     /// / Press/release edge this tick. Touch tracking uses this to throttle.
     bool pressed;
     bool released;
-    /// 分页页（字体列表）当前停在第几页，由 KEY1 和页内按钮共同改。
-    /// / Leaf page index (font list). KEY1 and in-page buttons both change it.
+    /// 分页页（字体列表）当前停在第几页，由页内按钮修改。
+    /// / Leaf page index (font list), changed by in-page buttons.
     int leaf;
     /// 本轮已经被别的分支处理掉了，页内的跟随逻辑要跳过这一轮。
     /// / Another branch already handled this tick; skip in-page tracking.
     bool consumed;
+    /// on_key 明确消费了本次按键（例如阅读首/末页边界无动作，避免退回全局返回或菜单）。
+    /// Set by on_key when it owns the key even on a no-op boundary (e.g. first/last reading page).
+    bool key_handled;
+    /// on_tick 请求本轮保持唤醒（例如后台 OTA 下载中），重置空闲休眠计时。
+    /// Set by on_tick to keep the device awake this tick (e.g. active OTA), resetting idle sleep.
+    bool keep_awake;
     /// 页面想跳到别的页时填这里，主循环会在本轮末尾切过去。
     /// / Request a page switch; the loop applies it at the end of the tick.
     const struct app_desc_s* request_app;
@@ -99,8 +110,8 @@ struct app_desc_s {
     /// true = 这一页会长时间独占 PMU，主循环的锁屏按键轮询要让路（设备功能自检）。
     /// / true = page owns the PMU; lock-key poll yields (device self-test).
     bool holds_pmu;
-    /// 菜单关闭时接管三键，页面必须提供强刷和菜单入口。
-    /// Own all three keys outside the menu; provide full refresh and menu exits.
+    /// 菜单关闭时允许在 on_key 中额外接收 UI_KEY_3（供阅读页翻下一页）；KEY2 与长按始终由主循环统一处理。
+    /// Allow on_key to also receive UI_KEY_3 outside the menu (for reading next-page); KEY2 and holds stay global.
     bool owns_keys;
     /// true = 停留在本页时不计空闲自动休眠。电源键锁屏仍走全局路径。
     /// true = idle time does not auto-sleep while this page is current. The power key still locks.
@@ -123,12 +134,11 @@ struct app_desc_s {
     /// 设置后独占触摸派发，替代 on_touch。/ Exclusive gesture dispatch replaces on_touch.
     app_redraw_t (*on_gesture)(app_ctx_t* ctx, const ui_gesture_event_t* event);
     app_redraw_t (*on_touch)(app_ctx_t* ctx, const cst836u_touch_t* touch);
-    /// 默认只收 UI_KEY_1；owns_keys 页面在菜单外接收三键。
-    /// / Only KEY1 normally; owns_keys pages receive all three keys outside the menu.
+    /// 短按按键回调：菜单外所有页可接收 UI_KEY_1（返回/取消/上页），owns_keys 页还可接收 UI_KEY_3（下页）。
+    /// 未消费（返回 NONE 且未置 key_handled/request_*）时由主循环执行全局返回或开关菜单。
+    /// Short-key callback: receives UI_KEY_1 (back/cancel/prev) and, for owns_keys pages, UI_KEY_3 (next).
+    /// Unhandled presses fall back to the loop's global Back / App Menu actions.
     app_redraw_t (*on_key)(app_ctx_t* ctx, int key);
-    /// 可选：owns_keys 页面同键持续按住500ms触发一次，按下回调仍先执行；滑出/中断取消。
-    /// Optional: fire once after a 500ms same-key hold on owns_keys pages; press still fires first, leaving/interruption cancels.
-    app_redraw_t (*on_key_long)(app_ctx_t* ctx, int key);
     /// 每轮都调，页面自己判断到不到刷新间隔。
     /// / Called every tick; the page decides if its interval has elapsed.
     app_redraw_t (*on_tick)(app_ctx_t* ctx);

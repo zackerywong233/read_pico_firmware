@@ -39,6 +39,7 @@ static bool s_done_loaded;
 static int64_t s_last_draw;
 static int64_t s_last_check_ms;
 static int s_last_shown_min = -1;
+static int s_last_shown_left_min = -1;
 static ui_time_edit_t s_time_editor;
 
 static void done_load(void) {
@@ -134,9 +135,10 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     } else {
         int64_t left = s_end - esp_timer_get_time() / 1000000;
         if (left < 0) left = 0;
+        int left_min = (int)((left + 59) / 60);
+        s_last_shown_left_min = left_min;
         char value[96];
-        snprintf(value, sizeof(value), "%02lld:%02lld",
-                 (long long)(left / 60), (long long)(left % 60));
+        snprintf(value, sizeof(value), "%02d:00", left_min);
         ui_text_vc(fb, cx, UI_CONTENT_TOP + 230, UI_PX_HERO, value,
                    EPD_DRAW_ALIGN_CENTER, false);
         ui_text_vc(fb, cx, UI_CONTENT_TOP + 330, UI_PX_BODY,
@@ -209,13 +211,7 @@ static app_redraw_t key(app_ctx_t *ctx, int k) {
         s_time_edit = false;
         return APP_REDRAW_FULL;
     }
-    if (!s_timer) {
-        cycle_minutes();
-        return APP_REDRAW_PAGE;
-    }
-    s_timer = false;
-    s_break = false;
-    return APP_REDRAW_FULL;
+    return APP_REDRAW_NONE;
 }
 
 static app_redraw_t tick(app_ctx_t *ctx) {
@@ -244,11 +240,15 @@ static app_redraw_t tick(app_ctx_t *ctx) {
         } else {
             s_break = false;
             s_timer = false;
+            if (!app_settings_muted()) (void)read_pico_buzzer_tone(660, 120);
         }
+        s_last_shown_left_min = -1;
         s_last_draw = ctx->now_ms;
         return APP_REDRAW_FULL;
     }
-    if (ctx->now_ms - s_last_draw >= 60000) {
+    int64_t left = s_end - now;
+    int left_min = (int)((left + 59) / 60);
+    if (left_min != s_last_shown_left_min) {
         s_last_draw = ctx->now_ms;
         render(ctx, ctx->fb);
         return APP_REDRAW_AREA;
@@ -270,6 +270,7 @@ static void enter(app_ctx_t *ctx) {
     s_last_draw = ctx->now_ms;
     s_last_check_ms = ctx->now_ms;
     s_last_shown_min = -1;
+    s_last_shown_left_min = -1;
     (void)read_pico_pmu_refresh();
     app_time_sync_from_pmu();
 }

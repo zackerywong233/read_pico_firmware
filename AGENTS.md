@@ -115,14 +115,13 @@ Defined in [`main/app/app.h`](main/app/app.h). The loop presents via `app_presen
 - `on_exit()`：掉电、停传感器。/ Power-down.
 - `present()`：自定义推屏。返回 true 表示已经刷过，主循环不再推。/ Custom present; true means done.
 - `on_touch()` / `on_gesture()` / `on_key()` / `on_tick()`：可有副作用，用返回值要刷屏。/ Side effects OK; return the redraw.
-- `on_key_long()` 可选：仅接管三键的页面在同键单指保持500ms后触发一次，原按下动作先执行；滑出、多点、读错、睡眠、字体重载或切页取消。/ Optional owned-key hold callback fires once at 500ms after the normal press; leaving, multitouch, read errors, sleep, font reload and page switches cancel.
+- `on_key()` 默认在抬起时只收 `UI_KEY_1`（返回/取消）；`owns_keys` 阅读页在菜单关闭时可额外接收 `UI_KEY_3`（下一页），边界无动作时须置 `ctx->key_handled = true`。未消费的 `KEY1` / `KEY3` 回退主循环全局返回 / 菜单；`KEY2` 始终为全局整屏 GC16 强刷；任意页面 500ms 长按统一由主循环执行 `KEY1` 回桌面 / `KEY2` 强刷 / `KEY3` 开关菜单且不触发短按。/ Short presses commit on release: `on_key()` receives `UI_KEY_1` (back/cancel) by default, and reading `owns_keys` pages may also receive `UI_KEY_3` (next page), setting `ctx->key_handled = true` on boundary no-ops. Unhandled `KEY1`/`KEY3` fall back to global Back/Menu; `KEY2` is always global full GC16 refresh; 500ms holds are global everywhere (`KEY1` Home / `KEY2` Refresh / `KEY3` Menu) without firing short press.
 - `on_gesture()` 可选；提供后不再接收 `on_touch()`。主循环负责识别与全局中断取消，页面解释动作。/ Optional gesture callback replaces `on_touch`; the loop recognizes and cancels, the page interprets.
-- `on_key()` 默认只收 `UI_KEY_1`；`owns_keys` 页面在菜单关闭时接收三键，并须提供强刷和应用菜单出口。/ Normally KEY1 only; `owns_keys` pages receive all three outside the menu and must expose full refresh and the app menu.
 
 标志：
 
 - `holds_pmu`：长时间独占 PMU（自检）。主循环的锁屏按键轮询让路。/ Page owns the PMU; lock-key poll yields.
-- `owns_keys`：接管三键；不影响菜单打开时的全局键和菜单把手。/ Own all three keys outside the menu; global menu keys and the handle remain.
+- `owns_keys`：允许阅读类页面在正文态额外接收短按 `KEY3` 翻页；`KEY2` 强刷、全局 500ms 长按与菜单把手始终由主循环统一处理。/ Allow reading pages to handle short `KEY3` next-page outside the menu; `KEY2` refresh, global 500ms holds and the menu handle remain global.
 - 页面切换与菜单打开/返回统一走整屏 GC16；图书每次翻页整屏 GC16。/ App switches, menu open/return and each book turn use full-screen GC16.
 
 `app_ctx_t.request_app` 非空时，主循环在本轮末尾切页；`request_menu` 请求打开根菜单。同时设置时切页优先。/ At tick end, `request_app` switches pages and `request_menu` opens the root menu; a page request takes priority.

@@ -7,9 +7,11 @@
  * Pico OS launcher. Owns the home surface and app routing, not board services.
  *
  * 决策变更：网页阅读成为桌面直达应用；桌面扩为六格，保留离线页面与完整应用菜单。
+ * 决策变更：统一全系统三键逻辑，桌面不再接管三键；触控直达六格应用，KEY2 整屏强刷、KEY3 开关应用菜单。
  * Decision change: make Web Reader a direct launcher tile; use a six-tile grid while keeping offline pages and the full app menu.
- * 冻结：触控与屏下三键都可完成导航；离线桌面保留设置入口和应用菜单。
- * Frozen: Touch and the three physical key zones navigate; offline home retains Settings and the app menu.
+ * Decision change: align with the unified physical key contract; home no longer overrides keys—touch opens tiles while KEY2 refreshes and KEY3 toggles the app menu.
+ * 冻结：离线桌面保留设置入口和应用菜单；屏下三键遵循主循环统一契约。
+ * Frozen: Offline home retains Settings and the app menu; physical keys follow the shared loop contract.
  */
 
 #include "app.h"
@@ -33,8 +35,6 @@ extern const app_desc_t app_focus;
 #define HOME_TILE_H 250
 
 enum { TILE_BOOKS = 0, TILE_TRANSFER, TILE_WEB, TILE_FOCUS, TILE_SKETCH, TILE_SETTINGS };
-static int s_focus;
-static int s_prev_focus;
 
 static EpdRect tile_rect(int index) {
     return ui_grid_rect(index % 2, 2, index / 2, HOME_TILE_Y, HOME_TILE_H);
@@ -57,7 +57,7 @@ static const char* tile_detail(int index) {
 
 static void draw_tile(uint8_t* fb, int index) {
     EpdRect r = tile_rect(index);
-    ui_draw_choice_round_rect(fb, r, 18, index == s_focus);
+    ui_draw_round_rect(fb, r, 18, UI_GRAY_BLACK);
     ui_text(fb, r.x + 24, r.y + 34, 48, tile_title(index),
             EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, r.x + 24, r.y + 112, UI_PX_CAPTION, tile_detail(index),
@@ -78,7 +78,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
             "今天想做什么？", EPD_DRAW_ALIGN_LEFT, false);
     for (int i = 0; i < HOME_TILE_COUNT; i++) draw_tile(fb, i);
     ui_text(fb, UI_MARGIN, UI_CONTENT_BOTTOM - 44, UI_PX_CAPTION,
-            "触控选择  ·  KEY1 移动  ·  KEY2 确认  ·  KEY3 菜单",
+            "触控选择  ·  KEY2 强刷  ·  KEY3 菜单",
             EPD_DRAW_ALIGN_LEFT, false);
     ui_draw_menu_handle(fb, false);
 }
@@ -98,54 +98,15 @@ static void activate(app_ctx_t* ctx, int index) {
 static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
     for (int i = 0; i < HOME_TILE_COUNT; i++) {
         if (!ui_rect_hit(tile_rect(i), touch->x, touch->y)) continue;
-        s_focus = i;
         activate(ctx, i);
         return APP_REDRAW_NONE;
     }
     return APP_REDRAW_NONE;
 }
 
-static app_redraw_t on_key(app_ctx_t* ctx, int key) {
-    if (key == UI_KEY_1) {
-        s_prev_focus = s_focus;
-        s_focus = (s_focus + 1) % HOME_TILE_COUNT;
-        return APP_REDRAW_PAGE;
-    }
-    if (key == UI_KEY_2) {
-        activate(ctx, s_focus);
-        return APP_REDRAW_NONE;
-    }
-    if (key == UI_KEY_3) {
-        ctx->request_menu = true;
-        return APP_REDRAW_NONE;
-    }
-    return APP_REDRAW_NONE;
-}
-
-static app_redraw_t on_key_long(app_ctx_t* ctx, int key) {
-    (void)ctx;
-    // KEY2 短按已切页，长按 KEY1 恢复原焦点并触发整屏 GC16 强刷。
-    // KEY2 short press switches pages, so long-press KEY1 restores focus and forces full GC16.
-    if (key == UI_KEY_1) {
-        s_focus = s_prev_focus;
-        return APP_REDRAW_FULL;
-    }
-    return key == UI_KEY_2 ? APP_REDRAW_FULL : APP_REDRAW_NONE;
-}
-
-static void on_enter(app_ctx_t* ctx) {
-    (void)ctx;
-    if (s_focus < 0 || s_focus >= HOME_TILE_COUNT) s_focus = 0;
-    s_prev_focus = s_focus;
-}
-
 const app_desc_t app_pico_home = {
     .title = "小纸 Pico",
     .detail = "Pico OS 桌面",
-    .owns_keys = true,
     .render = render,
-    .on_enter = on_enter,
     .on_touch = on_touch,
-    .on_key = on_key,
-    .on_key_long = on_key_long,
 };

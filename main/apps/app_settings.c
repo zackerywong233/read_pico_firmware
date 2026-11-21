@@ -813,10 +813,23 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     return APP_REDRAW_NONE;
 }
 
-static app_redraw_t on_tick(app_ctx_t *ctx) {
-    if (s_view != SETTINGS_VIEW_UPDATE) return APP_REDRAW_NONE;
+static void settings_on_exit(app_ctx_t *ctx) {
+    (void)ctx;
     ota_update_status_t status;
     ota_update_get_status(&status);
+    if (status.state == OTA_UPDATE_DOWNLOADING || status.state == OTA_UPDATE_CHECKING) {
+        ota_update_cancel();
+    }
+    s_pressed = CTRL_NONE;
+}
+
+static app_redraw_t on_tick(app_ctx_t *ctx) {
+    ota_update_status_t status;
+    ota_update_get_status(&status);
+    if (status.state == OTA_UPDATE_CHECKING || status.state == OTA_UPDATE_DOWNLOADING) {
+        ctx->keep_awake = true;
+    }
+    if (s_view != SETTINGS_VIEW_UPDATE) return APP_REDRAW_NONE;
     if (status.state != s_ota_last_state) {
         s_ota_last_state = status.state;
         s_ota_last_progress = status.progress_percent;
@@ -843,10 +856,10 @@ const app_desc_t app_settings = {
     .title = "设置 Settings",
     .detail = "网络、阅读、电源与设备选项",
     .on_enter = on_enter,
+    .on_exit = settings_on_exit,
     .render = render,
     .on_gesture = on_gesture,
     .on_key = on_key,
     .on_tick = on_tick,
-    .blocks_idle_sleep = true,
     .area_hint = area_hint,
 };

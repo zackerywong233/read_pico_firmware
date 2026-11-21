@@ -399,16 +399,15 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
 
 static app_redraw_t on_key(app_ctx_t* ctx, int key) {
     if (key != UI_KEY_1) return APP_REDRAW_NONE;
-    if (ctx->leaf == 0) {
-        ctx->leaf = 1;
-        return APP_REDRAW_PAGE;
-    }
     if (ctx->leaf == 3) {
         ctx->leaf = s_time_edit_return_leaf;
         return APP_REDRAW_FULL;
     }
-    ctx->leaf = 0;
-    return APP_REDRAW_PAGE;
+    if (ctx->leaf != 0) {
+        ctx->leaf = 0;
+        return APP_REDRAW_PAGE;
+    }
+    return APP_REDRAW_NONE;
 }
 
 void app_personal_reload_note(void) {

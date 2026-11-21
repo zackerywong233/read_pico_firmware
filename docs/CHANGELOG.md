@@ -1,5 +1,12 @@
 # 版本变更 / Changelog
 
+## v0.1.28 · 2026-11-22
+
+- 统一全系统屏下三键（KEY1 / KEY2 / KEY3）交互规范：重构主循环按键状态机为“短按抬起提交、长按 500 ms 触发且不重复触发短按”；普通页面与子页统一短按 `KEY1` 返回 / `KEY2` 整屏 GC16 强刷 / `KEY3` 开关应用菜单，正文阅读态（图书阅读、网页正文、Agent 正文、内置阅读）统一短按 `KEY1` 上一页 / `KEY2` 整屏 GC16 强刷 / `KEY3` 下一页；任意页面及菜单内长按 500 ms 统一为 `KEY1` 直达桌面 / `KEY2` 整屏强刷 / `KEY3` 开关菜单。
+  Unify physical key behavior across Pico OS: rework key dispatch in the event loop so short presses commit on release and 500 ms holds fire once without triggering short press; regular pages and subviews map short `KEY1` Back / `KEY2` full GC16 refresh / `KEY3` App Menu, active reading views (Books, Web Reader, Agent Inbox, Built-in Reading) map short `KEY1` Prev / `KEY2` full GC16 refresh / `KEY3` Next, and 500 ms holds globally map `KEY1` Home / `KEY2` full refresh / `KEY3` App Menu everywhere.
+- 多页面交互与逻辑修复：修复传书页「管理已保存网络」未渲染正确视图及 STA 模式本地地址文字重叠；修复图书横屏阅读点击区间仍按竖屏宽度计算导致无法点中区开关工具条；修复 Agent 历史收件列表行距错位、点选条目无法退出列表及图片后无法翻阅历史文本的问题；为网页阅读断网态补齐「重新连接」按钮、正文页展示收藏/存书反馈并提示空收藏夹；设置页改为仅在 OTA 检查/下载期间保持唤醒并在离页时取消进行中的 OTA；专注时钟倒计时改为分钟对齐刷新并补齐休息结束提示音；菜单点选当前页关闭时统一走整屏 GC16 强刷。
+  Multi-page logic & UX fixes: fix Transfer “Manage Saved Wi-Fi” rendering the home view and STA `.local` caption overlap; fix landscape tap zones in Books using portrait width so center taps toggle the toolbar properly; fix Agent history row hit-testing, item selection closing the list, and paging text history after images; add a Reconnect button when Web Reader is offline, show bookmark/save notices in article view, and show an empty-bookmarks notice; keep Settings awake only during active OTA and cancel OTA on exit; align Focus countdown redraws to minute boundaries with a break-end chime; use full GC16 when closing the menu onto the current page.
+
 ## v0.1.27 · 2026-11-22
 
 - 根治 Wi-Fi/BLE 共存导致的联网与扫描失败：改为按需分时独占射频。进入传书、网页阅读、Agent 收件及启动 Wi-Fi OTA 前自动暂停 BLE，离开页面或 OTA 结束后自动恢复广播（不改写设置里的蓝牙开关）；BLE 收到 `transfer_start` / `webopen` / 切入联网页指令时先回包并延迟 120 ms 再切换，避免吞掉蓝牙响应；新增局域网 `POST /transfer/stop` 接口，便于 iOS 配套应用传书完成后远程退出传书页并恢复蓝牙重连。

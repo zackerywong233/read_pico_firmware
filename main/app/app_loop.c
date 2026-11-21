@@ -11,13 +11,17 @@
  * interval, delayed SD font load.
  * Page state and refresh cadence stay in main/apps/; gesture recognition is shared.
  *
- * 冻结：主循环只产出手势、不解释含义；只有 owns_keys 页可接管三键，
- * 且必须提供强刷和 request_menu 入口；把手仍按下即触发。
- * 接管页可选长按键回调，保留按下行为；同键单指500ms仅触发一次，中断取消。
- * Frozen: Produce gestures without interpreting page actions. KEY2 full refresh
- * and KEY3 menu are global unless owns_keys provides its own refresh/menu exits.
- * Owners may opt into a single 500ms same-key hold callback after the press action; interruptions cancel it.
- * The menu handle still fires on press.
+ * 冻结：主循环只产出手势、不解释含义；屏下三键遵循全系统统一契约：
+ * 普通页短按 KEY1 返回 / KEY2 整屏 GC16 强刷 / KEY3 开关应用菜单；
+ * 阅读类 owns_keys 页可在正文态接管短按 KEY1/KEY3 翻页；
+ * 任意页面长按（500ms）统一执行 KEY1 回桌面 / KEY2 整屏强刷 / KEY3 开关菜单且不触发短按；
+ * 短按在抬起提交，滑出/多点/中断取消；底栏把手仍按下即触发。
+ * Frozen: Produce gestures without interpreting page actions. Physical keys follow
+ * one OS-wide contract: regular pages use short KEY1 Back / KEY2 full GC16 refresh /
+ * KEY3 App Menu; reading owns_keys pages may handle short KEY1/KEY3 paging while
+ * reading; global 500ms holds execute KEY1 Home / KEY2 full refresh / KEY3 App Menu
+ * everywhere without firing short press. Short press commits on release; slide-off,
+ * multitouch or interruptions cancel. The menu handle still fires on press.
  * 冻结：返回消费最近切页来源，恢复原页及菜单位置，不跳固定首页。
  * Frozen: Return consumes the latest page origin, restoring its page and menu position.
  */
@@ -172,6 +176,37 @@ static void present_menu(app_ctx_t* ctx, const app_desc_t* current, int leaf, me
     guard_draw_result(ctx->hl, update_display_full(ctx->hl));
 }
 
+// 统一全屏 GC16 强刷：菜单与任意页面均复用此路径。
+// Unified full-screen GC16 refresh shared by the menu and every page.
+static void full_refresh_current(
+    app_ctx_t* ctx, const app_desc_t* current, bool menu_open, int menu_leaf,
+    menu_feedback_t* feedback
+) {
+    if (menu_open) {
+        feedback->updates = 0;
+        ui_draw_menu_page(ctx->fb, current, menu_leaf);
+        guard_draw_result(ctx->hl, update_display_full(ctx->hl));
+    } else if (current->present != NULL && current->present(ctx, APP_REDRAW_FULL)) {
+    } else if (current->render != NULL) {
+        current->render(ctx, ctx->fb);
+        guard_draw_result(ctx->hl, update_display_full(ctx->hl));
+    }
+}
+
+// 统一开关一级应用菜单。/ Unified toggle for the root app menu.
+static void toggle_menu(
+    app_ctx_t* ctx, const app_desc_t* current, bool* menu_open, int* menu_leaf,
+    menu_feedback_t* feedback
+) {
+    *menu_open = !*menu_open;
+    if (*menu_open) {
+        *menu_leaf = ui_menu_leaf_for_app(current);
+        present_menu(ctx, current, *menu_leaf, feedback);
+    } else {
+        app_present(ctx, current, APP_REDRAW_FULL);
+    }
+}
+
 // 空槽常带着抬起事件或残留坐标，不能进页面看到的快照；抬手后保留最后一次位置。
 // Empty slots often carry lift events or stale coords; keep last position on lift.
 static void debounce_touch(
@@ -234,11 +269,12 @@ static bool poll_media(app_ctx_t* ctx, const app_desc_t* current,
 // Shared by the power key and the idle timeout: cancel input, lock, redraw after light sleep.
 static void lock_and_resume(
     app_ctx_t* ctx, const app_desc_t* current, ui_gesture_t* gesture,
-    int* held_key, int* menu_pressed, menu_feedback_t* feedback,
+    int* held_key, bool* held_long_fired, int* menu_pressed, menu_feedback_t* feedback,
     bool menu_open, int menu_leaf, bool* media_mounted, bool* media_invalidated,
     int64_t* last_media_poll_ms
 ) {
     *held_key = -1;
+    *held_long_fired = false;
     cancel_gesture(ctx, current, gesture);
     if (*menu_pressed >= 0) {
         menu_feedback(ctx, current, menu_leaf, *menu_pressed, false, feedback);
@@ -290,6 +326,7 @@ void app_loop_run(const app_loop_config_t* config) {
     int return_leaf = 0, return_menu_leaf = 0;
     bool return_to_menu = false;
     int held_key = -1;
+    bool held_long_fired = false;
     int64_t held_since_ms = 0;
     int64_t last_lock_poll_ms = 0;
     int64_t last_input_ms = esp_timer_get_time() / 1000;
@@ -327,6 +364,8 @@ void app_loop_run(const app_loop_config_t* config) {
         ctx.pressed = pressed;
         ctx.released = released;
         ctx.consumed = false;
+        ctx.key_handled = false;
+        ctx.keep_awake = false;
         ctx.request_app = NULL;
         ctx.request_menu = false;
         ctx.request_return = false;
@@ -338,6 +377,7 @@ void app_loop_run(const app_loop_config_t* config) {
             last_media_poll_ms = ctx.now_ms;
             if (poll_media(&ctx, current, &media_mounted, &media_invalidated)) {
                 held_key = -1;
+                held_long_fired = false;
                 cancel_gesture(&ctx, current, &gesture);
                 menu_pressed = UI_MENU_HIT_NONE;
                 ctx.consumed = true;
@@ -354,6 +394,7 @@ void app_loop_run(const app_loop_config_t* config) {
 
         if (err != ESP_OK) {
             held_key = -1;
+            held_long_fired = false;
             cancel_gesture(&ctx, current, &gesture);
             ctx.consumed = true;
             if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
@@ -361,6 +402,7 @@ void app_loop_run(const app_loop_config_t* config) {
         }
         if (pressed && err == ESP_OK) {
             held_key = -1;
+            held_long_fired = false;
             const int key = ui_key_hit_test(touch.x, touch.y);
             const bool handle_hit = ui_menu_handle_hit_test(touch.x, touch.y);
             ctx.consumed = true;
@@ -369,40 +411,16 @@ void app_loop_run(const app_loop_config_t* config) {
                 if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
                 menu_pressed = UI_MENU_HIT_NONE;
             }
-            if (key >= 0 && current->owns_keys && !menu_open) {
-                app_redraw_t redraw = current->on_key ? current->on_key(&ctx, key) : APP_REDRAW_NONE;
-                present_page(&ctx, current, &gesture, redraw);
-                if (current->on_key_long && touch.count == 1) {
+            if (key >= 0) {
+                // 实体键按下仅记录起点：抬起提交短按，满 500ms 触发全局长按且不再触发短按。
+                // Physical key press only arms tracking: release commits short press, 500ms fires global hold once.
+                if (touch.count == 1) {
                     held_key = key;
                     held_since_ms = ctx.now_ms;
+                    held_long_fired = false;
                 }
-            } else if (key == UI_KEY_2) {
-                if (menu_open) {
-                    feedback.updates = 0;
-                    ui_draw_menu_page(ctx.fb, current, menu_leaf);
-                    guard_draw_result(ctx.hl, update_display_full(ctx.hl));
-                } else if (current->present != NULL && current->present(&ctx, APP_REDRAW_FULL)) {
-                } else if (current->render != NULL) {
-                    current->render(&ctx, ctx.fb);
-                    guard_draw_result(ctx.hl, update_display_full(ctx.hl));
-                }
-            } else if (key == UI_KEY_3 || handle_hit) {
-                menu_open = !menu_open;
-                if (menu_open) {
-                    menu_leaf = ui_menu_leaf_for_app(current);
-                    present_menu(&ctx, current, menu_leaf, &feedback);
-                } else app_present(&ctx, current, APP_REDRAW_FULL);
-            } else if (key >= 0 && menu_open) {
-                int next = menu_leaf + (key == UI_KEY_1 ? -1 : 1);
-                if (next >= 0 && next < ui_menu_leaf_count()) {
-                    menu_leaf = next;
-                    present_menu(&ctx, current, menu_leaf, &feedback);
-                }
-            } else if (key >= 0) {
-                app_redraw_t redraw = current->on_key ? current->on_key(&ctx, key) : APP_REDRAW_NONE;
-                if (redraw == APP_REDRAW_NONE)
-                    ESP_LOGI(TAG, "KEY%d pressed, no action bound", key + 1);
-                present_page(&ctx, current, &gesture, redraw);
+            } else if (handle_hit) {
+                toggle_menu(&ctx, current, &menu_open, &menu_leaf, &feedback);
             } else if (menu_open) {
                 int hit = ui_menu_hit_test(touch.x, touch.y, menu_leaf);
                 if (hit == UI_MENU_HIT_PREV || hit == UI_MENU_HIT_NEXT) {
@@ -429,6 +447,7 @@ void app_loop_run(const app_loop_config_t* config) {
             }
         }
         if (err == ESP_OK) was_touched = touch.touched;
+        if (held_key >= 0) ctx.consumed = true;
         if (menu_open && menu_pressed >= 0) {
             int hit = ui_menu_hit_test(latest.x, latest.y, menu_leaf);
             if (touch.count > 1 || hit != menu_pressed || released) {
@@ -439,11 +458,11 @@ void app_loop_run(const app_loop_config_t* config) {
                     menu_open = false;
                     ctx.request_app = app_at(chosen);
                     selected_from_menu = true;
-                    if (ctx.request_app == current) app_present(&ctx, current, APP_REDRAW_PAGE);
+                    if (ctx.request_app == current) app_present(&ctx, current, APP_REDRAW_FULL);
                 }
             }
         }
-        if (!menu_open && current->on_gesture && err == ESP_OK) {
+        if (!menu_open && held_key < 0 && current->on_gesture && err == ESP_OK) {
             ui_gesture_event_t event;
             if (ui_gesture_feed(&gesture, &ctx, &event)) {
                 app_redraw_t redraw = current->on_gesture(&ctx, &event);
@@ -465,7 +484,7 @@ void app_loop_run(const app_loop_config_t* config) {
                     ESP_LOGI(TAG, "ignore boot KEY_SHORT");
                 } else {
                     lock_and_resume(
-                        &ctx, current, &gesture, &held_key, &menu_pressed, &feedback,
+                        &ctx, current, &gesture, &held_key, &held_long_fired, &menu_pressed, &feedback,
                         menu_open, menu_leaf, &media_mounted, &media_invalidated,
                         &last_media_poll_ms
                     );
@@ -477,7 +496,7 @@ void app_loop_run(const app_loop_config_t* config) {
                            >= (int64_t)app_settings_auto_sleep_sec() * 1000) {
                 ESP_LOGI(TAG, "idle lock");
                 lock_and_resume(
-                    &ctx, current, &gesture, &held_key, &menu_pressed, &feedback,
+                    &ctx, current, &gesture, &held_key, &held_long_fired, &menu_pressed, &feedback,
                     menu_open, menu_leaf, &media_mounted, &media_invalidated,
                     &last_media_poll_ms
                 );
@@ -487,11 +506,11 @@ void app_loop_run(const app_loop_config_t* config) {
 
         // 设置里存的字体在 SD 卡上，开机时卡可能还没挂好，这里定期重试。
         // The saved font lives on the card; retry until the mount is ready.
-        // The saved font lives on the card; retry until the mount is ready.
         if (ctx.now_ms - last_font_retry_ms >= FONT_RETRY_INTERVAL_MS) {
             last_font_retry_ms = ctx.now_ms;
             if (try_load_saved_sd_font(!media_invalidated)) {
                 held_key = -1;
+                held_long_fired = false;
                 cancel_gesture(&ctx, current, &gesture);
                 ctx.consumed = true;
                 menu_pressed = UI_MENU_HIT_NONE;
@@ -505,20 +524,79 @@ void app_loop_run(const app_loop_config_t* config) {
         }
 
         if (held_key >= 0) {
-            if (menu_open || ctx.request_app || ctx.request_menu || ctx.request_return || !touch.touched ||
-                touch.count != 1 || ui_key_hit_test(touch.x, touch.y) != held_key ||
-                ctx.now_ms < held_since_ms) {
+            if (ctx.request_app || ctx.request_menu || ctx.request_return) {
                 held_key = -1;
-            } else if (!pressed && ctx.now_ms - held_since_ms >= UI_LONG_PRESS_MS) {
+                held_long_fired = false;
+            } else if (released && err == ESP_OK) {
                 int key = held_key;
+                bool was_long = held_long_fired;
                 held_key = -1;
+                held_long_fired = false;
                 ctx.consumed = true;
-                present_page(&ctx, current, &gesture, current->on_key_long(&ctx, key));
+                if (!was_long) {
+                    if (menu_open) {
+                        if (key == UI_KEY_2) {
+                            full_refresh_current(&ctx, current, true, menu_leaf, &feedback);
+                        } else if (key == UI_KEY_1 || key == UI_KEY_3) {
+                            menu_open = false;
+                            app_present(&ctx, current, APP_REDRAW_FULL);
+                        }
+                    } else if (key == UI_KEY_2) {
+                        full_refresh_current(&ctx, current, false, menu_leaf, &feedback);
+                    } else {
+                        ctx.key_handled = false;
+                        app_redraw_t redraw = APP_REDRAW_NONE;
+                        if ((key == UI_KEY_1 && current->on_key != NULL)
+                            || (key == UI_KEY_3 && current->owns_keys && current->on_key != NULL)) {
+                            redraw = current->on_key(&ctx, key);
+                        }
+                        const bool handled = ctx.key_handled || redraw != APP_REDRAW_NONE
+                            || ctx.request_app != NULL || ctx.request_menu
+                            || ctx.request_return || ctx.request_redraw || ctx.request_lock;
+                        if (handled) {
+                            present_page(&ctx, current, &gesture, redraw);
+                        } else if (key == UI_KEY_1) {
+                            if (current != app_home_page()) {
+                                if (return_app != NULL) ctx.request_return = true;
+                                else ctx.request_app = app_home_page();
+                            }
+                        } else if (key == UI_KEY_3) {
+                            toggle_menu(&ctx, current, &menu_open, &menu_leaf, &feedback);
+                        }
+                    }
+                }
+            } else if (!touch.touched || touch.count != 1
+                       || ui_key_hit_test(touch.x, touch.y) != held_key
+                       || ctx.now_ms < held_since_ms) {
+                held_key = -1;
+                held_long_fired = false;
+            } else if (!pressed && !held_long_fired
+                       && ctx.now_ms - held_since_ms >= UI_LONG_PRESS_MS) {
+                int key = held_key;
+                held_long_fired = true;
+                ctx.consumed = true;
+                if (key == UI_KEY_1) {
+                    if (current != app_home_page()) {
+                        menu_open = false;
+                        ctx.request_app = app_home_page();
+                    } else if (menu_open) {
+                        menu_open = false;
+                        app_present(&ctx, current, APP_REDRAW_FULL);
+                    }
+                } else if (key == UI_KEY_2) {
+                    full_refresh_current(&ctx, current, menu_open, menu_leaf, &feedback);
+                } else if (key == UI_KEY_3) {
+                    toggle_menu(&ctx, current, &menu_open, &menu_leaf, &feedback);
+                }
             }
         }
         if (!menu_open && !ctx.request_app && !ctx.request_menu && !ctx.request_return && current->on_tick != NULL) {
             app_redraw_t redraw = current->on_tick(&ctx);
-            if (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL) held_key = -1;
+            if (ctx.keep_awake) last_input_ms = ctx.now_ms;
+            if (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL) {
+                held_key = -1;
+                held_long_fired = false;
+            }
             present_page(&ctx, current, &gesture, redraw);
         }
         if (config->on_bg_tick != NULL && config->on_bg_tick(&ctx, current, menu_open)) {
@@ -529,7 +607,7 @@ void app_loop_run(const app_loop_config_t* config) {
             ctx.request_lock = false;
             ctx.request_redraw = false;
             lock_and_resume(
-                &ctx, current, &gesture, &held_key, &menu_pressed, &feedback,
+                &ctx, current, &gesture, &held_key, &held_long_fired, &menu_pressed, &feedback,
                 menu_open, menu_leaf, &media_mounted, &media_invalidated,
                 &last_media_poll_ms
             );
@@ -550,6 +628,7 @@ void app_loop_run(const app_loop_config_t* config) {
         // Return requests win; ordinary requests still prioritize page switches.
         if (ctx.request_return || ctx.request_app || ctx.request_menu) {
             held_key = -1;
+            held_long_fired = false;
             const app_desc_t* next = ctx.request_app;
             const bool go_back = ctx.request_return;
             cancel_gesture(&ctx, current, &gesture);

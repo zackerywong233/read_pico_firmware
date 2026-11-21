@@ -464,6 +464,14 @@ static void test_time_math_and_unified_clock(void) {
     app_focus_get_status(&fst);
     assert(!fst.running && fst.remaining_sec == 0);
 
+    // 验证统一三键：Focus 非调时间态 KEY1 返回 NONE（交由主循环返回），不误停番茄钟或改动时长。
+    // Unified keys: KEY1 outside time-edit returns NONE (global back) without killing timer or changing duration.
+    assert(app_focus_remote_start(15));
+    assert(app_focus.on_key(&ctx, UI_KEY_1) == APP_REDRAW_NONE);
+    app_focus_get_status(&fst);
+    assert(fst.running && fst.duration_min == 15);
+    app_focus_remote_stop();
+
     puts("unified_clock & ui_time_edit: passed");
 }
 
@@ -553,6 +561,21 @@ static void test_settings_real_loop_navigation(void) {
     assert(s_ble_pin_required == true);
     assert(s_ble_enabled == false);
     assert(ui_saw_text("蓝牙控制已关闭"));
+
+    // 场景 7：设置空闲时不阻止休眠；OTA 检查/下载期间设置 keep_awake 且离页时自动取消 OTA。
+    // Scenario 7: Settings allows idle sleep normally, keeps awake only during active OTA, and cancels OTA on exit.
+    assert(!app_settings.blocks_idle_sleep);
+    app_ctx_t sctx = { .fb = fb, .hl = &hl, .now_ms = 1000 };
+    app_settings.on_enter(&sctx);
+    s_ota.state = OTA_UPDATE_IDLE;
+    sctx.keep_awake = false;
+    app_settings.on_tick(&sctx);
+    assert(!sctx.keep_awake);
+    s_ota.state = OTA_UPDATE_DOWNLOADING;
+    app_settings.on_tick(&sctx);
+    assert(sctx.keep_awake);
+    app_settings.on_exit(&sctx);
+    assert(s_ota.state == OTA_UPDATE_CANCELLED);
 
     free(fb);
     free(back);

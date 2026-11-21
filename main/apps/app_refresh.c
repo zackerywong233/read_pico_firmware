@@ -270,11 +270,20 @@ static app_redraw_t demo_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
     return APP_REDRAW_DONE;
 }
 
+static app_redraw_t demo_key(app_ctx_t* ctx, int key) {
+    if (key == UI_KEY_1 && s_demo_pattern) {
+        guard_draw_result(ctx->hl, leave_gray_to_demo(ctx));
+        return APP_REDRAW_DONE;
+    }
+    return APP_REDRAW_NONE;
+}
+
 const app_desc_t app_refresh = {
     .title = "墨水屏刷新 EPD Refresh",
     .detail = "刷新方式与耗时 Refresh Modes & Timing",
     .render = demo_render,
     .present = demo_present,
     .on_touch = demo_touch,
+    .on_key = demo_key,
     .on_exit = demo_on_exit,
 };

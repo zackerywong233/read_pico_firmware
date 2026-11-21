@@ -15,8 +15,8 @@ typedef struct { int x, y, count, error; } sample_t;
 static sample_t samples[32];
 static int sample_count, step, ticks, enters, exits, touch_calls, keys[3], events[8];
 static int menus, highlights, restores, fulls, mode, tick_consumed[32];
-static int long_keys, lock_calls;
-static app_redraw_t long_key(app_ctx_t* c, int k) { assert(k==UI_KEY_2); ++long_keys; c->request_menu=true; return APP_REDRAW_NONE; }
+static int lock_calls;
+static bool key_handles_all, tick_keep_awake;
 static app_redraw_t response;
 static bool request_on_touch, request_on_tick, menu_on_tick, menu_on_touch, cancel_clobber;
 static bool home_on_touch, home_on_tick, home_on_key, start_second;
@@ -94,9 +94,10 @@ static app_redraw_t gesture(app_ctx_t*c,const ui_gesture_event_t*e) {
     if(e->type==UI_GESTURE_PRESS&&home_on_touch)c->request_return=true;
     return response;
 }
-static app_redraw_t key(app_ctx_t*c,int k) {keys[k]++;if(home_on_key)c->request_return=true;return APP_REDRAW_NONE;}
+static app_redraw_t key(app_ctx_t*c,int k) {keys[k]++;if(key_handles_all)c->key_handled=true;if(home_on_key)c->request_return=true;return APP_REDRAW_NONE;}
 static app_redraw_t tick(app_ctx_t*c) {
     ticks++;tick_consumed[step]=c->consumed;
+    if(tick_keep_awake)c->keep_awake=true;
     if(request_on_tick)c->request_app=&second;
     if(menu_on_tick)c->request_menu=true;
     if(home_on_tick){c->request_return=true;home_on_tick=false;}
@@ -105,7 +106,7 @@ static app_redraw_t tick(app_ctx_t*c) {
 static void reset(void) {
     media_test=sd_font=saved_sd_font=false;media_lost=builtin_opens=font_opens=probes=0;loss_step=-1;
     memset(mounted_steps,0,sizeof(mounted_steps));
-    long_keys=0;
+    key_handles_all=tick_keep_awake=false;
     home_on_touch=home_on_tick=home_on_key=start_second=false;
     home_enters=home_renders=0;rendered_leaf=-1;last_menu_leaf=-1;menu_background=NULL;
     full_tick=lock_due=font_due=false;time_offset=0;time_step=10000;du_areas=gl_areas=0;
@@ -166,9 +167,14 @@ int main(void) {
     reset();first.on_gesture=gesture;request_on_touch=true;cancel_clobber=true;add(100,400,1,0);run();
     assert(enters==2&&events[UI_GESTURE_CANCEL]==1&&!menus);
     reset();menu_on_tick=true;add(0,0,0,0);add(0,0,0,0);run();assert(menus==1&&ticks==1);
-    reset();first.owns_keys=true;for(int k=0;k<3;k++){add(k*160+80,1500,1,0);add(0,0,0,0);}run();
-    assert(keys[0]==1&&keys[1]==1&&keys[2]==1&&!menus&&fulls==1);
-    reset();add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();assert(!keys[1]&&!keys[2]&&menus==1&&fulls==3);
+    // owns_keys 阅读页：短按 KEY1/KEY3 交给页面（置 key_handled 后不回退菜单），KEY2 仍走全局强刷。
+    // Reading owns_keys page: short KEY1/KEY3 go to page (key_handled prevents menu fallback); KEY2 always refreshes globally.
+    reset();first.owns_keys=true;key_handles_all=true;for(int k=0;k<3;k++){add(k*160+80,1500,1,0);add(0,0,0,0);}run();
+    assert(keys[0]==1&&!keys[1]&&keys[2]==1&&!menus&&fulls==2);
+    // 普通页：短按 KEY2 全局强刷，短按 KEY3 开关菜单；菜单中短按 KEY1 也可关闭菜单。
+    // Regular page: short KEY2 refreshes, short KEY3 toggles menu; short KEY1 also closes the menu.
+    reset();add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);add(0,0,0,0);add(80,1500,1,0);add(0,0,0,0);run();
+    assert(!keys[0]&&!keys[1]&&!keys[2]&&menus==1&&fulls==4);
     reset();add(650,1150,1,0);add(0,0,0,0);add(100,220,1,0);add(0,0,0,0);run();
     assert(highlights==1&&restores==1&&enters==2&&exits==1);
     reset();add(650,1150,1,0);add(0,0,0,0);add(100,220,1,0);add(550,220,1,0);add(100,220,1,0);add(0,0,0,0);run();
@@ -178,7 +184,7 @@ int main(void) {
     assert(events[UI_GESTURE_CANCEL]==1&&!events[UI_GESTURE_TAP]);
     reset();first.on_gesture=gesture;font_due=true;time_offset=4000000;add(100,400,1,0);add(0,0,0,0);run();
     assert(events[UI_GESTURE_CANCEL]==1&&!events[UI_GESTURE_TAP]&&tick_consumed[0]);
-    reset();first.owns_keys=true;add(650,1150,1,0);add(0,0,0,0);add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();
+    reset();first.owns_keys=true;add(650,1150,1,0);add(0,0,0,0);add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);add(0,0,0,0);run();
     assert(!keys[1]&&!keys[2]&&fulls==4&&menus==2);
     reset();add(650,1150,1,0);add(0,0,0,0);
     for(int i=0;i<3;i++){add(100,220,1,0);add(550,220,1,0);add(0,0,0,0);}run();
@@ -188,17 +194,29 @@ int main(void) {
     reset();first.on_gesture=gesture;time_step=1000000;lock_due=true;
     add(100,400,1,0);add(100,400,1,0);add(100,400,1,0);add(0,0,0,0);run();
     assert(!lock_due&&events[UI_GESTURE_CANCEL]==1&&!events[UI_GESTURE_TAP]&&tick_consumed[2]);
-    reset();first.owns_keys=true;first.on_key_long=long_key;time_step=200000;
-    add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);add(0,0,0,0);run();
-    assert(keys[1]==1&&long_keys==1&&menus==1);
-    reset();first.owns_keys=true;first.on_key_long=long_key;time_step=200000;
-    add(240,1500,1,0);add(0,0,0,0);run();assert(keys[1]==1&&!long_keys&&!menus);
-    reset();first.owns_keys=true;first.on_key_long=long_key;time_step=300000;
-    add(240,1500,1,0);add(80,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);run();assert(!long_keys);
-    reset();first.owns_keys=true;first.on_key_long=long_key;time_step=300000;
-    add(240,1500,1,0);add(0,0,0,9);add(240,1500,1,0);add(240,1500,1,0);run();assert(!long_keys);
-    reset();first.owns_keys=true;first.on_key_long=long_key;time_step=1000000;lock_due=true;
-    add(0,0,0,0);add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);add(0,0,0,0);run();assert(!lock_due&&!long_keys);
+    // 全局 500ms 长按：长按 KEY3 打开菜单且抬起不重复触发短按；长按 KEY1 从子页直达桌面；长按 KEY2 强刷一次。
+    // Global 500ms holds: hold KEY3 opens menu without firing short on release; hold KEY1 goes Home; hold KEY2 refreshes once.
+    reset();first.owns_keys=true;key_handles_all=true;time_step=200000;
+    add(400,1500,1,0);add(400,1500,1,0);add(400,1500,1,0);add(400,1500,1,0);add(0,0,0,0);run();
+    assert(!keys[2]&&menus==1);
+    reset();start_second=true;second.owns_keys=true;key_handles_all=true;first.on_enter=home_enter;first.render=home_render;second.on_exit=leave;time_step=200000;
+    add(80,1500,1,0);add(80,1500,1,0);add(80,1500,1,0);add(80,1500,1,0);add(0,0,0,0);run();
+    assert(!keys[0]&&exits==1&&home_enters==1&&home_renders==1);
+    reset();time_step=200000;
+    add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);add(0,0,0,0);run();
+    assert(fulls==2);
+    // 滑出按键、读错或锁屏打断均取消长按与短按。
+    // Slide-off, read error or lock cancels both hold and short press.
+    reset();first.owns_keys=true;key_handles_all=true;time_step=300000;
+    add(400,1500,1,0);add(80,1500,1,0);add(400,1500,1,0);add(0,0,0,0);run();assert(!keys[2]&&!menus);
+    reset();first.owns_keys=true;key_handles_all=true;time_step=300000;
+    add(400,1500,1,0);add(0,0,0,9);add(400,1500,1,0);add(400,1500,1,0);run();assert(!keys[2]&&!menus);
+    reset();first.owns_keys=true;key_handles_all=true;time_step=1000000;lock_due=true;
+    add(0,0,0,0);add(400,1500,1,0);add(400,1500,1,0);add(0,0,0,0);run();assert(!lock_due&&!keys[2]&&!menus);
+    // 非首页未消费短按 KEY1 时自动返回来源页或桌面。
+    // Unhandled short KEY1 on a non-home page returns to origin or Home.
+    reset();start_second=true;first.on_enter=home_enter;first.render=home_render;second.on_exit=leave;
+    add(80,1500,1,0);add(0,0,0,0);run();assert(exits==1&&home_enters==1&&home_renders==1);
     home_case();home_on_tick=true;add(0,0,0,0);add(0,0,0,0);run();
     assert(exits==0&&home_enters==0&&menus==1&&last_menu_leaf==1&&menu_background==&second);
     assert(home_renders==0&&ticks==1&&fulls==2&&mode==0);
@@ -208,16 +226,16 @@ int main(void) {
     assert(exits==0&&home_enters==0&&menus==1&&home_renders==0&&ticks==0);
     home_case();second.on_gesture=gesture;home_on_touch=true;cancel_clobber=true;response=APP_REDRAW_PAGE;add(100,400,1,0);run();
     assert(exits==0&&home_enters==0&&menus==1&&events[UI_GESTURE_CANCEL]==1&&home_renders==0);
-    home_case();second.owns_keys=true;second.on_key_long=long_key;home_on_key=true;time_step=300000;
-    add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);run();
-    assert(exits==0&&home_enters==0&&menus==1&&!long_keys&&ticks==0);
+    home_case();second.owns_keys=true;home_on_key=true;time_step=10000;
+    add(80,1500,1,0);add(0,0,0,0);run();
+    assert(exits==0&&home_enters==0&&menus==1&&keys[0]==1&&ticks==1);
     reset();first.render=home_render;first.on_tick=origin_tick;second.on_tick=return_tick;second.on_exit=leave;
     add(0,0,0,0);add(650,1150,1,0);add(0,0,0,0);add(550,500,1,0);add(0,0,0,0);
     add(100,220,1,0);add(0,0,0,0);add(0,0,0,0);run();
     assert(exits==2&&enters==3&&last_menu_leaf==1&&menu_background==&first&&home_renders==1);
     reset();first.render=home_render;first.on_tick=origin_tick;second.on_tick=return_tick;second.on_exit=leave;
     add(0,0,0,0);add(650,1150,1,0);add(0,0,0,0);add(550,500,1,0);add(0,0,0,0);
-    add(100,220,1,0);add(0,0,0,0);add(0,0,0,0);add(400,1500,1,0);run();
+    add(100,220,1,0);add(0,0,0,0);add(0,0,0,0);add(400,1500,1,0);add(0,0,0,0);run();
     assert(exits==2&&enters==3&&rendered_leaf==7&&home_renders==2);
     reset();request_on_tick=true;first.render=home_render;first.on_tick=origin_tick;second.on_tick=return_tick;second.on_exit=leave;
     add(0,0,0,0);add(0,0,0,0);run();
@@ -225,10 +243,10 @@ int main(void) {
     reset();first.render=home_render;first.on_enter=home_enter;first.on_tick=origin_tick;second.on_tick=return_tick;second.on_exit=leave;
     add(0,0,0,0);add(650,1150,1,0);add(0,0,0,0);add(550,500,1,0);add(0,0,0,0);
     add(100,220,1,0);add(0,0,0,0);add(0,0,0,0);
-    add(100,220,1,0);add(0,0,0,0);add(0,0,0,0);add(400,1500,1,0);run();
+    add(100,220,1,0);add(0,0,0,0);add(0,0,0,0);add(400,1500,1,0);add(0,0,0,0);run();
     assert(exits==4&&enters==5&&last_menu_leaf==1&&menu_background==&first&&home_renders==2&&rendered_leaf==7);
     reset();start_second=true;second.on_tick=origin_tick;second.on_exit=leave;second.on_enter=home_enter;second.render=home_render;first.on_tick=return_tick;
-    add(0,0,0,0);add(650,1150,1,0);add(0,0,0,0);add(100,120,1,0);add(0,0,0,0);add(0,0,0,0);add(400,1500,1,0);run();
+    add(0,0,0,0);add(650,1150,1,0);add(0,0,0,0);add(100,120,1,0);add(0,0,0,0);add(0,0,0,0);add(400,1500,1,0);add(0,0,0,0);run();
     assert(exits==2&&enters==3&&last_menu_leaf==1&&menu_background==&second&&home_renders==2&&rendered_leaf==7);
     reset();first.on_tick=consumed_return_tick;second.on_tick=return_tick;second.on_exit=leave;
     add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);run();
@@ -253,9 +271,9 @@ int main(void) {
     reset();media_test=true;mounted_steps[0]=true;time_step=600000;first.on_media_lost=lost;first.on_gesture=gesture;
     add(100,400,1,0);add(100,400,1,0);add(0,0,0,0);run();
     assert(media_lost==1&&events[UI_GESTURE_CANCEL]==1&&!events[UI_GESTURE_TAP]);
-    reset();media_test=true;mounted_steps[0]=true;time_step=600000;first.on_media_lost=lost;first.owns_keys=true;first.on_key_long=long_key;
-    add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);run();
-    assert(media_lost==1&&keys[1]==1&&!long_keys);
+    reset();media_test=true;mounted_steps[0]=true;time_step=600000;first.on_media_lost=lost;first.owns_keys=true;key_handles_all=true;
+    add(400,1500,1,0);add(400,1500,1,0);add(0,0,0,0);run();
+    assert(media_lost==1&&!keys[2]&&!menus);
     // 失效后不自动探测；显式恢复的挂载可重新加载保存字体并再次检测拔卡。
     // No automatic probing after invalidation; an explicit remount restores saved-font loading and loss detection.
     reset();media_test=sd_font=saved_sd_font=true;mounted_steps[0]=true;time_step=4000000;first.on_media_lost=lost;

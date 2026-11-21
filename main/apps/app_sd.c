@@ -387,6 +387,15 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     return APP_REDRAW_PAGE;
 }
 
+static app_redraw_t on_key(app_ctx_t* ctx, int key) {
+    (void)ctx;
+    if (key == UI_KEY_1 && s_format_confirm) {
+        s_format_confirm = false;
+        return APP_REDRAW_PAGE;
+    }
+    return APP_REDRAW_NONE;
+}
+
 const app_desc_t app_sd = {
     .title = SD_TITLE,
     .detail = "存储卡与蜂鸣器 Storage & Buzzer",
@@ -394,5 +403,6 @@ const app_desc_t app_sd = {
     .on_enter = on_enter,
     .on_exit = sd_on_exit,
     .on_touch = on_touch,
+    .on_key = on_key,
     .on_tick = on_tick,
 };
