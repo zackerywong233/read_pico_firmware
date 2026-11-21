@@ -15,6 +15,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
+#include "read_pico_transfer_companion.h"
 #include "read_pico_transfer_network.h"
 
 #define READ_PICO_TRANSFER_PASSWORD "readpico"
@@ -46,6 +47,21 @@ typedef struct {
     void (*sta_ip_cb)(void); ///< STA 首次取得 IP 后调用 / Called after STA receives an IP address
     void (*service_poll_cb)(void); ///< 传输服务轮询时调用 / Called during transfer service polling
     void (*network_stop_cb)(void); ///< 停止网络前调用 / Called before stopping networking
+    const char *sd_root; ///< 可选 TF 卡根目录（如 /sdcard），用于锁屏图片与手写便签 / Optional TF card root (e.g. /sdcard) for screensaver and sketches
+    bool (*storage_info_cb)(read_pico_storage_info_t *out, void *ctx); ///< 可选：查询双存储状态与余量 / Optional: query flash/SD availability and free bytes
+    bool (*storage_switch_cb)(bool prefer_flash, void *ctx); ///< 可选：请求主循环空闲切换存储目标 / Optional: request an idle storage-target switch on the owner task
+    void *storage_ctx; ///< 存储回调上下文 / Context for storage callbacks
+    bool (*settings_get_cb)(read_pico_device_settings_t *out, void *ctx); ///< 可选：读取设备设置快照 / Optional: read device settings snapshot
+    esp_err_t (*settings_set_cb)(const read_pico_device_settings_t *next, void *ctx); ///< 可选：保存设备设置快照 / Optional: persist device settings snapshot
+    void *settings_ctx; ///< 设置回调上下文 / Context for settings callbacks
+    bool pin_required; ///< 是否强制要求 6 位配对码 / Require 6-digit PIN for sensitive/mutating HTTP requests
+    bool (*time_get_cb)(read_pico_time_info_t *out, void *ctx); ///< 可选：读取设备时间与时区 / Optional: read device clock and timezone
+    esp_err_t (*time_set_cb)(uint32_t unix_sec, bool has_tz, int16_t tz_min, void *ctx); ///< 可选：同步设备时间与时区 / Optional: sync device clock and timezone
+    void *time_ctx; ///< 时间回调上下文 / Context for time callbacks
+    esp_err_t (*font_select_cb)(const char *path, void *ctx); ///< 可选：切换当前字体路径，空串表示内置字体 / Optional: select active font path; empty selects built-in
+    void *font_ctx; ///< 字体回调上下文 / Context for font callbacks
+    bool (*dashboard_stats_cb)(read_pico_dashboard_stats_t *out, void *ctx); ///< 可选：读取累计阅读时长、最近图书与摘录 / Optional: read reading stats, recent book and excerpt
+    void *dashboard_ctx; ///< 看板回调上下文 / Context for dashboard callbacks
 } read_pico_transfer_cfg_t;
 
 typedef struct {
@@ -60,6 +76,8 @@ typedef struct {
     bool network_ready; ///< 已取得可用网络地址 / Usable network address acquired
     unsigned sta_count; ///< 连接数 / Station count
     char ssid[33]; ///< 热点名称 / AP name
+    char pin[7]; ///< 本次传输会话的 6 位配对码（仅屏幕显示，不经公开接口回显）/ 6-digit session PIN (on-screen only, never echoed by public APIs)
+    bool pin_required; ///< 当前会话是否强制校验配对码 / Whether PIN auth is enforced in this session
     char cur_name[121]; ///< 完整 UTF-8 文件名 / Complete UTF-8 filename
     size_t cur_bytes; ///< 已接收字节 / Received bytes
     size_t cur_total; ///< 本次总字节 / Request total bytes
@@ -112,3 +130,5 @@ esp_err_t read_pico_transfer_ota_wifi_start(uint32_t timeout_ms);
 void read_pico_transfer_ota_wifi_stop(void);
 /// 原子取出最近一次手机推送网址；没有新网址时返回 false。/ Take the latest phone-pushed URL; false means none is pending.
 bool read_pico_transfer_take_webopen_url(char url[READ_PICO_WEBOPEN_URL_MAX]);
+/// 清除当前会话配对码，下次启动服务时重新生成 6 位随机码。/ Clear session PIN so the next start generates a fresh 6-digit PIN.
+void read_pico_transfer_reset_pin(void);

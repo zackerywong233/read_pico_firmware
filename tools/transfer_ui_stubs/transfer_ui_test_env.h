@@ -11,6 +11,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
+#include "read_pico_transfer_companion.h"
 #include "read_pico_transfer_network.h"
 typedef int esp_err_t;
 #define ESP_OK 0
@@ -50,6 +52,29 @@ static inline const char* esp_err_to_name(int e) { (void)e; return "error"; }
 static inline void app_time_sync_sta_ip(void) {}
 static inline void app_time_sync_poll(void) {}
 static inline void app_time_sync_stop(void) {}
+static uint32_t test_utc_time = 1763724000U;
+static int test_time_set_calls;
+static inline bool app_time_now_utc(time_t* out) { if (out) *out = (time_t)test_utc_time; return test_utc_time != 0; }
+static inline bool app_time_set_utc(uint32_t unix_sec, bool* pmu_synced) {
+    test_utc_time = unix_sec;
+    ++test_time_set_calls;
+    if (pmu_synced) *pmu_synced = true;
+    return true;
+}
+static int test_pmu_poll_calls;
+static inline bool read_pico_pmu_ready(void) { return true; }
+static inline int read_pico_pmu_poll(void) { ++test_pmu_poll_calls; return ESP_OK; }
+static inline uint32_t reading_stats_total_seconds(void) { return 3661U; }
+static inline bool reading_stats_get_last_book(char* title, uint32_t cap, uint8_t* pct) {
+    snprintf(title, cap, "%s", "三体.epub");
+    if (pct) *pct = 42;
+    return true;
+}
+static inline bool reading_stats_get_excerpt(char* title, uint32_t tcap, char* text, uint32_t cap) {
+    snprintf(title, tcap, "%s", "三体.epub");
+    snprintf(text, cap, "%s", "给岁月以文明");
+    return true;
+}
 static inline int ui_content_width(void) { return 604; }
 static inline EpdRect ui_row_rect(int i,int n,int y,int h) { int w=(604-(n-1)*12)/n; return (EpdRect){40+i*(w+12),y,w,h}; }
 static inline EpdRect ui_bar_rect(int i,int n) { int w=(508-(n-1)*12)/n; return (EpdRect){40+i*(w+12),1096,w,96}; }
@@ -86,10 +111,87 @@ static int test_store_changes;
 static inline void book_store_notify_changed(void) { ++test_store_changes; }
 static inline int app_count(void) {return 0;}
 static inline const app_desc_t* app_at(int i) {(void)i;return NULL;}
+typedef enum { APP_SLEEP_LIGHT = 0, APP_SLEEP_DEEP = 1, APP_SLEEP_OFF = 2 } app_sleep_mode_t;
+typedef enum { APP_SAVER_BUILTIN = 0, APP_SAVER_QUOTE = 1, APP_SAVER_IMAGE = 2 } app_saver_style_t;
+static read_pico_device_settings_t test_settings = {
+    .sleep_mode = APP_SLEEP_DEEP, .auto_sleep_sec = 120, .book_px = 48,
+    .book_refresh = 1, .book_line_height = 1, .book_margin = 1,
+    .dashboard_items = 0x0f, .timezone_min = 480, .charge_led = true,
+    .low_soc_notify_percent = 10, .font_path = "/sdcard/fonts/test.ttf"
+};
+static int test_runtime_apply_calls;
+static inline app_sleep_mode_t app_settings_sleep_mode(void) { return (app_sleep_mode_t)test_settings.sleep_mode; }
+static inline void app_settings_set_sleep_mode(app_sleep_mode_t m) { test_settings.sleep_mode = (uint8_t)m; }
+static inline uint16_t app_settings_auto_sleep_sec(void) { return test_settings.auto_sleep_sec; }
+static inline void app_settings_set_auto_sleep_sec(uint16_t s) { test_settings.auto_sleep_sec = s; }
+static inline bool app_settings_pickup_wake(void) { return test_settings.pickup_wake; }
+static inline void app_settings_set_pickup_wake(bool on) { test_settings.pickup_wake = on; }
+static inline uint8_t app_settings_book_px(void) { return test_settings.book_px; }
+static inline void app_settings_set_book_px(uint8_t px) { test_settings.book_px = px; }
+static inline uint8_t app_settings_book_refresh(void) { return test_settings.book_refresh; }
+static inline void app_settings_set_book_refresh(uint8_t p) { test_settings.book_refresh = p; }
+static inline uint8_t app_settings_book_line_height(void) { return test_settings.book_line_height; }
+static inline void app_settings_set_book_line_height(uint8_t p) { test_settings.book_line_height = p; }
+static inline uint8_t app_settings_book_margin(void) { return test_settings.book_margin; }
+static inline void app_settings_set_book_margin(uint8_t p) { test_settings.book_margin = p; }
+static inline uint16_t app_settings_book_weight(void) { return test_settings.book_weight; }
+static inline void app_settings_set_book_weight(uint16_t w) { test_settings.book_weight = w; }
+static inline uint8_t app_settings_book_rotation(void) { return test_settings.book_rotation; }
+static inline void app_settings_set_book_rotation(uint8_t r) { test_settings.book_rotation = r; }
+static inline uint8_t app_settings_book_gesture(void) { return test_settings.book_gesture; }
+static inline void app_settings_set_book_gesture(uint8_t g) { test_settings.book_gesture = g; }
+static inline app_saver_style_t app_settings_saver_style(void) { return (app_saver_style_t)test_settings.saver_style; }
+static inline void app_settings_set_saver_style(app_saver_style_t s) { test_settings.saver_style = (uint8_t)s; }
+static inline uint8_t app_settings_dashboard_items(void) { return test_settings.dashboard_items; }
+static inline void app_settings_set_dashboard_items(uint8_t d) { test_settings.dashboard_items = d; }
+static inline int16_t app_settings_timezone_min(void) { return test_settings.timezone_min; }
+static inline void app_settings_set_timezone_min_deferred(int16_t m) { test_settings.timezone_min = m; }
+static inline bool app_settings_charge_led(void) { return test_settings.charge_led; }
+static inline void app_settings_set_charge_led_deferred(bool on) { test_settings.charge_led = on; }
+static inline uint8_t app_settings_low_soc_notify_percent(void) { return test_settings.low_soc_notify_percent; }
+static inline void app_settings_set_low_soc_notify_percent_deferred(uint8_t p) { test_settings.low_soc_notify_percent = p; }
+static inline bool app_settings_muted(void) { return test_settings.muted; }
+static inline void app_settings_set_muted(bool m) { test_settings.muted = m; }
+static inline bool app_settings_transfer_pin_required(void) { return test_settings.transfer_pin_required; }
+static inline void app_settings_set_transfer_pin_required(bool r) { test_settings.transfer_pin_required = r; }
+static inline const char* app_settings_font_path(void) { return test_settings.font_path; }
+static inline void app_settings_set_font_path(const char* p) { snprintf(test_settings.font_path, sizeof(test_settings.font_path), "%s", p ? p : ""); }
+static inline void app_settings_apply_runtime(void) { ++test_runtime_apply_calls; }
+
 typedef enum {READ_PICO_TRANSFER_MODE_AP,READ_PICO_TRANSFER_MODE_STA} read_pico_transfer_mode_t;
 typedef enum {READ_PICO_TRANSFER_STOPPED,READ_PICO_TRANSFER_STARTING,READ_PICO_TRANSFER_READY,READ_PICO_TRANSFER_UPLOADING,READ_PICO_TRANSFER_ERROR} read_pico_transfer_state_t;
-typedef struct {read_pico_transfer_mode_t mode;const char* root_dir;const char* font_dir;bool is_flash;size_t file_limit;uint64_t(*free_bytes_cb)(void*);void* free_bytes_ctx;int(*file_changed_cb)(const char*);void(*sta_ip_cb)(void);void(*service_poll_cb)(void);void(*network_stop_cb)(void);} read_pico_transfer_cfg_t;
-typedef struct {read_pico_transfer_mode_t mode;read_pico_transfer_state_t state;bool wifi_configured,network_ready;char ssid[33],wifi_ssid[33],url[64],mdns_host[64],cur_name[121];unsigned sta_count,done_count,changed_count;size_t cur_bytes,cur_total;int last_error;} read_pico_transfer_status_t;
+typedef struct {
+    read_pico_transfer_mode_t mode;
+    const char* root_dir;
+    const char* font_dir;
+    bool is_flash;
+    size_t file_limit;
+    uint64_t(*free_bytes_cb)(void*);
+    void* free_bytes_ctx;
+    int(*file_changed_cb)(const char*);
+    void(*sta_ip_cb)(void);
+    void(*service_poll_cb)(void);
+    void(*network_stop_cb)(void);
+    const char* sd_root;
+    bool(*storage_info_cb)(read_pico_storage_info_t*,void*);
+    bool(*storage_switch_cb)(bool,void*);
+    void* storage_ctx;
+    bool(*settings_get_cb)(read_pico_device_settings_t*,void*);
+    esp_err_t(*settings_set_cb)(const read_pico_device_settings_t*,void*);
+    void* settings_ctx;
+    bool pin_required;
+    bool(*time_get_cb)(read_pico_time_info_t*,void*);
+    esp_err_t(*time_set_cb)(uint32_t,bool,int16_t,void*);
+    void* time_ctx;
+    esp_err_t(*font_select_cb)(const char*,void*);
+    void* font_ctx;
+    bool(*dashboard_stats_cb)(read_pico_dashboard_stats_t*,void*);
+    void* dashboard_ctx;
+} read_pico_transfer_cfg_t;
+static read_pico_transfer_cfg_t test_last_cfg;
+typedef struct {read_pico_transfer_mode_t mode;read_pico_transfer_state_t state;bool wifi_configured,network_ready,pin_required;char ssid[33],pin[7],wifi_ssid[33],url[64],mdns_host[64],cur_name[121];unsigned sta_count,done_count,changed_count;size_t cur_bytes,cur_total;int last_error;} read_pico_transfer_status_t;
+static int test_pin_reset_calls;
+static inline void read_pico_transfer_reset_pin(void) { ++test_pin_reset_calls; }
 #define READ_PICO_TRANSFER_PASSWORD "readpico"
 static read_pico_transfer_status_t test_status;
 static bool test_busy;
@@ -105,7 +207,7 @@ static inline void read_pico_transfer_stop(void) { ++test_stop_count; }
 static inline void read_pico_transfer_get_status(read_pico_transfer_status_t* s) {*s=test_status;}
 static inline int read_pico_transfer_get_saved_wifi(char* s,bool* c) {strcpy(s,test_configured?"saved":"");*c=test_configured;return 0;}
 static inline int read_pico_transfer_get_saved_wifi_list(char s[5][33],size_t* count) {memset(s,0,5*33);*count=test_configured?2:0;if(*count){strcpy(s[0],"saved");strcpy(s[1],"backup");}return 0;}
-static inline int read_pico_transfer_start(const read_pico_transfer_cfg_t* c) {if (!test_font_suspended || !c->file_changed_cb || c->file_changed_cb("/flash/books/test.txt")) return ESP_FAIL;return 0;}
+static inline int read_pico_transfer_start(const read_pico_transfer_cfg_t* c) {test_last_cfg=*c; if (!test_font_suspended || !c->file_changed_cb || c->file_changed_cb("/flash/books/test.txt")) return ESP_FAIL;return 0;}
 static inline void read_pico_transfer_service_poll(void) {}
 static inline int read_pico_transfer_save_wifi(const char* s,const char* p) {(void)p;test_save_count++;snprintf(test_saved_ssid,33,"%s",s);return test_save_error;}
 static inline int read_pico_transfer_forget_wifi_ssid(const char* s) {(void)s;test_forget_count++;return test_forget_error;}

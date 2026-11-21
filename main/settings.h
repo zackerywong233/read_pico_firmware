@@ -114,8 +114,25 @@ void app_settings_set_low_soc_notify_percent(uint8_t percent);
 bool app_settings_muted(void);
 /// 保存并应用全局蜂鸣器静音。/ Persist and apply global buzzer mute.
 void app_settings_set_muted(bool muted);
+/// 局域网传输是否强制要求 6 位配对码；默认关闭以兼容旧网页。
+/// / Whether LAN transfer enforces the 6-digit PIN; defaults false for legacy webpage compatibility.
+bool app_settings_transfer_pin_required(void);
+/// 保存局域网传输配对码开关。/ Persist the LAN transfer PIN requirement switch.
+void app_settings_set_transfer_pin_required(bool required);
 /// 开机同步低电阈值与充电灯到 PMU。/ Sync the low-battery threshold and charge LED to the PMU at boot.
 void app_settings_sync_pmu(void);
+/// 仅保存时区到 NVS，由主循环调用 app_settings_apply_runtime 应用。
+/// / Persist timezone to NVS only; apply later on the main task via app_settings_apply_runtime.
+void app_settings_set_timezone_min_deferred(int16_t minutes);
+/// 仅保存充电指示灯到 NVS，由主循环调用 app_settings_apply_runtime 同步 PMU。
+/// / Persist charge LED to NVS only; sync PMU later on the main task via app_settings_apply_runtime.
+void app_settings_set_charge_led_deferred(bool enabled);
+/// 仅保存低电提醒到 NVS，由主循环调用 app_settings_apply_runtime 同步 PMU。
+/// / Persist low-battery alert to NVS only; sync PMU later on the main task via app_settings_apply_runtime.
+void app_settings_set_low_soc_notify_percent_deferred(uint8_t percent);
+/// 在主循环应用挂起的时区、蜂鸣器静音与 PMU 配置。
+/// / Apply pending timezone, buzzer mute and PMU settings on the main task.
+void app_settings_apply_runtime(void);
 /// 读取独立 rp_ambient 命名空间配置。/ Read configuration from the separate rp_ambient namespace.
 void app_settings_ambient_get(app_ambient_settings_t* out);
 /// 校验并保存定时看板配置。/ Validate and save scheduled dashboard configuration.

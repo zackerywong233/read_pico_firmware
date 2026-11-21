@@ -43,6 +43,7 @@
 #define NVS_KEY_CHARGE_LED "chg_led"
 #define NVS_KEY_LOW_SOC "low_soc"
 #define NVS_KEY_MUTE "mute"
+#define NVS_KEY_TRANSFER_PIN "tr_pin"
 #define FONT_PATH_MAX 160
 #define AMBIENT_NS "rp_ambient"
 #define AMBIENT_KEY_ENABLED "enabled"
@@ -83,6 +84,7 @@ static int16_t s_tz_min = 480;
 static bool s_charge_led = true;
 static uint8_t s_low_soc = 10;
 static bool s_muted;
+static bool s_transfer_pin_required;
 
 static void apply_timezone(void) {
     int minutes = s_tz_min;
@@ -173,10 +175,11 @@ void app_settings_init(void) {
     }
     int16_t tz = 480;
     if (nvs_get_i16(h, NVS_KEY_TZ_MIN, &tz) == ESP_OK && tz >= -720 && tz <= 840) s_tz_min = tz;
-    uint8_t led = 1, low = 10, mute = 0;
+    uint8_t led = 1, low = 10, mute = 0, tr_pin = 0;
     if (nvs_get_u8(h, NVS_KEY_CHARGE_LED, &led) == ESP_OK) s_charge_led = led != 0;
     if (nvs_get_u8(h, NVS_KEY_LOW_SOC, &low) == ESP_OK && (low == 0 || (low >= 5 && low <= 30 && low % 5 == 0))) s_low_soc = low;
     if (nvs_get_u8(h, NVS_KEY_MUTE, &mute) == ESP_OK) s_muted = mute != 0;
+    if (nvs_get_u8(h, NVS_KEY_TRANSFER_PIN, &tr_pin) == ESP_OK) s_transfer_pin_required = tr_pin != 0;
     nvs_close(h);
     if (nvs_open(AMBIENT_NS, NVS_READONLY, &h) == ESP_OK) {
         uint8_t enabled = 0, start = 23, end = 7, source = 2, last_ok = 0;
@@ -506,6 +509,12 @@ void app_settings_set_muted(bool muted) {
     s_muted = muted; nvs_put_u8(NVS_KEY_MUTE, muted ? 1 : 0);
     read_pico_buzzer_set_muted(muted);
 }
+bool app_settings_transfer_pin_required(void) { return s_transfer_pin_required; }
+void app_settings_set_transfer_pin_required(bool required) {
+    if (s_transfer_pin_required == required) return;
+    s_transfer_pin_required = required;
+    nvs_put_u8(NVS_KEY_TRANSFER_PIN, required ? 1 : 0);
+}
 
 void app_settings_sync_pmu(void) {
     uint8_t led = s_charge_led ? 1 : 0;
@@ -513,4 +522,31 @@ void app_settings_sync_pmu(void) {
     (void)read_pico_pmu_cmd(PMU_CMD_CONFIG_SET_CHARGE_LED, &led, 1);
     (void)read_pico_pmu_cmd(PMU_CMD_CONFIG_SET_LOW_SOC_NOTIFY, low, sizeof(low));
     read_pico_buzzer_set_muted(s_muted);
+}
+
+void app_settings_set_timezone_min_deferred(int16_t minutes) {
+    if (minutes < -720 || minutes > 840 || s_tz_min == minutes) return;
+    s_tz_min = minutes;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_i16(h, NVS_KEY_TZ_MIN, minutes);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+void app_settings_set_charge_led_deferred(bool enabled) {
+    if (s_charge_led == enabled) return;
+    s_charge_led = enabled;
+    nvs_put_u8(NVS_KEY_CHARGE_LED, enabled ? 1 : 0);
+}
+
+void app_settings_set_low_soc_notify_percent_deferred(uint8_t percent) {
+    if ((percent && (percent < 5 || percent > 30 || percent % 5)) || s_low_soc == percent) return;
+    s_low_soc = percent;
+    nvs_put_u8(NVS_KEY_LOW_SOC, percent);
+}
+
+void app_settings_apply_runtime(void) {
+    apply_timezone();
+    app_settings_sync_pmu();
 }

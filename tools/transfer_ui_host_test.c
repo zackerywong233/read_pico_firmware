@@ -185,5 +185,54 @@ int main(void) {
     s_root.is_flash = true;
     app_transfer.on_media_lost(&ctx);
     assert(test_stop_count == stops_before + 1);
+
+    // 配套接口回调：设置延迟同步与远程空闲切换存储。/ Companion callbacks: deferred settings sync and remote idle storage switch.
+    on_enter(&ctx);
+    on_tick(&ctx);
+    assert(test_last_cfg.settings_get_cb && test_last_cfg.settings_set_cb);
+    assert(test_last_cfg.storage_info_cb && test_last_cfg.storage_switch_cb);
+    read_pico_device_settings_t got_settings = {0};
+    assert(test_last_cfg.settings_get_cb(&got_settings, test_last_cfg.settings_ctx));
+    assert(got_settings.book_px == 48 && got_settings.timezone_min == 480);
+    got_settings.book_px = 56;
+    got_settings.timezone_min = 0;
+    got_settings.charge_led = false;
+    int apply_before = test_runtime_apply_calls;
+    assert(test_last_cfg.settings_set_cb(&got_settings, test_last_cfg.settings_ctx) == ESP_OK);
+    assert(test_runtime_apply_calls == apply_before);
+    on_tick(&ctx);
+    assert(test_runtime_apply_calls == apply_before + 1);
+    assert(test_settings.book_px == 56 && test_settings.timezone_min == 0 && !test_settings.charge_led);
+
+    s_storage_info.flash_available = true;
+    s_storage_info.sd_available = true;
+    test_busy = true;
+    stops_before = test_stop_count;
+    assert(test_last_cfg.storage_switch_cb(true, test_last_cfg.storage_ctx));
+    on_tick(&ctx);
+    assert(test_stop_count == stops_before);
+    test_busy = false;
+    assert(on_tick(&ctx) == APP_REDRAW_PAGE);
+    assert(test_stop_count == stops_before + 1 && s_start_pending);
+    on_tick(&ctx);
+    assert(!s_start_pending);
+
+    // 对时延迟写入、字体切换、看板统计与 PIN 复位。/ Deferred time sync, font select, dashboard stats and PIN reset.
+    assert(test_last_cfg.time_get_cb && test_last_cfg.time_set_cb);
+    assert(test_last_cfg.font_select_cb && test_last_cfg.dashboard_stats_cb);
+    read_pico_time_info_t tinfo = {0};
+    assert(test_last_cfg.time_get_cb(&tinfo, test_last_cfg.time_ctx) && tinfo.time_valid);
+    int time_calls_before = test_time_set_calls;
+    assert(test_last_cfg.time_set_cb(1763729999U, true, 540, test_last_cfg.time_ctx) == ESP_OK);
+    assert(test_time_set_calls == time_calls_before);
+    on_tick(&ctx);
+    assert(test_time_set_calls == time_calls_before + 1 && test_utc_time == 1763729999U && test_settings.timezone_min == 540);
+    assert(test_last_cfg.font_select_cb("/sdcard/fonts/New.ttf", test_last_cfg.font_ctx) == ESP_OK);
+    assert(!strcmp(test_settings.font_path, "/sdcard/fonts/New.ttf"));
+    read_pico_dashboard_stats_t dstats = {0};
+    assert(test_last_cfg.dashboard_stats_cb(&dstats, test_last_cfg.dashboard_ctx));
+    assert(dstats.total_reading_sec == 3661U && dstats.has_last_book && dstats.last_book_percent == 42 && dstats.has_excerpt);
+    assert(test_pin_reset_calls > 0 && test_pmu_poll_calls > 0);
+
     puts("transfer_ui_host_test: PASS");
 }

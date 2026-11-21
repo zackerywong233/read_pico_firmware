@@ -30,10 +30,13 @@
  */
 // 整个传书页暂停 SD 字体并使用内置字库；HTTP 停止后才恢复读取。
 // Use the built-in font and suspend SD font opens for this page; resume only after HTTP stops.
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "app.h"
+#include "reading_stats.h"
+#include "settings.h"
 #include "time_sync.h"
 #include "book_store.h"
 #include "book_progress.h"
@@ -41,6 +44,7 @@
 #include "e0470_epaper_waveform.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "read_pico_pmu.h"
 #include "read_pico_transfer.h"
 #include "ttf_font.h"
 #include "ui_gesture.h"
@@ -64,6 +68,121 @@ static uint64_t s_free;
 static size_t s_heap_before, s_internal_before;
 static EpdRect s_area;
 static bool s_qr_url, s_qr_ready;
+static read_pico_storage_info_t s_storage_info;
+static _Atomic bool s_settings_runtime_dirty;
+static _Atomic bool s_remote_switch_pending;
+static _Atomic bool s_remote_switch_flash;
+static _Atomic bool s_pending_time_sync;
+static _Atomic uint32_t s_pending_time_utc;
+static int64_t s_pmu_poll_ms;
+
+static bool transfer_storage_info(read_pico_storage_info_t* out, void* ctx) {
+    (void)ctx;
+    if (!out) return false;
+    *out = s_storage_info;
+    uint64_t live = book_store_free_bytes(&s_root);
+    if (s_root.is_flash) out->flash_free_bytes = live;
+    else if (out->sd_available) out->sd_free_bytes = live;
+    return true;
+}
+
+static bool transfer_storage_switch(bool prefer_flash, void* ctx) {
+    (void)ctx;
+    if (prefer_flash ? !s_storage_info.flash_available : !s_storage_info.sd_available) return false;
+    atomic_store(&s_remote_switch_flash, prefer_flash);
+    atomic_store(&s_remote_switch_pending, true);
+    return true;
+}
+
+static bool transfer_settings_get(read_pico_device_settings_t* out, void* ctx) {
+    (void)ctx;
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    out->sleep_mode = (uint8_t)app_settings_sleep_mode();
+    out->auto_sleep_sec = app_settings_auto_sleep_sec();
+    out->pickup_wake = app_settings_pickup_wake();
+    out->book_px = app_settings_book_px();
+    out->book_refresh = app_settings_book_refresh();
+    out->book_line_height = app_settings_book_line_height();
+    out->book_margin = app_settings_book_margin();
+    out->book_weight = app_settings_book_weight();
+    out->book_rotation = app_settings_book_rotation();
+    out->book_gesture = app_settings_book_gesture();
+    out->saver_style = (uint8_t)app_settings_saver_style();
+    out->dashboard_items = app_settings_dashboard_items();
+    out->timezone_min = app_settings_timezone_min();
+    out->charge_led = app_settings_charge_led();
+    out->low_soc_notify_percent = app_settings_low_soc_notify_percent();
+    out->muted = app_settings_muted();
+    out->transfer_pin_required = app_settings_transfer_pin_required();
+    const char* font = app_settings_font_path();
+    snprintf(out->font_path, sizeof(out->font_path), "%s", font ? font : "");
+    return true;
+}
+
+static esp_err_t transfer_settings_set(const read_pico_device_settings_t* next, void* ctx) {
+    (void)ctx;
+    if (!next) return ESP_ERR_INVALID_ARG;
+    app_settings_set_sleep_mode((app_sleep_mode_t)next->sleep_mode);
+    app_settings_set_auto_sleep_sec(next->auto_sleep_sec);
+    app_settings_set_pickup_wake(next->pickup_wake);
+    app_settings_set_book_px(next->book_px);
+    app_settings_set_book_refresh(next->book_refresh);
+    app_settings_set_book_line_height(next->book_line_height);
+    app_settings_set_book_margin(next->book_margin);
+    app_settings_set_book_weight(next->book_weight);
+    app_settings_set_book_rotation(next->book_rotation);
+    app_settings_set_book_gesture(next->book_gesture);
+    app_settings_set_saver_style((app_saver_style_t)next->saver_style);
+    app_settings_set_dashboard_items(next->dashboard_items);
+    app_settings_set_timezone_min_deferred(next->timezone_min);
+    app_settings_set_charge_led_deferred(next->charge_led);
+    app_settings_set_low_soc_notify_percent_deferred(next->low_soc_notify_percent);
+    app_settings_set_muted(next->muted);
+    app_settings_set_transfer_pin_required(next->transfer_pin_required);
+    atomic_store(&s_settings_runtime_dirty, true);
+    return ESP_OK;
+}
+
+static bool transfer_time_get(read_pico_time_info_t* out, void* ctx) {
+    (void)ctx;
+    if (!out) return false;
+    time_t utc = 0;
+    out->time_valid = app_time_now_utc(&utc);
+    out->unix_sec = out->time_valid && utc > 0 ? (uint32_t)utc : 0;
+    out->timezone_min = app_settings_timezone_min();
+    return true;
+}
+
+static esp_err_t transfer_time_set(uint32_t unix_sec, bool has_tz, int16_t tz_min, void* ctx) {
+    (void)ctx;
+    if (has_tz) {
+        app_settings_set_timezone_min_deferred(tz_min);
+        atomic_store(&s_settings_runtime_dirty, true);
+    }
+    atomic_store(&s_pending_time_utc, unix_sec);
+    atomic_store(&s_pending_time_sync, true);
+    return ESP_OK;
+}
+
+static esp_err_t transfer_font_select(const char* path, void* ctx) {
+    (void)ctx;
+    app_settings_set_font_path(path ? path : "");
+    return ESP_OK;
+}
+
+static bool transfer_dashboard_stats(read_pico_dashboard_stats_t* out, void* ctx) {
+    (void)ctx;
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    out->total_reading_sec = reading_stats_total_seconds();
+    out->has_last_book = reading_stats_get_last_book(
+        out->last_book_title, sizeof(out->last_book_title), &out->last_book_percent);
+    out->has_excerpt = reading_stats_get_excerpt(
+        out->excerpt_title, sizeof(out->excerpt_title),
+        out->excerpt_text, sizeof(out->excerpt_text));
+    return true;
+}
 
 static void clear_qr(void) {
     ui_wifi_qr_clear();
@@ -423,7 +542,7 @@ static app_redraw_t provisioning_gesture(app_ctx_t* ctx, const ui_gesture_event_
     return APP_REDRAW_AREA;
 }
 
-static EpdRect status_rect(void) { return (EpdRect){UI_MARGIN, 610, ui_content_width(), 430}; }
+static EpdRect status_rect(void) { return (EpdRect){UI_MARGIN, 610, ui_content_width(), 460}; }
 static uint64_t free_bytes(void* arg) { return book_store_free_bytes(arg); }
 
 static void draw_capacity(uint8_t* fb) {
@@ -474,6 +593,12 @@ static void draw_status(uint8_t* fb) {
         ui_text(fb, area.x, area.y + 260, UI_PX_CAPTION, s_status.network_ready ? "上传未完成，请在浏览器查看原因" : "检查WiFi配置后重新选择接入方式", EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, area.x, area.y + 328, UI_PX_CAPTION, s_status.state == READ_PICO_TRANSFER_UPLOADING ? "上传完成后可切换接入方式" : "离开本页会断开网络", EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, area.x, area.y + 370, UI_PX_CAPTION, "同名文件上传后将覆盖", EPD_DRAW_ALIGN_LEFT, false);
+    if (s_status.pin[0] && !s_media_lost) {
+        char pin_line[64];
+        snprintf(pin_line, sizeof(pin_line), "配对码：%s%s", s_status.pin,
+                 s_status.pin_required ? " · 已开启校验" : "");
+        ui_text(fb, area.x, area.y + 412, UI_PX_CAPTION, pin_line, EPD_DRAW_ALIGN_LEFT, false);
+    }
 }
 
 static EpdRect control_rect(int id) {
@@ -561,6 +686,13 @@ static void on_enter(app_ctx_t* ctx) {
     s_free = 0;
     s_root_message[0] = 0;
     s_can_switch_root = false;
+    memset(&s_storage_info, 0, sizeof(s_storage_info));
+    atomic_store(&s_settings_runtime_dirty, false);
+    atomic_store(&s_remote_switch_pending, false);
+    atomic_store(&s_pending_time_sync, false);
+    s_pmu_poll_ms = 0;
+    read_pico_transfer_reset_pin();
+    if (read_pico_pmu_ready()) (void)read_pico_pmu_poll();
 }
 
 static void stop_session(void) {
@@ -577,14 +709,21 @@ static void stop_session(void) {
 // Join HTTP before clearing the old root; in-flight requests never move to another storage.
 static void transfer_on_media_lost(app_ctx_t* ctx) {
     (void)ctx;
-    if (s_root.is_flash) return;
+    if (s_root.is_flash) {
+        s_storage_info.sd_available = false;
+        s_storage_info.sd_free_bytes = 0;
+        s_can_switch_root = false;
+        return;
+    }
     stop_session();
     s_start_pending = s_scan_pending = false;
+    atomic_store(&s_remote_switch_pending, false);
     s_view = TRANSFER_HOME;
     clear_password();
     s_pressed = -1;
     s_free = 0;
     s_can_switch_root = false;
+    memset(&s_storage_info, 0, sizeof(s_storage_info));
     memset(&s_root, 0, sizeof(s_root));
     s_media_lost = true;
     s_settle = false;
@@ -593,7 +732,11 @@ static void transfer_on_media_lost(app_ctx_t* ctx) {
 static void transfer_on_exit(app_ctx_t* ctx) {
     clear_password();
     s_scan_pending = false;
+    atomic_store(&s_remote_switch_pending, false);
     stop_session();
+    if (atomic_exchange(&s_settings_runtime_dirty, false)) app_settings_apply_runtime();
+    if (atomic_exchange(&s_pending_time_sync, false))
+        (void)app_time_set_utc(atomic_load(&s_pending_time_utc), NULL);
     ttf_font_suspend_sd(false);
     display_set_bulk_io(false);
     guard_draw_result(ctx->hl, update_display_white(ctx->hl));
@@ -603,8 +746,43 @@ static void transfer_on_exit(app_ctx_t* ctx) {
              (unsigned)s_internal_before, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 }
 
+static bool switch_upload_root(bool prefer_flash, bool from_remote) {
+    book_store_root_t target = {0};
+    esp_err_t err = book_store_upload_root_for(prefer_flash, &target);
+    if (err != ESP_OK) {
+        if (!from_remote)
+            snprintf(s_root_message, sizeof(s_root_message), "%s存储当前不可用，未切换", prefer_flash ? "内置" : "TF 卡");
+        return false;
+    }
+    if (!read_pico_transfer_try_stop_if_idle()) {
+        if (!from_remote)
+            snprintf(s_root_message, sizeof(s_root_message), "上传进行中，请完成后再切换目标");
+        return false;
+    }
+    stop_session();
+    s_upload_flash = target.is_flash;
+    s_root = target;
+    s_free = book_store_free_bytes(&s_root);
+    s_root_message[0] = 0;
+    s_start_pending = true;
+    s_can_switch_root = true;
+    return true;
+}
+
 static app_redraw_t on_tick(app_ctx_t* ctx) {
+    if (atomic_exchange(&s_settings_runtime_dirty, false)) app_settings_apply_runtime();
+    if (atomic_exchange(&s_pending_time_sync, false))
+        (void)app_time_set_utc(atomic_load(&s_pending_time_utc), NULL);
     if (s_view != TRANSFER_HOME) return network_ui_tick(ctx);
+    if (!s_start_pending && atomic_load(&s_remote_switch_pending)) {
+        bool prefer_flash = atomic_load(&s_remote_switch_flash);
+        if (switch_upload_root(prefer_flash, true)) {
+            atomic_store(&s_remote_switch_pending, false);
+            return APP_REDRAW_PAGE;
+        }
+        if (prefer_flash ? !s_storage_info.flash_available : !s_storage_info.sd_available)
+            atomic_store(&s_remote_switch_pending, false);
+    }
     if (s_start_pending) {
         s_start_pending = false;
         if (s_font_error != ESP_OK) s_font_error = ttf_font_suspend_sd(true);
@@ -613,16 +791,33 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
             s_media_lost = false;
             s_free = book_store_free_bytes(&s_root);
             book_store_root_t roots[2]; int root_count = 0;
+            memset(&s_storage_info, 0, sizeof(s_storage_info));
             if (book_store_roots(roots, &root_count) == ESP_OK) {
                 s_can_switch_root = false;
-                for (int i = 0; i < root_count; ++i)
+                for (int i = 0; i < root_count; ++i) {
+                    uint64_t free_b = book_store_free_bytes(&roots[i]);
+                    if (roots[i].is_flash) {
+                        s_storage_info.flash_available = true;
+                        s_storage_info.flash_free_bytes = free_b;
+                    } else {
+                        s_storage_info.sd_available = true;
+                        s_storage_info.sd_free_bytes = free_b;
+                    }
                     if (roots[i].is_flash != s_root.is_flash) s_can_switch_root = true;
+                }
             }
             read_pico_transfer_cfg_t cfg = {.mode = s_mode, .root_dir = s_root.path, .is_flash = s_root.is_flash,
                 .font_dir = s_root.is_flash ? NULL : "/sdcard/fonts",
                 .file_limit = book_store_file_limit(&s_root), .free_bytes_cb = free_bytes, .free_bytes_ctx = &s_root, .file_changed_cb = book_store_forget_changed_path,
                 .sta_ip_cb = app_time_sync_sta_ip, .service_poll_cb = app_time_sync_poll,
-                .network_stop_cb = app_time_sync_stop};
+                .network_stop_cb = app_time_sync_stop,
+                .sd_root = s_root.is_flash ? NULL : "/sdcard",
+                .storage_info_cb = transfer_storage_info, .storage_switch_cb = transfer_storage_switch,
+                .settings_get_cb = transfer_settings_get, .settings_set_cb = transfer_settings_set,
+                .pin_required = app_settings_transfer_pin_required(),
+                .time_get_cb = transfer_time_get, .time_set_cb = transfer_time_set,
+                .font_select_cb = transfer_font_select,
+                .dashboard_stats_cb = transfer_dashboard_stats};
             err = read_pico_transfer_start(&cfg);
             s_session_started = err == ESP_OK;
             read_pico_transfer_get_status(&s_status);
@@ -637,6 +832,10 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     }
     if (ctx->consumed || ctx->now_ms - s_poll_ms < 2000) return APP_REDRAW_NONE;
     s_poll_ms = ctx->now_ms;
+    if (read_pico_pmu_ready() && ctx->now_ms - s_pmu_poll_ms >= 10000) {
+        s_pmu_poll_ms = ctx->now_ms;
+        (void)read_pico_pmu_poll();
+    }
     read_pico_transfer_service_poll();
     read_pico_transfer_status_t next = {0};
     read_pico_transfer_get_status(&next);
@@ -648,6 +847,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     if (!network_changed && next.state == s_status.state && next.sta_count == s_status.sta_count &&
         next.cur_bytes == s_status.cur_bytes && next.cur_total == s_status.cur_total &&
         next.done_count == s_status.done_count && next.changed_count == s_status.changed_count && next.last_error == s_status.last_error &&
+        next.pin_required == s_status.pin_required && !strcmp(next.pin, s_status.pin) &&
         !strcmp(next.cur_name, s_status.cur_name)) return APP_REDRAW_NONE;
     s_settle = next.changed_count != s_status.changed_count || next.done_count != s_status.done_count ||
         (s_status.state == READ_PICO_TRANSFER_UPLOADING && next.state != READ_PICO_TRANSFER_UPLOADING);
@@ -687,24 +887,7 @@ static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
         } else if (origin == 1) {
             if (enter_networks()) return APP_REDRAW_PAGE;
         } else if (origin == 4) {
-            book_store_root_t target = {0};
-            bool prefer_flash = !s_root.is_flash;
-            esp_err_t err = book_store_upload_root_for(prefer_flash, &target);
-            if (err != ESP_OK) {
-                snprintf(s_root_message, sizeof(s_root_message), "%s存储当前不可用，未切换", prefer_flash ? "内置" : "TF 卡");
-                return APP_REDRAW_PAGE;
-            }
-            if (!read_pico_transfer_try_stop_if_idle()) {
-                snprintf(s_root_message, sizeof(s_root_message), "上传进行中，请完成后再切换目标");
-                return APP_REDRAW_PAGE;
-            }
-            stop_session();
-            s_upload_flash = target.is_flash;
-            s_root = target;
-            s_free = book_store_free_bytes(&s_root);
-            s_root_message[0] = 0;
-            s_start_pending = true;
-            s_can_switch_root = true;
+            (void)switch_upload_root(!s_root.is_flash, false);
             return APP_REDRAW_PAGE;
         } else {
             read_pico_transfer_status_t latest;

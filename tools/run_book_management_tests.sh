@@ -22,6 +22,8 @@ build/book-tests/transfer
 python3 tools/test_transfer_font.py
 gcc "${flags[@]}" -Imanaged_components/espressif__cjson/cJSON tools/transfer_wifi_host_test.c managed_components/espressif__cjson/cJSON/cJSON.c -lm -o build/book-tests/transfer-wifi
 build/book-tests/transfer-wifi
+gcc "${flags[@]}" -Icomponents/read_pico_transfer -Imanaged_components/espressif__cjson/cJSON tools/transfer_companion_host_test.c managed_components/espressif__cjson/cJSON/cJSON.c -lm -o build/book-tests/transfer-companion
+build/book-tests/transfer-companion
 gcc "${flags[@]}" -Itools/transfer_ui_stubs -Icomponents/read_pico_transfer/include -Imain -Icomponents/epdiy/src -Icomponents/epdiy/include tools/transfer_ui_host_test.c -o build/book-tests/transfer-ui
 build/book-tests/transfer-ui
 bash tools/run_app_loop_host_tests.sh

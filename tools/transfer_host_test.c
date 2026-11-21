@@ -320,5 +320,92 @@ int main(void) {
     assert(resolve_mutation_path(root, "Book.txt", requested, sizeof(requested)) == 0);
     op = changed_result(requested, change_callback);
     assert(op.status == 200 && !strcmp(cleaned_path, path));
-    rmdir(root); puts("transfer host tests passed");
+    rmdir(root);
+
+    // 锁屏图片上传、冲突清理、删除与手写便签列举回归。/ Screensaver upload/cleanup/delete and sketch listing regressions.
+    char sd[] = "/tmp/transfer-companion-XXXXXX";
+    assert(mkdtemp(sd));
+    char img_path[320], agent_jpg[320], alt_jpg[320], notes_dir[320], sk1[320], sk2[320], sk_txt[320];
+    snprintf(agent_jpg, sizeof(agent_jpg), "%s/agent_screensaver.jpg", sd);
+    snprintf(alt_jpg, sizeof(alt_jpg), "%s/screensaver.jpg", sd);
+    write_fixture(agent_jpg, "stale-agent-image-bytes");
+    write_fixture(alt_jpg, "stale-old-screensaver");
+
+    // 构造合法 PNG 流上传，应覆盖并清除旧异后缀及 Agent 锁屏。/ Valid PNG upload clears stale alternate and Agent screensavers.
+    uint8_t png[45] = {0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 'I', 'H', 'D', 'R',
+                       0, 0, 0x02, 0xac, 0, 0, 0x04, 0xc0, 8, 0, 0, 0, 0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 'I', 'E', 'N', 'D', 0, 0, 0, 0};
+    FILE *png_mem = fopen("/tmp/transfer-test-png.bin", "wb+"); assert(png_mem);
+    assert(fwrite(png, 1, sizeof(png), png_mem) == sizeof(png)); rewind(png_mem);
+    const char *fmt = NULL;
+    assert(upload_screensaver_managed(sd, sizeof(png), UINT64_MAX, buf, sizeof(buf), receive_font, png_mem, NULL, &fmt) == 0);
+    assert(fmt && !strcmp(fmt, "png"));
+    assert(access(agent_jpg, F_OK) != 0 && access(alt_jpg, F_OK) != 0);
+    const char *active_name = NULL, *active_fmt = NULL;
+    uint64_t active_size = 0; int64_t active_mtime = 0;
+    assert(find_active_screensaver(sd, img_path, &active_name, &active_fmt, &active_size, &active_mtime));
+    assert(!strcmp(active_name, "screensaver.png") && !strcmp(active_fmt, "png") && active_size == sizeof(png));
+    fclose(png_mem); unlink("/tmp/transfer-test-png.bin");
+
+    // 无效内容与超限上传须拒绝且不破坏现有锁屏。/ Invalid or oversized uploads fail without touching the active screensaver.
+    remaining = 32;
+    assert(upload_screensaver_managed(sd, 32, UINT64_MAX, buf, sizeof(buf), receive, NULL, NULL, &fmt) == 422);
+    assert(upload_screensaver_managed(sd, TRANSFER_SCREENSAVER_MAX + 1U, UINT64_MAX, buf, sizeof(buf), receive, NULL, NULL, &fmt) == 413);
+    assert(upload_screensaver_managed(sd, 32, 16, buf, sizeof(buf), receive, NULL, NULL, &fmt) == 507);
+    assert(find_active_screensaver(sd, img_path, &active_name, &active_fmt, &active_size, &active_mtime));
+    assert(!strcmp(active_name, "screensaver.png"));
+
+    // 上传合法 JPEG 应替换 PNG。/ Valid JPEG upload replaces existing PNG.
+    uint8_t jpg[32] = {0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 'J', 'F', 'I', 'F'};
+    FILE *jpg_mem = fopen("/tmp/transfer-test-jpg.bin", "wb+"); assert(jpg_mem);
+    assert(fwrite(jpg, 1, sizeof(jpg), jpg_mem) == sizeof(jpg)); rewind(jpg_mem);
+    assert(upload_screensaver_managed(sd, sizeof(jpg), UINT64_MAX, buf, sizeof(buf), receive_font, jpg_mem, NULL, &fmt) == 0);
+    assert(fmt && !strcmp(fmt, "jpeg"));
+    assert(find_active_screensaver(sd, img_path, &active_name, &active_fmt, &active_size, &active_mtime));
+    assert(!strcmp(active_name, "screensaver.jpg") && !strcmp(active_fmt, "jpeg"));
+    fclose(jpg_mem); unlink("/tmp/transfer-test-jpg.bin");
+
+    unsigned deleted = 0;
+    assert(delete_screensaver_managed(sd, &deleted) == 0 && deleted == 1);
+    assert(!find_active_screensaver(sd, img_path, &active_name, &active_fmt, &active_size, &active_mtime));
+
+    // 手写便签目录缺失时不报错，存在时仅列 .png 并按名/时间有序。/ Missing notes dir yields empty list; present dir lists .png only.
+    transfer_sketch_list_t sketches;
+    assert(list_sketches(sd, &sketches) == 0 && sketches.total == 0 && sketches.count == 0);
+    snprintf(notes_dir, sizeof(notes_dir), "%s/notes", sd);
+    assert(mkdir(notes_dir, 0755) == 0);
+    snprintf(sk1, sizeof(sk1), "%s/sketch_1.png", notes_dir);
+    snprintf(sk2, sizeof(sk2), "%s/sketch_2.png", notes_dir);
+    snprintf(sk_txt, sizeof(sk_txt), "%s/book.md", notes_dir);
+    write_fixture(sk1, "png1"); write_fixture(sk2, "png22"); write_fixture(sk_txt, "markdown");
+    assert(list_sketches(sd, &sketches) == 0 && sketches.total == 2 && sketches.count == 2);
+    char resolved_sk[320];
+    assert(resolve_sketch_path(sd, "sketch_1.png", resolved_sk) == 0 && !strcmp(resolved_sk, sk1));
+    unlink(sk1); unlink(sk2); unlink(sk_txt); rmdir(notes_dir);
+
+    // 字体列举与看板文字读写回归。/ Font listing and dashboard.txt read/write regressions.
+    char fdir[320], f1[320], f2[320], fbad[320];
+    snprintf(fdir, sizeof(fdir), "%s/fonts", sd);
+    assert(mkdir(fdir, 0755) == 0);
+    snprintf(f1, sizeof(f1), "%s/Zeta.ttf", fdir);
+    snprintf(f2, sizeof(f2), "%s/Alpha.TTF", fdir);
+    snprintf(fbad, sizeof(fbad), "%s/ignore.otf", fdir);
+    write_fixture(f1, "font1"); write_fixture(f2, "font22"); write_fixture(fbad, "otf");
+    transfer_font_list_t flist;
+    assert(list_fonts(fdir, &flist) == 0 && flist.total == 2 && flist.count == 2);
+    assert(!strcmp(flist.items[0].name, "Alpha.TTF") && !strcmp(flist.items[1].name, "Zeta.ttf"));
+    unlink(f1); unlink(f2); unlink(fbad); rmdir(fdir);
+
+    char dash[TRANSFER_DASHBOARD_NOTE_MAX + 1];
+    assert(read_dashboard_note(sd, dash) == 0 && dash[0] == '\0');
+    assert(write_dashboard_note_managed(sd, "第一行\n第二行") == 0);
+    assert(read_dashboard_note(sd, dash) == 0 && !strcmp(dash, "第一行\n第二行"));
+    assert(write_dashboard_note_managed(sd, "替换文字") == 0);
+    assert(read_dashboard_note(sd, dash) == 0 && !strcmp(dash, "替换文字"));
+    assert(write_dashboard_note_managed(sd, "") == 0);
+    assert(read_dashboard_note(sd, dash) == 0 && dash[0] == '\0');
+    assert(delete_dashboard_note_managed(sd) == 0);
+
+    rmdir(sd);
+    puts("transfer host tests passed");
 }
