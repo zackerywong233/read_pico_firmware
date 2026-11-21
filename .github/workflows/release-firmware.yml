@@ -26,7 +26,7 @@ jobs:
           idf.py size
           test "$(stat -c %s build/Read_Pico.bin)" -le 4194304
           mkdir -p build
-          idf.py merge-bin -o build/pico-os-merged.bin
+          idf.py merge-bin -o pico-os-merged.bin
           cp build/Read_Pico.bin build/pico-os-app.bin
           sha256sum build/pico-os-app.bin | awk '{print $1 "  pico-os-app.bin"}' > build/pico-os-app.bin.sha256
           mkdir -p public
