@@ -196,7 +196,8 @@ bool ambient_sync_run(EpdiyHighlevelState *hl, uint8_t *framebuffer) {
         time_t now = pmu && pmu->time_ok && pmu->unix_sec
             ? (time_t)pmu->unix_sec : time(NULL);
         struct tm local;
-        if (now >= 946684800 && localtime_r(&now, &local)) {
+        time_t local_now = now + (time_t)app_settings_timezone_min() * 60;
+        if (now >= 946684800 && gmtime_r(&local_now, &local)) {
             strftime(line, sizeof(line), "%Y-%m-%d  %H:%M", &local);
             ui_text_vc(framebuffer, epd_rotated_display_width() / 2, 260, UI_PX_TITLE, line, EPD_DRAW_ALIGN_CENTER, false);
         }

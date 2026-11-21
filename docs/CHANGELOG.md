@@ -1,5 +1,14 @@
 # 版本变更 / Changelog
 
+## v0.1.18 · 2026-11-21
+
+- 设置与个人看板：修复“设置”页选项点击后仅高亮无法进入或调整的问题（改用抬手手势提交），修正三等分触控区间与计划唤醒时区显示；修复个人看板与定时看板按钮越界/重叠。
+  Settings & Dashboard: fix Settings rows highlighting without activating by migrating to release-to-commit gestures, fix 3-way row split and timezone display, and fix Dashboard / Scheduled Dashboard button bounds and overlap.
+- 设备自检与 PMU：改为同主版本下限语义版本校验，兼容 `1.1.0` 及以上同主版本 PMU 固件。
+  Self-test & PMU: use same-major lower-bound semver checks so PMU firmware `1.1.0` and newer `1.x` versions are accepted.
+- 联网、OTA 与底层修复：补齐网页阅读与 GitHub OTA 的 3xx 重定向跟随与超时重试，迁移 OTA SHA-256 至 ESP-IDF v6.1 PSA Crypto API；修复锁屏图重复解码、专注/便签/订阅页清屏与菜单把手、定时看板时区与 SNTP 停网并发竞态。
+  Networking, OTA & Core fixes: follow 3xx redirects and retry `EAGAIN` in Web Reader and GitHub OTA, migrate OTA SHA-256 to ESP-IDF v6.1 PSA Crypto API, remove double decoding for saver images, restore page clear/menu handle on Focus/Sketch/Feeds, fix scheduled dashboard timezone, and guard SNTP teardown.
+
 ## v0.1.17 · 2026-11-21
 
 - 图书：书架、传书网页与删除接口支持 `.md` 和 `.cbz`。Markdown 标题可按章节导航，清理常见行内标记；CBZ 图片按自然文件名排序，并以每 20 页分组。

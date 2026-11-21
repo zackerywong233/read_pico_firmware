@@ -20,7 +20,7 @@
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "mbedtls/sha256.h"
+#include "psa/crypto.h"
 #include "read_pico_transfer.h"
 
 #define RELEASE_URL "https://api.github.com/repos/zackerywong233/read_pico_firmware/releases/latest"
@@ -188,26 +188,37 @@ static void ota_task(void *arg) {
             if (dl_status != 200) err = ESP_FAIL;
             else { err = esp_ota_begin(partition, OTA_SIZE_UNKNOWN, &handle); begun = err == ESP_OK; }
         }
-        mbedtls_sha256_context sha; mbedtls_sha256_init(&sha); mbedtls_sha256_starts_ret(&sha, 0);
+        psa_hash_operation_t sha = PSA_HASH_OPERATION_INIT;
+        bool sha_active = false;
+        if (err == ESP_OK) {
+            if (psa_crypto_init() != PSA_SUCCESS ||
+                psa_hash_setup(&sha, PSA_ALG_SHA_256) != PSA_SUCCESS) err = ESP_FAIL;
+            else sha_active = true;
+        }
         int total = client ? esp_http_client_get_content_length(client) : -1; size_t received = 0;
         while (err == ESP_OK && !s_cancel) {
             int n = esp_http_client_read(client, buffer, 8192);
             if (n == -ESP_ERR_HTTP_EAGAIN) continue;
             if (n < 0) { err = ESP_FAIL; break; }
             if (!n) break;
-            if (esp_ota_write(handle, buffer, n) != ESP_OK || mbedtls_sha256_update_ret(&sha, (uint8_t *)buffer, n) != 0) { err = ESP_FAIL; break; }
+            if (esp_ota_write(handle, buffer, n) != ESP_OK ||
+                psa_hash_update(&sha, (const uint8_t *)buffer, (size_t)n) != PSA_SUCCESS) { err = ESP_FAIL; break; }
             received += (size_t)n;
             unsigned pct = total > 0 ? (unsigned)(received * 100U / (unsigned)total) : 0;
             status_set(OTA_UPDATE_DOWNLOADING, pct > 99 ? 99 : pct, NULL);
             vTaskDelay(1);
         }
-        unsigned char digest[32]; char hex[65];
+        unsigned char digest[32]; char hex[65]; size_t digest_len = 0;
         if (err == ESP_OK && s_cancel) err = ESP_ERR_INVALID_STATE;
-        if (err == ESP_OK && mbedtls_sha256_finish_ret(&sha, digest) == 0) {
+        if (err == ESP_OK && sha_active &&
+            psa_hash_finish(&sha, digest, sizeof(digest), &digest_len) == PSA_SUCCESS &&
+            digest_len == sizeof(digest)) {
+            sha_active = false;
             for (int i = 0; i < 32; ++i) snprintf(hex + i * 2, 3, "%02x", digest[i]);
             if (strcmp(hex, s_digest)) err = ESP_ERR_INVALID_CRC;
         } else if (err == ESP_OK) err = ESP_FAIL;
-        mbedtls_sha256_free(&sha); free(buffer);
+        if (sha_active) psa_hash_abort(&sha);
+        free(buffer);
         if (client) { esp_http_client_close(client); esp_http_client_cleanup(client); }
         read_pico_transfer_ota_wifi_stop();
         if (err == ESP_OK) err = esp_ota_end(handle);
