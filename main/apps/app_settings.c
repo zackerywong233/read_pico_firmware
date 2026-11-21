@@ -143,8 +143,8 @@ static void draw_kv_btn(uint8_t *fb, EpdRect r, const char *title, const char *d
 
 static void render_root(uint8_t *fb) {
     ui_draw_header(fb, "设置 Settings", "点按分类查看与调整设备选项");
-    char detail[96];
-    char tz[24];
+    char detail[128];
+    char tz[32];
     fmt_tz(tz, sizeof(tz), app_settings_timezone_min());
 
     snprintf(detail, sizeof(detail), "Wi-Fi %u · %s ›", (unsigned)s_network_count, tz);
@@ -185,7 +185,7 @@ static void render_root(uint8_t *fb) {
     snprintf(detail, sizeof(detail), "Wi-Fi OTA ›");
     draw_kv_btn(fb, row_rect(6), "系统更新", detail, s_pressed == 6);
 
-    char wake_line[96];
+    char wake_line[96] = "下一次计划唤醒：时间不可用";
     time_t now = 0;
     if (ambient.enabled && app_time_now_utc(&now)) {
         time_t local_now = now + (time_t)app_settings_timezone_min() * 60;
@@ -251,7 +251,7 @@ static void render_network_time(uint8_t *fb) {
 static void render_display(uint8_t *fb) {
     ui_draw_header(fb, "显示与阅读", "字体、默认字号、刷新与排版");
     char detail[64];
-    char btn_l[32], btn_r[32];
+    char btn_l[40], btn_r[40];
 
     draw_kv_btn(fb, row_rect(0), "字体管理与切换", "打开 ›", s_pressed == 0);
 
@@ -362,7 +362,7 @@ static void render_update(uint8_t *fb) {
     ota_update_get_status(&status);
     ui_draw_header(fb, "系统更新", "GitHub Releases · Wi-Fi OTA");
     const char *cur = status.current_version[0] ? status.current_version : running_version();
-    char line[128];
+    char line[160];
     snprintf(line, sizeof(line), "当前版本 %s  ·  最新版本 %s",
              cur, status.latest_version[0] ? status.latest_version : "未检查");
     ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 90, UI_PX_BODY, line, EPD_DRAW_ALIGN_LEFT, false);
@@ -574,7 +574,7 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
             case 6:
                 s_view = SETTINGS_VIEW_UPDATE;
                 s_ota_last_state = OTA_UPDATE_IDLE;
-                s_ota_last_progress = UINT32_MAX;
+                s_ota_last_progress = ~0u;
                 return APP_REDRAW_PAGE;
             default:
                 return APP_REDRAW_NONE;

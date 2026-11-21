@@ -207,7 +207,7 @@ static void draw_chrome(uint8_t *fb) {
         epd_rotated_display_height() - SKETCH_CANVAS_BOTTOM,
     });
 
-    char sub[80];
+    char sub[128];
     snprintf(sub, sizeof(sub), "%s · 笔刷 %s%s",
              s_status[0] ? s_status : "滑动书写，支持撤销与导出",
              brush_label(),

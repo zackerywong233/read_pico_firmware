@@ -156,9 +156,9 @@ void ui_time_edit_render(const ui_time_edit_t *ed, uint8_t *fb) {
     ui_clear_page(fb);
     ui_draw_header(fb, "校准日期与时间", "手动调整年月日、时刻与时区");
 
-    char tz_buf[24];
+    char tz_buf[32];
     fmt_tz(tz_buf, sizeof(tz_buf), ed->tz_min);
-    char preview[64];
+    char preview[128];
     snprintf(preview, sizeof(preview), "%04d-%02d-%02d  %02d:%02d  %s",
              ed->year, ed->month, ed->day, ed->hour, ed->minute, tz_buf);
     ui_text_vc(fb, epd_rotated_display_width() / 2, TIME_EDIT_PREVIEW_Y,
@@ -167,7 +167,7 @@ void ui_time_edit_render(const ui_time_edit_t *ed, uint8_t *fb) {
     static const char *const labels[TE_ROW_COUNT] = {
         "年", "月", "日", "时", "分", "时区",
     };
-    char values[TE_ROW_COUNT][24];
+    char values[TE_ROW_COUNT][32];
     snprintf(values[TE_ROW_YEAR], sizeof(values[0]), "%04d", ed->year);
     snprintf(values[TE_ROW_MONTH], sizeof(values[0]), "%02d", ed->month);
     snprintf(values[TE_ROW_DAY], sizeof(values[0]), "%02d", ed->day);

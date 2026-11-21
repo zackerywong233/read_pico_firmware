@@ -97,7 +97,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         struct tm tmv;
         int tz_min = app_settings_timezone_min();
         char timebuf[16];
-        char datebuf[64];
+        char datebuf[96];
         if (app_time_now_local(&tmv, &tz_min)) {
             s_last_shown_min = minute_stamp(&tmv);
             strftime(timebuf, sizeof(timebuf), "%H:%M", &tmv);
@@ -116,7 +116,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text_vc(fb, cx, card.y + 246, UI_PX_BODY, datebuf, EPD_DRAW_ALIGN_CENTER, false);
 
         const pmu_snapshot_t *p = read_pico_pmu_get();
-        char line[80];
+        char line[128];
         snprintf(line, sizeof(line), "电量 %u%%  ·  累计阅读 %lu 分钟  ·  已完成 %d 次",
                  p && p->status_ok ? (unsigned)(p->soc_permille / 10) : 0u,
                  (unsigned long)(reading_stats_total_seconds() / 60),
@@ -132,7 +132,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     } else {
         int64_t left = s_end - esp_timer_get_time() / 1000000;
         if (left < 0) left = 0;
-        char value[64];
+        char value[96];
         snprintf(value, sizeof(value), "%02lld:%02lld",
                  (long long)(left / 60), (long long)(left % 60));
         ui_text_vc(fb, cx, UI_CONTENT_TOP + 230, UI_PX_HERO, value,
