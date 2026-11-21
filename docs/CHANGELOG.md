@@ -1,5 +1,14 @@
 # 版本变更 / Changelog
 
+## v0.1.21 · 2026-11-21
+
+- 配套客户端局域网接口（`api_version: 2`）：扩充 `GET /info`（固件版本、双存储余量、能力开关与缓存电池状态），新增锁屏图片管理（`GET/PUT/DELETE /screensaver`）、手写便签同步（`GET/DELETE /sketches`）、设备设置读写（`GET/PATCH /settings`）、空闲切换上传存储目标（`POST /storage`）、手机一键对时与时区同步（`GET/POST /time`）、字体列举/删除/切换（`GET/DELETE/POST /fonts`）以及个人看板文字与阅读统计（`GET/PUT/DELETE /dashboard`）。
+  Companion LAN APIs (`api_version: 2`): expand `GET /info` (firmware version, dual-storage capacity, capability flags and cached battery status), and add lock-screen image management (`GET/PUT/DELETE /screensaver`), sketch sync (`GET/DELETE /sketches`), device settings (`GET/PATCH /settings`), idle storage switching (`POST /storage`), phone time/timezone sync (`GET/POST /time`), font listing/deletion/selection (`GET/DELETE/POST /fonts`), and dashboard note/reading stats (`GET/PUT/DELETE /dashboard`).
+- 局域网安全、发现与 OTA 增强：mDNS `_http._tcp` 广播 `device` / `api` / `ver` / `mac` / `pin` TXT 记录；传书页展示会话 6 位随机配对码并新增可选强制鉴权开关（`POST /auth/verify` 与 `X-Pico-Pin` 校验）；`PUT /ota` 支持可选 `X-Pico-SHA256` 端到端校验、屏幕实时进度展示并消除 HTTPD 线程 I2C 竞争。
+  LAN security, discovery & OTA improvements: publish `device` / `api` / `ver` / `mac` / `pin` mDNS TXT records; show a 6-digit session PIN on the Transfer page with optional enforcement (`POST /auth/verify` and `X-Pico-Pin`); add optional `X-Pico-SHA256` verification, live on-screen progress, and race-free cached PMU battery checks to `PUT /ota`.
+- 发布产物补全：发布流水线现同步上传 `pico-os-merged.bin`、`pico-os-app.bin` 与 `pico-os-app.bin.sha256`，同时支持浏览器 USB 刷机与 Wi-Fi / 局域网 OTA 升级。
+  Release artifacts: publish `pico-os-app.bin` and `pico-os-app.bin.sha256` alongside `pico-os-merged.bin` so both browser USB flashing and Wi-Fi / LAN OTA updates work out of the box.
+
 ## v0.1.20 · 2026-11-21
 
 - 桌面与应用菜单：将“小纸 Pico 宫格桌面”加入一级菜单首位，并在应用菜单底栏新增“回桌面”按钮，可从任意页直接返回开机宫格首页。
