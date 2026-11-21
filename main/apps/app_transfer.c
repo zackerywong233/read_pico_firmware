@@ -217,8 +217,10 @@ static size_t transfer_webmarks_list(read_pico_webmark_t* out, size_t cap, void*
     web_bookmarks_load(items, &count);
     if (count > cap) count = cap;
     for (size_t i = 0; i < count; ++i) {
-        snprintf(out[i].title, sizeof(out[i].title), "%s", items[i].title);
-        snprintf(out[i].url, sizeof(out[i].url), "%s", items[i].url);
+        snprintf(out[i].title, sizeof(out[i].title), "%.*s",
+                 (int)(sizeof(out[i].title) - 1), items[i].title);
+        snprintf(out[i].url, sizeof(out[i].url), "%.*s",
+                 (int)(sizeof(out[i].url) - 1), items[i].url);
     }
     return count;
 }

@@ -817,7 +817,8 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
                 for (size_t row = 0; row < 6 && first + row < s_bookmark_count; ++row) {
                     EpdRect rect = ui_grid_rect(0, 1, (int)row, UI_CONTENT_TOP, 104);
                     if (!ui_rect_hit(rect, event->x, event->y)) continue;
-                    snprintf(s_draft, sizeof(s_draft), "%s", s_bookmarks[first + row].url);
+                    snprintf(s_draft, sizeof(s_draft), "%.*s",
+                             (int)(sizeof(s_draft) - 1), s_bookmarks[first + row].url);
                     if (!start_fetch()) snprintf(s_notice, sizeof(s_notice), "无法开始加载网页");
                     changed = true; break;
                 }
@@ -854,7 +855,8 @@ void app_web_queue_url(const char *url) {
         s_queued_url[0] = '\0';
         return;
     }
-    snprintf(s_queued_url, sizeof(s_queued_url), "%s", url);
+    snprintf(s_queued_url, sizeof(s_queued_url), "%.*s",
+             (int)(sizeof(s_queued_url) - 1), url);
 }
 
 const app_desc_t app_web = {

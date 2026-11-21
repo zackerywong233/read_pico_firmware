@@ -2,9 +2,9 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * 中文：网页收藏夹 NVS 读写实现（命名空间 rp_web）。
+ * 中文：网页收藏夹 NVS 读写实现（命名空间 read_pico）。
  *
- * English: NVS load/store implementation for web bookmarks (namespace rp_web).
+ * English: NVS load/store implementation for web bookmarks (namespace read_pico).
  */
 #include "web_bookmarks.h"
 
@@ -93,7 +93,8 @@ esp_err_t web_bookmarks_upsert(const char *title, const char *url) {
 
     size_t idx = web_bookmark_find(items, count, url);
     if (idx < count) {
-        snprintf(items[idx].title, sizeof(items[idx].title), "%s", clean_title);
+        snprintf(items[idx].title, sizeof(items[idx].title), "%.*s",
+                 (int)(sizeof(items[idx].title) - 1), clean_title);
     } else {
         if (!web_bookmark_add(items, &count, clean_title, url)) {
             return count >= WEB_BOOKMARK_MAX ? ESP_ERR_NO_MEM : ESP_ERR_INVALID_ARG;

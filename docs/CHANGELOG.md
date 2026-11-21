@@ -1,6 +1,6 @@
 # 版本变更 / Changelog
 
-## v0.1.23 · 2026-11-22
+## v0.1.24 · 2026-11-22
 
 - 轻量蓝牙控制通道（BLE / NimBLE）：新增独立 `read_pico_ble` 组件与 `ble_service` 桥接层（仅外设单连接、PSRAM 缓冲、Wi-Fi/BLE 软件共存），面向 iOS CoreBluetooth 配套应用提供 `ReadPico-XXXX` 广播与状态信标、标准 DIS (`0x180A`) / BAS (`0x180F`) 以及自定义控制 GATT 服务（支持单包裸 JSON 与 4 KB 分包重组）。
   Lightweight BLE companion channel (NimBLE): add standalone `read_pico_ble` component and `ble_service` bridge (peripheral-only single link, PSRAM allocation, Wi-Fi/BLE software coexistence) exposing `ReadPico-XXXX` advertising/status beacon, standard DIS (`0x180A`) / BAS (`0x180F`), and custom companion GATT service with raw JSON and 4 KB chunked framing for iOS CoreBluetooth apps.

@@ -18,13 +18,13 @@
 
 typedef struct { char title[WEB_BOOKMARK_TITLE_MAX]; char url[WEB_BOOKMARK_URL_MAX]; } web_bookmark_t;
 
-static size_t web_bookmark_find(const web_bookmark_t items[WEB_BOOKMARK_MAX], size_t count, const char *url) {
+static inline size_t web_bookmark_find(const web_bookmark_t items[WEB_BOOKMARK_MAX], size_t count, const char *url) {
     for (size_t i = 0; i < count && i < WEB_BOOKMARK_MAX; ++i)
         if (!strcmp(items[i].url, url)) return i;
     return WEB_BOOKMARK_MAX;
 }
 
-static bool web_bookmark_add(web_bookmark_t items[WEB_BOOKMARK_MAX], size_t *count, const char *title, const char *url) {
+static inline bool web_bookmark_add(web_bookmark_t items[WEB_BOOKMARK_MAX], size_t *count, const char *title, const char *url) {
     if (!items || !count || !title || !url || *count >= WEB_BOOKMARK_MAX ||
         strlen(title) >= WEB_BOOKMARK_TITLE_MAX || strlen(url) >= WEB_BOOKMARK_URL_MAX ||
         web_bookmark_find(items, *count, url) != WEB_BOOKMARK_MAX) return false;
@@ -33,7 +33,7 @@ static bool web_bookmark_add(web_bookmark_t items[WEB_BOOKMARK_MAX], size_t *cou
     return true;
 }
 
-static bool web_bookmark_remove(web_bookmark_t items[WEB_BOOKMARK_MAX], size_t *count, const char *url) {
+static inline bool web_bookmark_remove(web_bookmark_t items[WEB_BOOKMARK_MAX], size_t *count, const char *url) {
     if (!items || !count || !url) return false;
     size_t index = web_bookmark_find(items, *count, url);
     if (index == WEB_BOOKMARK_MAX) return false;

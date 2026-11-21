@@ -405,8 +405,10 @@ static void check_and_push_transfer_event(const app_desc_t *current) {
     s_last_tr_net_ready = tr.network_ready;
     s_last_tr_pin_req = tr.pin_required;
     s_last_tr_err = tr.last_error;
-    snprintf(s_last_tr_url, sizeof(s_last_tr_url), "%s", tr.url);
-    snprintf(s_last_tr_ssid, sizeof(s_last_tr_ssid), "%s", ssid);
+    snprintf(s_last_tr_url, sizeof(s_last_tr_url), "%.*s",
+             (int)(sizeof(s_last_tr_url) - 1), tr.url);
+    snprintf(s_last_tr_ssid, sizeof(s_last_tr_ssid), "%.*s",
+             (int)(sizeof(s_last_tr_ssid) - 1), ssid);
 
     refresh_cached_status(current, true);
 
@@ -519,7 +521,8 @@ static bool atomic_write_text_file(const char *path, const char *data, size_t le
 static bool pick_unique_clip_path(const char *root, const char *base_name, bool overwrite,
                                   char final_name[READ_PICO_BLE_CLIP_NAME_MAX],
                                   char full_path[288]) {
-    snprintf(final_name, READ_PICO_BLE_CLIP_NAME_MAX, "%s", base_name);
+    snprintf(final_name, READ_PICO_BLE_CLIP_NAME_MAX, "%.*s",
+             READ_PICO_BLE_CLIP_NAME_MAX - 1, base_name);
     if (snprintf(full_path, 288, "%s/%s", root, final_name) >= 288) return false;
     struct stat st;
     if (overwrite || stat(full_path, &st) != 0) return true;
