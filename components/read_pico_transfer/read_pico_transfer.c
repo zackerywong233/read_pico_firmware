@@ -873,6 +873,7 @@ static uint8_t choose_saved_network(const transfer_credentials_t *saved) {
     if (esp_wifi_set_storage(WIFI_STORAGE_RAM) != ESP_OK || esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK ||
         esp_wifi_start() != ESP_OK) goto done;
     started = true;
+    (void)esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
     wifi_scan_config_t scan = {.show_hidden = false, .scan_type = WIFI_SCAN_TYPE_ACTIVE,
         .scan_time.active = {.min = 100, .max = 150}};
     if (esp_wifi_scan_start(&scan, true) != ESP_OK) goto done;
@@ -1068,29 +1069,56 @@ esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PIC
     memset(out, 0, sizeof(*out) * READ_PICO_TRANSFER_SCAN_MAX); *count = 0;
     read_pico_transfer_status_t status;
     read_pico_transfer_get_status(&status);
-    if (s_wifi || s_ota_wifi || s_http || s_netif || status.state != READ_PICO_TRANSFER_STOPPED) return ESP_ERR_INVALID_STATE;
+    if (s_wifi || s_ota_wifi || s_http || s_netif ||
+        (status.state != READ_PICO_TRANSFER_STOPPED && status.state != READ_PICO_TRANSFER_ERROR)) {
+        ESP_LOGW("transfer", "wifi scan rejected: state=%d wifi=%d ota=%d http=%d netif=%d",
+                 (int)status.state, (int)s_wifi, (int)s_ota_wifi, s_http != NULL, s_netif != NULL);
+        return ESP_ERR_INVALID_STATE;
+    }
+    const char *stage = "netif";
     bool loop_owned = false, initialized = false, started = false;
     esp_err_t err = esp_netif_init();
-    if (err != ESP_OK) return err;
+    if (err != ESP_OK) goto log_only;
+    stage = "loop";
     err = esp_event_loop_create_default();
     if (err == ESP_OK) loop_owned = true;
-    else if (err != ESP_ERR_INVALID_STATE) return err;
+    else if (err != ESP_ERR_INVALID_STATE) goto log_only;
+    stage = "wifi_init";
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     err = esp_wifi_init(&init); if (err != ESP_OK) goto cleanup;
     initialized = true;
+    stage = "storage";
     err = esp_wifi_set_storage(WIFI_STORAGE_RAM); if (err != ESP_OK) goto cleanup;
+    stage = "mode";
     err = esp_wifi_set_mode(WIFI_MODE_STA); if (err != ESP_OK) goto cleanup;
     // 仅驱动扫描，不创建STA网络接口或注册自动连接回调。/ Driver-only scan: no STA netif or automatic-connect callback.
+    stage = "start";
     err = esp_wifi_start(); if (err != ESP_OK) goto cleanup;
     started = true;
+    // 启用最小调制解调器休眠，满足 Wi-Fi/BLE 软件共存要求。
+    // Keep minimum modem sleep enabled as required by Wi-Fi/BLE software coexistence.
+    (void)esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+    stage = "scan_start";
     wifi_scan_config_t scan = {.show_hidden = false, .scan_type = WIFI_SCAN_TYPE_ACTIVE,
         .scan_time.active = {.min = 100, .max = 200}};
-    err = esp_wifi_scan_start(&scan, true); if (err != ESP_OK) goto cleanup;
+    err = esp_wifi_scan_start(&scan, true);
+    if (err == ESP_ERR_WIFI_STATE || err == ESP_ERR_TIMEOUT) {
+        ESP_LOGW("transfer", "wifi scan transient err=%s, retrying once", esp_err_to_name(err));
+        vTaskDelay(pdMS_TO_TICKS(120));
+        err = esp_wifi_scan_start(&scan, true);
+    }
+    if (err != ESP_OK) goto cleanup;
+    stage = "ap_num";
     uint16_t found = 0;
     err = esp_wifi_scan_get_ap_num(&found); if (err != ESP_OK) goto cleanup;
+    stage = "ap_record";
     for (uint16_t i = 0; i < found; ++i) {
         wifi_ap_record_t ap;
-        err = esp_wifi_scan_get_ap_record(&ap); if (err != ESP_OK) goto cleanup;
+        err = esp_wifi_scan_get_ap_record(&ap);
+        // ESP_FAIL 表示扫描结果链表已取尽，不再视为整次扫描失败。
+        // ESP_FAIL indicates the scan AP list is exhausted; stop reading instead of failing the whole scan.
+        if (err == ESP_FAIL) { err = ESP_OK; break; }
+        if (err != ESP_OK) goto cleanup;
         read_pico_transfer_network_t item = {.rssi = ap.rssi, .authmode = (uint8_t)ap.authmode,
             .requires_password = ap.authmode != WIFI_AUTH_OPEN && ap.authmode != WIFI_AUTH_OWE};
         memcpy(item.ssid, ap.ssid, sizeof(item.ssid) - 1);
@@ -1099,22 +1127,38 @@ esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PIC
             ap.authmode == WIFI_AUTH_WPA2_WPA3_PSK;
         scan_offer(out, count, &item);
     }
+    stage = "ok";
 cleanup:
-    if (started) { esp_wifi_scan_stop(); esp_wifi_clear_ap_list(); }
     if (started) {
+        (void)esp_wifi_scan_stop();
+        (void)esp_wifi_clear_ap_list();
         esp_err_t stop_err = esp_wifi_stop();
-        if (err == ESP_OK && stop_err != ESP_OK) err = stop_err;
+        if (stop_err != ESP_OK) {
+            ESP_LOGW("transfer", "wifi scan cleanup stop=%s", esp_err_to_name(stop_err));
+        }
     }
     if (initialized) {
         esp_err_t deinit_err = esp_wifi_deinit();
-        if (err == ESP_OK && deinit_err != ESP_OK) err = deinit_err;
+        if (deinit_err != ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            deinit_err = esp_wifi_deinit();
+        }
+        if (deinit_err != ESP_OK) {
+            ESP_LOGW("transfer", "wifi scan cleanup deinit=%s", esp_err_to_name(deinit_err));
+        }
     }
     if (loop_owned) {
         esp_err_t loop_err = esp_event_loop_delete_default();
-        if (err == ESP_OK && loop_err != ESP_OK) err = loop_err;
+        if (loop_err != ESP_OK) {
+            ESP_LOGW("transfer", "wifi scan cleanup loop_del=%s", esp_err_to_name(loop_err));
+        }
     }
+log_only:
     if (err != ESP_OK) { memset(out, 0, sizeof(*out) * READ_PICO_TRANSFER_SCAN_MAX); *count = 0; }
-    ESP_LOGI("transfer", "wifi scan result=%s count=%u", esp_err_to_name(err), (unsigned)*count);
+    ESP_LOGI("transfer", "wifi scan stage=%s result=%s count=%u internal_free=%u internal_largest=%u",
+             stage, esp_err_to_name(err), (unsigned)*count,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     return err;
 }
 
@@ -3565,8 +3609,20 @@ void read_pico_transfer_stop(void) {
         s_cfg.network_stop_cb();
     stop_mdns();
     if (s_http) { httpd_stop(s_http); s_http = NULL; }
-    if (s_started) { esp_wifi_stop(); s_started = false; }
-    if (s_wifi) { esp_wifi_deinit(); s_wifi = false; }
+    if (s_started) {
+        esp_err_t stop_err = esp_wifi_stop();
+        if (stop_err != ESP_OK) ESP_LOGW("transfer", "transfer stop wifi_stop=%s", esp_err_to_name(stop_err));
+        s_started = false;
+    }
+    if (s_wifi) {
+        esp_err_t deinit_err = esp_wifi_deinit();
+        if (deinit_err != ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            deinit_err = esp_wifi_deinit();
+        }
+        if (deinit_err != ESP_OK) ESP_LOGW("transfer", "transfer stop wifi_deinit=%s", esp_err_to_name(deinit_err));
+        s_wifi = false;
+    }
     if (s_netif) { esp_netif_destroy_default_wifi(s_netif); s_netif = NULL; }
     if (s_loop_owned) { esp_event_loop_delete_default(); s_loop_owned = false; }
     free(s_buffer); s_buffer = NULL;

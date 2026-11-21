@@ -167,7 +167,28 @@ int main(void) {
     test_scan_error = ESP_FAIL;
     tap(&ctx, network_control_rect(8));
     network_ui_tick(&ctx);
-    assert(!s_network_count && s_network_message[0]);
+    assert(!s_network_count && strstr(s_network_message, "FFFF") != NULL);
+    // 蓝牙未连接时直接暂停并恢复；已连接时共存失败后自动暂停 BLE 重试并恢复。
+    // Idle BLE pauses/resumes around scan; connected BLE retries with a brief pause after a coex failure.
+    test_scan_error = ESP_OK;
+    test_scan_count = 3;
+    test_ble_connected = false;
+    test_ble_suspended = false;
+    int susp_before = test_ble_suspend_calls, res_before = test_ble_resume_calls;
+    test_scan_fail_when_ble_active = true;
+    tap(&ctx, network_control_rect(8));
+    network_ui_tick(&ctx);
+    assert(s_network_count == 3 && !s_network_message[0]);
+    assert(test_ble_suspend_calls == susp_before + 1 && test_ble_resume_calls == res_before + 1 && !test_ble_suspended);
+    test_ble_connected = true;
+    susp_before = test_ble_suspend_calls; res_before = test_ble_resume_calls;
+    int scans_before = test_scan_calls;
+    tap(&ctx, network_control_rect(8));
+    network_ui_tick(&ctx);
+    assert(s_network_count == 3 && test_scan_calls == scans_before + 2);
+    assert(test_ble_suspend_calls == susp_before + 1 && test_ble_resume_calls == res_before + 1 && !test_ble_suspended);
+    test_ble_connected = false;
+    test_scan_fail_when_ble_active = false;
     tap(&ctx, network_control_rect(6));
     assert(s_view == TRANSFER_HOME && s_start_pending && s_mode == READ_PICO_TRANSFER_MODE_STA);
     int stops_before = test_stop_count;

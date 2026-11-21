@@ -34,6 +34,8 @@ void app_ble_get_pin(char out[7]);
 void app_ble_suspend(void);
 /// 浅睡唤醒后按 NVS 设置恢复 NimBLE 广播。/ Resume NimBLE advertising after light-sleep wake if enabled in NVS.
 void app_ble_resume(void);
+/// 返回当前是否有蓝牙配套客户端处于连接态。/ Return true when a BLE companion peer is currently connected.
+bool app_ble_is_connected(void);
 /// 主循环后台轮询：消费挂起的 BLE 指令并推送状态/电量通知；有远程活动时返回 true。
 /// Main-loop background poll: process pending BLE commands and push status/battery notifications; returns true on remote activity.
 bool app_ble_poll(app_ctx_t *ctx, const app_desc_t *current, bool menu_open);

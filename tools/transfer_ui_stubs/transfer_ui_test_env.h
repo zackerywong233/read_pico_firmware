@@ -211,8 +211,13 @@ static bool test_busy;
 static int test_save_error;
 static int test_forget_count, test_forget_error;
 static bool test_configured = true;
-static int test_scan_error, test_save_count;
+static int test_scan_error, test_save_count, test_scan_calls;
 static size_t test_scan_count = 8;
+static bool test_ble_connected, test_ble_suspended, test_scan_fail_when_ble_active;
+static int test_ble_suspend_calls, test_ble_resume_calls;
+static inline bool app_ble_is_connected(void) { return test_ble_connected && !test_ble_suspended; }
+static inline void app_ble_suspend(void) { test_ble_suspended = true; ++test_ble_suspend_calls; }
+static inline void app_ble_resume(void) { test_ble_suspended = false; ++test_ble_resume_calls; }
 static char test_saved_ssid[33];
 static inline bool read_pico_transfer_try_stop_if_idle(void) {return !test_busy;}
 static int test_stop_count;
@@ -224,7 +229,7 @@ static inline int read_pico_transfer_start(const read_pico_transfer_cfg_t* c) {t
 static inline void read_pico_transfer_service_poll(void) {}
 static inline int read_pico_transfer_save_wifi(const char* s,const char* p) {(void)p;test_save_count++;snprintf(test_saved_ssid,33,"%s",s);return test_save_error;}
 static inline int read_pico_transfer_forget_wifi_ssid(const char* s) {(void)s;test_forget_count++;return test_forget_error;}
-static inline int read_pico_transfer_scan_wifi(read_pico_transfer_network_t* out,size_t* count) {*count=test_scan_error?0:test_scan_count;for(size_t i=0;i<*count;i++){out[i]=(read_pico_transfer_network_t){.supported=true,.requires_password=true};snprintf(out[i].ssid,33,"network%u",(unsigned)i);}if(*count)snprintf(out[0].ssid,33,"中文家庭网络");return test_scan_error;}
+static inline int read_pico_transfer_scan_wifi(read_pico_transfer_network_t* out,size_t* count) {++test_scan_calls;int err=(test_scan_fail_when_ble_active && !test_ble_suspended)?ESP_FAIL:test_scan_error;*count=err?0:test_scan_count;for(size_t i=0;i<*count;i++){out[i]=(read_pico_transfer_network_t){.supported=true,.requires_password=true};snprintf(out[i].ssid,33,"network%u",(unsigned)i);}if(*count)snprintf(out[0].ssid,33,"中文家庭网络");return err;}
 static int test_qr_encodes;
 static bool test_qr_failure;
 static char test_qr_payload[128];

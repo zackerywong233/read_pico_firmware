@@ -1641,6 +1641,13 @@ void app_ble_resume(void) {
     if (s_initialized && app_settings_ble_enabled()) start_ble_internal();
 }
 
+bool app_ble_is_connected(void) {
+    if (!read_pico_ble_is_running()) return false;
+    read_pico_ble_status_t st = {0};
+    read_pico_ble_get_status(&st);
+    return st.peer_connected;
+}
+
 bool app_ble_poll(app_ctx_t *ctx, const app_desc_t *current, bool menu_open) {
     (void)menu_open;
     if (!s_initialized || s_suspended) return false;

@@ -37,6 +37,7 @@
 #include "app.h"
 #include "app_focus.h"
 #include "app_web.h"
+#include "ble_service.h"
 #include "reading_stats.h"
 #include "settings.h"
 #include "time_sync.h"
@@ -481,10 +482,25 @@ static app_redraw_t network_ui_tick(app_ctx_t* ctx) {
     if (s_view != TRANSFER_NETWORKS || s_forget_confirm || !s_scan_pending || ctx->consumed) return APP_REDRAW_NONE;
     s_scan_pending = false;
     s_network_count = s_network_page = 0;
+    // 无蓝牙连接时先暂停 BLE 释放内部内存与无线电；有连接时优先共存扫描，失败后再短暂暂停重扫一次。
+    // Pause idle BLE before scanning to free internal RAM and radio; when connected, try coex first and fall back to a brief pause on error.
+    bool paused_ble = false;
+    if (!app_ble_is_connected()) {
+        app_ble_suspend();
+        paused_ble = true;
+    }
     esp_err_t err = read_pico_transfer_scan_wifi(s_networks, &s_network_count);
+    if (err != ESP_OK && !paused_ble) {
+        app_ble_suspend();
+        paused_ble = true;
+        s_network_count = 0;
+        err = read_pico_transfer_scan_wifi(s_networks, &s_network_count);
+    }
+    if (paused_ble) app_ble_resume();
     if (err != ESP_OK) {
         s_network_count = 0;
-        snprintf(s_network_message, sizeof(s_network_message), "扫描失败，请点重新扫描");
+        snprintf(s_network_message, sizeof(s_network_message), "扫描失败(%04X)，请重扫",
+                 (unsigned)(err & 0xFFFF));
     }
     else if (!s_network_count) snprintf(s_network_message, sizeof(s_network_message), "未发现网络，请靠近路由器后重扫");
     else s_network_message[0] = 0;
