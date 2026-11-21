@@ -1663,6 +1663,11 @@ bool app_ble_poll(app_ctx_t *ctx, const app_desc_t *current, bool menu_open) {
         return false;
     }
 
+    if (ota_is_busy()) {
+        if (running) stop_ble_internal();
+        return false;
+    }
+
     if (want_enabled && !running && !s_start_failed) {
         start_ble_internal();
         return false;

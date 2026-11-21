@@ -1,5 +1,12 @@
 # 版本变更 / Changelog
 
+## v0.1.25 · 2026-11-22
+
+- Wi-Fi OTA 检查与可靠性修复：当 `api.github.com` 限流（HTTP 403/429）或异常时，自动回退通过 `github.com/.../releases/latest` 302 跳转获取最新版本号并拉取 `.sha256` 校验文件；细化屏幕与串口错误原因（区分未配置 Wi-Fi、超时、限流、HTTP 状态与连接错误）；修复重定向上下文 `rctx` 在 HTTPS 读取完成前被释放的生命周期隐患；OTA 联网期间由主循环自动暂停 BLE 并在结束后恢复，避免无线电与内存竞争。
+  Wi-Fi OTA check & reliability fixes: automatically fall back to the `github.com/.../releases/latest` 302 redirect plus `.sha256` checksum download when `api.github.com` is rate-limited (HTTP 403/429) or fails; surface specific on-screen and serial error causes (missing Wi-Fi, timeout, rate limit, HTTP status, connect failure); fix redirect context `rctx` lifetime so it outlives the active HTTPS client; pause BLE on the main loop during active OTA checks/downloads and resume automatically afterward.
+- 传书双存储入参修复：解除 `read_pico_transfer_start()` 对 `is_flash = true` 与 `font_dir` / `sd_root` 并存的拒绝，确保挂载 TF 卡同时切换图书上传至内置 Flash 时传书服务正常启动；同时修正该模式下 TF 字体上传改按 TF 卡可用空间校验。
+  Transfer dual-storage fix: allow `read_pico_transfer_start()` to accept `is_flash = true` together with mounted TF card `font_dir` and `sd_root`, and check TF card free space when uploading fonts while book uploads target internal Flash.
+
 ## v0.1.24 · 2026-11-22
 
 - 轻量蓝牙控制通道（BLE / NimBLE）：新增独立 `read_pico_ble` 组件与 `ble_service` 桥接层（仅外设单连接、PSRAM 缓冲、Wi-Fi/BLE 软件共存），面向 iOS CoreBluetooth 配套应用提供 `ReadPico-XXXX` 广播与状态信标、标准 DIS (`0x180A`) / BAS (`0x180F`) 以及自定义控制 GATT 服务（支持单包裸 JSON 与 4 KB 分包重组）。

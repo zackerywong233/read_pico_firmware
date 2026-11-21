@@ -2312,8 +2312,14 @@ static esp_err_t upload_handler(httpd_req_t *req) {
     portEXIT_CRITICAL(&s_lock);
     int64_t started = esp_timer_get_time();
     ESP_LOGI("transfer", "receive name=%s bytes=%u", name, (unsigned)req->content_len);
+    uint64_t free_bytes = s_cfg.free_bytes_cb(s_cfg.free_bytes_ctx);
+    if (font && s_cfg.storage_info_cb) {
+        read_pico_storage_info_t storage = {0};
+        if (s_cfg.storage_info_cb(&storage, s_cfg.storage_ctx) && storage.sd_available)
+            free_bytes = storage.sd_free_bytes;
+    }
     file_result_t result = upload_managed(path, part, req->content_len, font ? TRANSFER_FONT_MAX : s_cfg.file_limit,
-        s_cfg.free_bytes_cb(s_cfg.free_bytes_ctx), overwrite, s_buffer, 16384, receive_http, req, upload_progress,
+        free_bytes, overwrite, s_buffer, 16384, receive_http, req, upload_progress,
         font ? NULL : s_cfg.file_changed_cb);
     portENTER_CRITICAL(&s_lock);
     s_upload_active = false;
@@ -3564,6 +3570,7 @@ void read_pico_transfer_stop(void) {
     if (s_netif) { esp_netif_destroy_default_wifi(s_netif); s_netif = NULL; }
     if (s_loop_owned) { esp_event_loop_delete_default(); s_loop_owned = false; }
     free(s_buffer); s_buffer = NULL;
+    s_font_root[0] = 0;
     s_sd_root[0] = 0;
     portENTER_CRITICAL(&s_lock);
     s_status.state = READ_PICO_TRANSFER_STOPPED; s_status.sta_count = 0;
@@ -3575,8 +3582,8 @@ void read_pico_transfer_stop(void) {
 
 esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     if (!cfg || !cfg->root_dir || !cfg->free_bytes_cb || strlen(cfg->root_dir) >= sizeof(s_root) ||
-        (cfg->font_dir && (cfg->is_flash || !cfg->font_dir[0] || strlen(cfg->font_dir) >= sizeof(s_font_root))) ||
-        (cfg->sd_root && (cfg->is_flash || !cfg->sd_root[0] || strlen(cfg->sd_root) >= sizeof(s_sd_root))) ||
+        (cfg->font_dir && (!cfg->font_dir[0] || strlen(cfg->font_dir) >= sizeof(s_font_root))) ||
+        (cfg->sd_root && (!cfg->sd_root[0] || strlen(cfg->sd_root) >= sizeof(s_sd_root))) ||
         (cfg->mode != READ_PICO_TRANSFER_MODE_AP && cfg->mode != READ_PICO_TRANSFER_MODE_STA)) return ESP_ERR_INVALID_ARG;
     if (s_wifi || s_netif || s_http || s_ota_wifi) return ESP_ERR_INVALID_STATE;
     s_cfg = *cfg; strcpy(s_root, cfg->root_dir); s_cfg.root_dir = s_root;
