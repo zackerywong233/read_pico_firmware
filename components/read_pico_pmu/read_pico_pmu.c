@@ -712,10 +712,10 @@ esp_err_t read_pico_pmu_init(i2c_master_bus_handle_t bus_handle, const read_pico
         pmu_power_name(s_snap.power_state)
     );
     if (s_snap.fw_major != PMU_FW_MAJOR ||
-        s_snap.fw_minor != PMU_FW_MINOR ||
-        s_snap.fw_patch < PMU_FW_PATCH) {
+        s_snap.fw_minor < PMU_FW_MINOR ||
+        (s_snap.fw_minor == PMU_FW_MINOR && s_snap.fw_patch < PMU_FW_PATCH)) {
         ESP_LOGW(
-            TAG, "CW32 fw %u.%u.%u older than host expect %u.%u.%u",
+            TAG, "CW32 fw %u.%u.%u incompatible with host minimum %u.%u.%u",
             s_snap.fw_major, s_snap.fw_minor, s_snap.fw_patch,
             PMU_FW_MAJOR, PMU_FW_MINOR, PMU_FW_PATCH
         );

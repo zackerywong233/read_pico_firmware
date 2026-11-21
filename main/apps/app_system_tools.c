@@ -61,6 +61,8 @@ static const tool_item_t s_tools[] = {
 #define TOOLS_COUNT ((int)(sizeof(s_tools) / sizeof(s_tools[0])))
 static int s_focus;
 static int s_page;
+static int s_prev_focus;
+static int s_prev_page;
 
 static EpdRect tile_rect(int index) {
     const int local = index % TOOLS_PER_PAGE;
@@ -77,6 +79,7 @@ static void draw_tile(uint8_t* fb, int index, bool focused) {
 }
 
 static void render(app_ctx_t* ctx, uint8_t* fb) {
+    (void)ctx;
     if (!ttf_font_ready()) {
         ui_draw_no_font_page(fb, false, false);
         return;
@@ -129,6 +132,8 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
 
 static app_redraw_t on_key(app_ctx_t* ctx, int key) {
     if (key == UI_KEY_1) {
+        s_prev_focus = s_focus;
+        s_prev_page = s_page;
         if (++s_focus >= TOOLS_PER_PAGE) {
             s_focus = 0;
             s_page = (s_page + 1) % TOOLS_PAGE_COUNT;
@@ -148,6 +153,13 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
 
 static app_redraw_t on_key_long(app_ctx_t* ctx, int key) {
     (void)ctx;
+    // KEY2 短按已打开工具页，长按 KEY1 恢复原焦点并触发整屏 GC16 强刷。
+    // KEY2 short press opens a tool, so long-press KEY1 restores focus and forces full GC16.
+    if (key == UI_KEY_1) {
+        s_focus = s_prev_focus;
+        s_page = s_prev_page;
+        return APP_REDRAW_FULL;
+    }
     return key == UI_KEY_2 ? APP_REDRAW_FULL : APP_REDRAW_NONE;
 }
 
@@ -155,6 +167,8 @@ static void on_enter(app_ctx_t* ctx) {
     (void)ctx;
     if (s_page < 0 || s_page >= TOOLS_PAGE_COUNT) s_page = 0;
     if (s_focus < 0 || s_focus >= TOOLS_PER_PAGE) s_focus = 0;
+    s_prev_page = s_page;
+    s_prev_focus = s_focus;
 }
 
 const app_desc_t app_system_tools = {

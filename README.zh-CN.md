@@ -83,7 +83,7 @@ CI 使用 `sdkconfig.ci` 换回默认时序，仅验证能否编译通过，见
 
 图书阅读三键 KEY1 / KEY2 / KEY3 对应上一页 / 工具条 / 下一页；底部进度条可直接点按跳转，跨章节会自动补排到目标页。工具条提供强刷、书签和摘录；笔记保存在图书旁的隐藏数据目录，每本书不设条目数或摘录长度上限，实际受存储空间和内存限制。点条目返回原文，删除前会确认。摘录也会更新看板可用的最近摘录。长按中键约 500 ms 可打开应用菜单。其他页面仍为 KEY2 整屏 GC16、KEY3 菜单。菜单项抬起提交，滑出可取消。
 
-开机默认进入“我的看板”。在“看板与屏保”中开关日期、电量、最近阅读和个人信息卡片，并选择默认图案、最近摘录或 TF 卡图片作为锁屏内容。将最多 4 行 UTF-8 文字放入 TF 卡根目录 `dashboard.txt`；自有屏保图片命名为 `screensaver.jpg` 或 `screensaver.png`，Agent 投递图片保存为 `agent_screensaver.jpg/png`，均不超过 2 MiB。PMU 时钟已同步时，看板显示 UTC 时间。
+在“我的看板 → 看板与屏保”中可开关日期、电量、最近阅读和个人信息卡片，并选择默认图案、最近摘录或 TF 卡图片作为锁屏内容。将最多 4 行 UTF-8 文字放入 TF 卡根目录 `dashboard.txt`；自有屏保图片命名为 `screensaver.jpg` 或 `screensaver.png`，Agent 投递图片保存为 `agent_screensaver.jpg/png`，均不超过 2 MiB。PMU 时钟已同步时，看板与计划唤醒按所选时区显示时间（默认 UTC+8）。
 
 Agent 消息使用单个 MQTT JSON 对象：文字为 `{"type":"text","title":"标题","text":"正文"}`；图片为 `{"type":"image","url":"https://example.com/image.jpg"}`。Broker、用户名、密码和精确主题在设备显示的本地传书网页配置；密码在设备存储中未加密，网页不会回显。收到图片要求 TF 卡已挂载，并且图片服务器提供可验证的 HTTPS 证书。
 

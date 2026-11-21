@@ -50,6 +50,7 @@
 #define AGENT_IMAGE_MAX (2u * 1024u * 1024u)
 #define AGENT_BODY_PX 44
 #define AGENT_RECV_TIMEOUT_MS 20000
+#define AGENT_IO_TIMEOUT_MS 2000
 #define AGENT_HISTORY_COUNT 20
 
 typedef struct {
@@ -202,19 +203,26 @@ static void image_task(void *arg) {
     char *url = arg;
     agent_download_t download = {0};
     esp_http_client_config_t cfg = {
-        .url = url, .timeout_ms = 1000, .buffer_size = 4096,
+        .url = url, .timeout_ms = AGENT_IO_TIMEOUT_MS, .buffer_size = 4096,
         .crt_bundle_attach = esp_crt_bundle_attach, .disable_auto_redirect = true,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    esp_err_t err = client ? esp_http_client_open(client, 0) : ESP_ERR_NO_MEM;
-    if (err == ESP_OK) (void)esp_http_client_fetch_headers(client);
-    int status = client ? esp_http_client_get_status_code(client) : 0;
     int64_t deadline = esp_timer_get_time() + (int64_t)AGENT_RECV_TIMEOUT_MS * 1000;
+    esp_err_t err = client ? esp_http_client_open(client, 0) : ESP_ERR_NO_MEM;
+    if (err == ESP_OK) {
+        int64_t hdr = esp_http_client_fetch_headers(client);
+        while (hdr == -ESP_ERR_HTTP_EAGAIN && !s_image_cancel && esp_timer_get_time() < deadline) {
+            hdr = esp_http_client_fetch_headers(client);
+        }
+        if (hdr < 0) err = hdr == -ESP_ERR_HTTP_EAGAIN ? ESP_ERR_TIMEOUT : ESP_FAIL;
+    }
+    int status = (client && err == ESP_OK) ? esp_http_client_get_status_code(client) : 0;
     uint8_t chunk[4096];
     while (err == ESP_OK && !s_image_cancel && !download.too_large
            && esp_timer_get_time() < deadline) {
         int n = esp_http_client_read(client, (char *)chunk, sizeof(chunk));
         if (n == 0) break;
+        if (n == -ESP_ERR_HTTP_EAGAIN) continue;
         if (n < 0) { err = ESP_FAIL; break; }
         err = append_image(&download, chunk, (size_t)n);
     }
@@ -734,12 +742,6 @@ static app_redraw_t send_reply_action(int index) {
     return APP_REDRAW_PAGE;
 }
 
-static app_redraw_t on_touch(app_ctx_t *ctx, const cst836u_touch_t *touch) {
-    if (!touch || !ctx->released || !s_action_count || touch->y < UI_CONTENT_BOTTOM - 84) return APP_REDRAW_NONE;
-    int width = ui_content_width() / s_action_count;
-    return send_reply_action((touch->x - UI_MARGIN) / width);
-}
-
 static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) {
     (void)ctx;
     if (s_history_list) {
@@ -822,7 +824,6 @@ const app_desc_t app_agent = {
     .on_exit = agent_on_exit,
     .on_media_lost = on_media_lost,
     .on_tick = on_tick,
-    .on_touch = on_touch,
     .on_gesture = on_gesture,
     .on_key = on_key,
     .on_key_long = on_key_long,

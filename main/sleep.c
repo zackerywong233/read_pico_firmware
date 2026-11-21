@@ -318,12 +318,12 @@ esp_err_t app_enter_host_sleep(app_sleep_mode_t mode) {
     return err;
 }
 
-static uint8_t* load_saver_image(size_t* length) {
+static bool load_saver_image(uint8_t** pixels_out, uint16_t* width_out, uint16_t* height_out) {
     read_pico_sd_info_t sd = {0};
     esp_err_t sd_err = read_pico_sd_get_info(&sd);
     if (!sd.mounted) {
         if (sd_err != ESP_ERR_NOT_FINISHED) (void)read_pico_sd_start_probe();
-        return NULL;
+        return false;
     }
     static const char* paths[] = {
         "/sdcard/agent_screensaver.jpg", "/sdcard/agent_screensaver.png",
@@ -350,7 +350,7 @@ static uint8_t* load_saver_image(size_t* length) {
             continue;
         }
         uint8_t* data = heap_caps_malloc((size_t)size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!data) { fclose(f); return NULL; }
+        if (!data) { fclose(f); return false; }
         size_t got = fread(data, 1, (size_t)size, f);
         fclose(f);
         if (got == (size_t)size) {
@@ -358,24 +358,25 @@ static uint8_t* load_saver_image(size_t* length) {
             uint16_t width = 0, height = 0;
             bool valid = book_image_decode(data, got, 2 * 1024 * 1024,
                                            &pixels, &width, &height);
+            heap_caps_free(data);
+            if (valid && pixels && width && height) {
+                *pixels_out = pixels;
+                *width_out = width;
+                *height_out = height;
+                return true;
+            }
             free(pixels);
-            if (valid && width && height) { *length = got; return data; }
+            continue;
         }
         heap_caps_free(data);
     }
-    return NULL;
+    return false;
 }
 
 static bool draw_saver_image(uint8_t* framebuffer) {
-    size_t encoded_len = 0;
-    uint8_t* encoded = load_saver_image(&encoded_len);
-    if (!encoded) return false;
     uint8_t* pixels = NULL;
     uint16_t image_w = 0, image_h = 0;
-    bool ok = book_image_decode(encoded, encoded_len, 2 * 1024 * 1024,
-                                &pixels, &image_w, &image_h);
-    heap_caps_free(encoded);
-    if (!ok || !pixels || !image_w || !image_h) { free(pixels); return false; }
+    if (!load_saver_image(&pixels, &image_w, &image_h)) return false;
     ui_clear_page(framebuffer);
     const int screen_w = epd_rotated_display_width();
     const int screen_h = epd_rotated_display_height();

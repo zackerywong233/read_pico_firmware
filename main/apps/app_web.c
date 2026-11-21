@@ -53,6 +53,8 @@ extern const app_desc_t app_web;
 #define WEB_URL_MAX 256
 #define WEB_FETCH_MAX (512u * 1024u)
 #define WEB_FETCH_TIMEOUT_MS 20000
+#define WEB_FETCH_IO_TIMEOUT_MS 2000
+#define WEB_FETCH_MAX_REDIRECTS 5
 #define WEB_BODY_PX 48
 #define WEB_KEY_BASE 100
 #define WEB_KEY_COUNT 40
@@ -307,26 +309,56 @@ static esp_err_t append_download(web_download_t *download, const char *data, siz
     return ESP_OK;
 }
 
+static bool is_redirect_status(int status) {
+    return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+}
+
 static esp_err_t fetch_web_page(const char *url, html_text_t *out, bool *truncated) {
     web_download_t download = {0};
     esp_http_client_config_t config = {
         .url = url,
-        .timeout_ms = 1000,
+        .timeout_ms = WEB_FETCH_IO_TIMEOUT_MS,
         .buffer_size = 4096,
+        .buffer_size_tx = 2048,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .disable_auto_redirect = false,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) return ESP_ERR_NO_MEM;
-    esp_err_t err = esp_http_client_open(client, 0);
-    if (err == ESP_OK) (void)esp_http_client_fetch_headers(client);
-    int status = esp_http_client_get_status_code(client);
     int64_t deadline = esp_timer_get_time() + (int64_t)WEB_FETCH_TIMEOUT_MS * 1000;
+    esp_err_t err = ESP_OK;
+    int status = 0;
+    int redirects = 0;
+    while (!s_fetch_cancel && esp_timer_get_time() < deadline) {
+        err = esp_http_client_open(client, 0);
+        if (err != ESP_OK) break;
+        int64_t hdr = esp_http_client_fetch_headers(client);
+        while (hdr == -ESP_ERR_HTTP_EAGAIN && !s_fetch_cancel && esp_timer_get_time() < deadline) {
+            hdr = esp_http_client_fetch_headers(client);
+        }
+        if (hdr < 0) {
+            err = hdr == -ESP_ERR_HTTP_EAGAIN ? ESP_ERR_TIMEOUT : ESP_FAIL;
+            break;
+        }
+        status = esp_http_client_get_status_code(client);
+        if (!is_redirect_status(status)) break;
+        if (redirects >= WEB_FETCH_MAX_REDIRECTS) {
+            err = ESP_ERR_INVALID_RESPONSE;
+            break;
+        }
+        int flushed = 0;
+        (void)esp_http_client_flush_response(client, &flushed);
+        err = esp_http_client_set_redirection(client);
+        esp_http_client_close(client);
+        if (err != ESP_OK) break;
+        ++redirects;
+    }
     char chunk[4096];
     while (err == ESP_OK && !s_fetch_cancel && !download.too_large
            && esp_timer_get_time() < deadline) {
         int n = esp_http_client_read(client, chunk, sizeof(chunk));
         if (n == 0) break;
+        if (n == -ESP_ERR_HTTP_EAGAIN) continue;
         if (n < 0) { err = ESP_FAIL; break; }
         err = append_download(&download, chunk, (size_t)n);
     }
@@ -781,6 +813,7 @@ static bool article_touch(uint16_t x, uint16_t y) {
 static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) {
     (void)ctx;
     if (event->type == UI_GESTURE_TAP) {
+        web_view_t before_view = s_view;
         bool changed = false;
         if (s_view == WEB_EDIT_URL) changed = keyboard_touch(event->x, event->y);
         else if (s_view == WEB_READING) changed = article_touch(event->x, event->y);
@@ -801,8 +834,8 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
         }
         else changed = home_touch(event->x, event->y);
         if (!changed) return APP_REDRAW_NONE;
-        if (s_view == WEB_EDIT_URL && event->x >= UI_MARGIN && event->y >= 200
-            && event->y < 980) {
+        if (before_view == WEB_EDIT_URL && s_view == WEB_EDIT_URL
+            && event->x >= UI_MARGIN && event->y >= 200 && event->y < 1040) {
             render(ctx, ctx->fb);
             return APP_REDRAW_AREA;
         }
@@ -822,7 +855,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
 
 static EpdRect area_hint(app_ctx_t *ctx) {
     (void)ctx;
-    return (EpdRect){UI_MARGIN, 200, ui_content_width(), 780};
+    return (EpdRect){UI_MARGIN, 200, ui_content_width(), 840};
 }
 
 const app_desc_t app_web = {

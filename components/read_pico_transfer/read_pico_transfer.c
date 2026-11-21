@@ -1868,13 +1868,15 @@ bool read_pico_transfer_try_stop_if_idle(void) {
 
 void read_pico_transfer_stop(void) {
     portENTER_CRITICAL(&s_lock); s_stopping = true; portEXIT_CRITICAL(&s_lock);
+    // 先注销事件回调，避免停网回调执行期间再收到 STA 获取 IP 等异步事件。
+    // Unregister event callbacks first so STA IP events cannot race with teardown.
+    if (s_events) { esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, s_events); s_events = NULL; }
+    if (s_ip_events) { esp_event_handler_instance_unregister(IP_EVENT, ESP_EVENT_ANY_ID, s_ip_events); s_ip_events = NULL; }
     if (s_cfg.mode == READ_PICO_TRANSFER_MODE_STA && s_cfg.network_stop_cb)
         s_cfg.network_stop_cb();
     stop_mdns();
     if (s_http) { httpd_stop(s_http); s_http = NULL; }
     if (s_started) { esp_wifi_stop(); s_started = false; }
-    if (s_events) { esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, s_events); s_events = NULL; }
-    if (s_ip_events) { esp_event_handler_instance_unregister(IP_EVENT, ESP_EVENT_ANY_ID, s_ip_events); s_ip_events = NULL; }
     if (s_wifi) { esp_wifi_deinit(); s_wifi = false; }
     if (s_netif) { esp_netif_destroy_default_wifi(s_netif); s_netif = NULL; }
     if (s_loop_owned) { esp_event_loop_delete_default(); s_loop_owned = false; }

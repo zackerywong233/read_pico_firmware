@@ -34,6 +34,7 @@ extern const app_desc_t app_focus;
 
 enum { TILE_BOOKS = 0, TILE_TRANSFER, TILE_WEB, TILE_FOCUS, TILE_SKETCH, TILE_SETTINGS };
 static int s_focus;
+static int s_prev_focus;
 
 static EpdRect tile_rect(int index) {
     return ui_grid_rect(index % 2, 2, index / 2, HOME_TILE_Y, HOME_TILE_H);
@@ -106,6 +107,7 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
 
 static app_redraw_t on_key(app_ctx_t* ctx, int key) {
     if (key == UI_KEY_1) {
+        s_prev_focus = s_focus;
         s_focus = (s_focus + 1) % HOME_TILE_COUNT;
         return APP_REDRAW_PAGE;
     }
@@ -122,14 +124,19 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
 
 static app_redraw_t on_key_long(app_ctx_t* ctx, int key) {
     (void)ctx;
-    // 长按 KEY2 保留原厂约定的整屏 GC16 强刷出口。
-    // Long-press KEY2 preserves the factory full-screen GC16 refresh exit.
+    // KEY2 短按已切页，长按 KEY1 恢复原焦点并触发整屏 GC16 强刷。
+    // KEY2 short press switches pages, so long-press KEY1 restores focus and forces full GC16.
+    if (key == UI_KEY_1) {
+        s_focus = s_prev_focus;
+        return APP_REDRAW_FULL;
+    }
     return key == UI_KEY_2 ? APP_REDRAW_FULL : APP_REDRAW_NONE;
 }
 
 static void on_enter(app_ctx_t* ctx) {
     (void)ctx;
     if (s_focus < 0 || s_focus >= HOME_TILE_COUNT) s_focus = 0;
+    s_prev_focus = s_focus;
 }
 
 const app_desc_t app_pico_home = {

@@ -17,6 +17,7 @@
 #include "read_pico_transfer.h"
 #include "read_pico_pmu.h"
 #include "settings.h"
+#include "ui_gesture.h"
 #include "ui_kit.h"
 #include "ui_menu.h"
 
@@ -101,14 +102,15 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     const pmu_snapshot_t *pmu = read_pico_pmu_get();
     time_t now = pmu && pmu->time_ok && pmu->unix_sec ? (time_t)pmu->unix_sec : time(NULL);
     if (ambient.enabled && now >= 946684800) {
+        time_t local_now = now + (time_t)app_settings_timezone_min() * 60;
         struct tm local;
-        if (localtime_r(&now, &local)) {
+        if (gmtime_r(&local_now, &local)) {
             uint32_t seconds = (uint32_t)local.tm_hour * 3600U +
                 (uint32_t)local.tm_min * 60U + (uint32_t)local.tm_sec;
             uint32_t delay = ambient_sync_next_delay(seconds, (uint32_t)ambient.interval_min * 60U,
                                                       ambient.quiet_start_h, ambient.quiet_end_h);
-            time_t target = now + delay;
-            if (localtime_r(&target, &local)) strftime(line, sizeof(line), "下一次计划唤醒：%m-%d %H:%M", &local);
+            time_t target = local_now + delay;
+            if (gmtime_r(&target, &local)) strftime(line, sizeof(line), "下一次计划唤醒：%m-%d %H:%M", &local);
             else snprintf(line, sizeof(line), "下一次计划唤醒：时间不可用");
         }
     } else snprintf(line, sizeof(line), "下一次计划唤醒：未启用或时间未同步");
@@ -124,24 +126,42 @@ static void on_enter(app_ctx_t *ctx) {
     s_update_notice[0] = 0;
 }
 
-static int hit(const cst836u_touch_t *touch) {
-    if (!touch || touch->y < UI_CONTENT_TOP || touch->y >= UI_CONTENT_TOP + 7 * (UI_BTN_H + UI_GAP)) return -1;
+static int hit_xy(uint16_t x, uint16_t y) {
+    if (y < UI_CONTENT_TOP || y >= UI_CONTENT_TOP + 7 * (UI_BTN_H + UI_GAP)) return -1;
     int row_h = UI_BTN_H + UI_GAP;
-    int row = (touch->y - UI_CONTENT_TOP) / row_h;
-    if (row >= 0 && row < 7 && ui_rect_hit(settings_row_rect(row), touch->x, touch->y)) return row;
+    int row = (y - UI_CONTENT_TOP) / row_h;
+    if (row >= 0 && row < 7 && ui_rect_hit(settings_row_rect(row), x, y)) return row;
     return -1;
 }
 
-static app_redraw_t on_touch(app_ctx_t *ctx, const cst836u_touch_t *touch) {
+static int update_hit_xy(uint16_t x, uint16_t y) {
+    for (int i = 0; i < 3; ++i) {
+        if (ui_rect_hit(update_control_rect(i), x, y)) return i;
+    }
+    return -1;
+}
+
+// 主循环仅在按下沿派发 on_touch，抬手提交必须走 on_gesture。
+// The loop only dispatches on_touch on press; release-to-commit uses on_gesture.
+static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) {
+    if (!event) return APP_REDRAW_NONE;
+    if (event->type == UI_GESTURE_CANCEL) {
+        if (s_pressed < 0) return APP_REDRAW_NONE;
+        s_pressed = -1;
+        return APP_REDRAW_PAGE;
+    }
     if (s_update_view) {
-        int col = -1;
-        for (int i = 0; i < 3; ++i) if (ui_rect_hit(update_control_rect(i), touch->x, touch->y)) col = i;
-        if (ctx->pressed) { s_pressed = col; return col >= 0 ? APP_REDRAW_PAGE : APP_REDRAW_NONE; }
-        if (!ctx->released) return APP_REDRAW_NONE;
-        int pressed = s_pressed; s_pressed = -1;
-        if (pressed < 0 || pressed != col) return APP_REDRAW_PAGE;
-        if (pressed == 0) { s_update_notice[0] = 0; (void)ota_update_check_start(); }
-        else if (pressed == 1) {
+        int col = update_hit_xy(event->x, event->y);
+        if (event->type == UI_GESTURE_PRESS) {
+            s_pressed = col;
+            return col >= 0 ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
+        }
+        if (event->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
+        int was_pressed = s_pressed;
+        s_pressed = -1;
+        if (col < 0) return was_pressed >= 0 ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
+        if (col == 0) { s_update_notice[0] = 0; (void)ota_update_check_start(); }
+        else if (col == 1) {
             (void)read_pico_pmu_refresh();
             const pmu_snapshot_t *pmu = read_pico_pmu_get();
             bool charging = pmu && pmu->charge_state == PMU_CHARGE_CHARGING;
@@ -159,59 +179,58 @@ static app_redraw_t on_touch(app_ctx_t *ctx, const cst836u_touch_t *touch) {
         }
         return APP_REDRAW_PAGE;
     }
-    if (ctx->released) {
-        int row = s_pressed;
-        s_pressed = -1;
-        if (row < 0 || hit(touch) != row) return APP_REDRAW_PAGE;
-        switch (row) {
-            case 0:
-                if (touch->x < UI_MARGIN + ui_content_width() / 2) ctx->request_app = &app_transfer;
-                else {
-                    int next = app_settings_timezone_min() + 30;
-                    if (next > 840) next = -720;
-                    app_settings_set_timezone_min((int16_t)next);
-                }
-                break;
-            case 1:
-                if (touch->x < UI_MARGIN + ui_content_width() / 3) ctx->request_app = app_font_page();
-                else if (touch->x < UI_MARGIN + ui_content_width() * 2 / 3)
-                    app_settings_set_book_px((uint8_t)(app_settings_book_px() >= 72 ? 36 : app_settings_book_px() + 4));
-                else {
-                    app_settings_set_book_refresh((app_settings_book_refresh() + 1) % 3);
-                    uint16_t weight = app_settings_book_weight();
-                    app_settings_set_book_weight(weight >= 800 ? 0 : weight ? weight + 100 : 400);
-                }
-                break;
-            case 2:
-                if (touch->x < UI_MARGIN + ui_content_width() / 2) ctx->request_app = &app_sleep;
-                else app_settings_set_saver_style((app_saver_style_t)((app_settings_saver_style() + 1) % 3));
-                break;
-            case 3:
-                if (touch->x < UI_MARGIN + ui_content_width() / 2) app_settings_set_charge_led(!app_settings_charge_led());
-                else if (touch->x < UI_MARGIN + ui_content_width() * 2 / 3) {
-                    uint8_t n = app_settings_low_soc_notify_percent();
-                    app_settings_set_low_soc_notify_percent(n >= 30 ? 0 : n + 5);
-                } else app_settings_set_muted(!app_settings_muted());
-                break;
-            case 4:
-                ctx->request_app = touch->x < UI_MARGIN + ui_content_width() / 2 ? &app_home : &app_system_tools;
-                break;
-            case 5:
-                ctx->request_app = app_personal_page();
-                break;
-            case 6:
-                s_update_view = true;
-                s_ota_last_state = OTA_UPDATE_IDLE;
-                s_ota_last_progress = UINT32_MAX;
-                break;
-        }
-        return APP_REDRAW_PAGE;
-    }
-    if (ctx->pressed) {
-        s_pressed = hit(touch);
+    if (event->type == UI_GESTURE_PRESS) {
+        s_pressed = hit_xy(event->x, event->y);
         return s_pressed >= 0 ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
     }
-    return APP_REDRAW_NONE;
+    if (event->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
+    int was_pressed = s_pressed;
+    s_pressed = -1;
+    int row = hit_xy(event->x, event->y);
+    if (row < 0) return was_pressed >= 0 ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
+    switch (row) {
+        case 0:
+            if (event->x < UI_MARGIN + ui_content_width() / 2) ctx->request_app = &app_transfer;
+            else {
+                int next = app_settings_timezone_min() + 30;
+                if (next > 840) next = -720;
+                app_settings_set_timezone_min((int16_t)next);
+            }
+            break;
+        case 1:
+            if (event->x < UI_MARGIN + ui_content_width() / 3) ctx->request_app = app_font_page();
+            else if (event->x < UI_MARGIN + ui_content_width() * 2 / 3)
+                app_settings_set_book_px((uint8_t)(app_settings_book_px() >= 72 ? 36 : app_settings_book_px() + 4));
+            else {
+                app_settings_set_book_refresh((app_settings_book_refresh() + 1) % 3);
+                uint16_t weight = app_settings_book_weight();
+                app_settings_set_book_weight(weight >= 800 ? 0 : weight ? weight + 100 : 400);
+            }
+            break;
+        case 2:
+            if (event->x < UI_MARGIN + ui_content_width() / 2) ctx->request_app = &app_sleep;
+            else app_settings_set_saver_style((app_saver_style_t)((app_settings_saver_style() + 1) % 3));
+            break;
+        case 3:
+            if (event->x < UI_MARGIN + ui_content_width() / 3) app_settings_set_charge_led(!app_settings_charge_led());
+            else if (event->x < UI_MARGIN + ui_content_width() * 2 / 3) {
+                uint8_t n = app_settings_low_soc_notify_percent();
+                app_settings_set_low_soc_notify_percent(n >= 30 ? 0 : n + 5);
+            } else app_settings_set_muted(!app_settings_muted());
+            break;
+        case 4:
+            ctx->request_app = event->x < UI_MARGIN + ui_content_width() / 2 ? &app_home : &app_system_tools;
+            break;
+        case 5:
+            ctx->request_app = app_personal_page();
+            break;
+        case 6:
+            s_update_view = true;
+            s_ota_last_state = OTA_UPDATE_IDLE;
+            s_ota_last_progress = UINT32_MAX;
+            break;
+    }
+    return ctx->request_app ? APP_REDRAW_NONE : APP_REDRAW_PAGE;
 }
 
 static app_redraw_t on_tick(app_ctx_t *ctx) {
@@ -241,7 +260,7 @@ const app_desc_t app_settings = {
     .detail = "网络、阅读、电源与设备选项",
     .on_enter = on_enter,
     .render = render,
-    .on_touch = on_touch,
+    .on_gesture = on_gesture,
     .on_tick = on_tick,
     .blocks_idle_sleep = true,
     .area_hint = area_hint,

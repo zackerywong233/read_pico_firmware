@@ -72,11 +72,17 @@ One file, one `app_desc_t`. Root app order matches `app_registry.c`; low-level d
 | `app_pico_home.c` | Pico OS 默认桌面与日常应用入口。/ Pico OS launcher and daily app entry points. | `ui_kit` |
 | `app_book.c` | 一级应用：TXT / EPUB 书架、目录、字号、逐书进度、书签和摘录。/ Root app: TXT / EPUB shelf, TOC, size, progress, bookmarks and excerpts. | `book_*`, `ttf_font` |
 | `app_transfer.c` | 一级应用：设备热点/已有 WiFi 传书与 TF 字体上传。/ Root app: WiFi book and TF font transfer. | `read_pico_transfer`, `book_store` |
+| `app_web.c` | 一级应用：静态抓取 HTTP/HTTPS 网页正文并开放同网剪藏入口。/ Root app: static HTTP/HTTPS page reader and local browser-clip endpoint. | `read_pico_transfer`, `html_text`, `book_layout`, `esp_http_client` |
+| `app_feeds.c` | 一级应用：订阅书库（RSS / OPDS / WebDAV）入口。/ Root app: feeds and online library entry. | `ui_kit`, `ui_menu` |
+| `app_sketch.c` | 一级应用：手写便签与 PNG 导出。/ Root app: handwritten sketch pad with PNG export. | `settings`, `read_pico_sd`, `ui_kit`, `ui_menu` |
+| `app_focus.c` | 一级应用：桌面时钟与前台番茄钟。/ Root app: desk clock and foreground pomodoro timer. | `settings`, `reading_stats`, `read_pico_pmu`, `read_pico_buzzer` |
 | `app_agent.c` | 一级应用：活动期间订阅 MQTT/TLS；接收分页文字和 HTTPS 锁屏图片。/ Root app: subscribe to MQTT/TLS while active; receive paginated text and HTTPS lock-screen images. | `read_pico_transfer`, `book_layout`, `book_image`, `esp-mqtt` |
 | `app_home.c` | 一级应用：I2C 普查、识别码、电池、构建时间。/ Root app: device and system status. | `read_pico`, `read_pico_pmu` |
 | `app_personal.c` | 一级应用：个人看板与锁屏主题。/ Root app: personal dashboard and lock-screen theme. | `settings`, `reading_stats`, `read_pico_pmu`, `read_pico_sd` |
 | `app_selftest.c` | 一级应用：设备探活与 PMU 命令 ACK 自检。/ Root app: device probe and PMU command self-test. | `pmu_selftest` |
+| `app_font_pick.c` | 一级应用：预览并切换内置或 TF 卡字体。/ Root app: preview and switch built-in or TF card fonts. | `ttf_font`, `settings`, `read_pico_sd` |
 | `app_system_tools.c` | 二级入口：集中导航至硬件诊断与开发辅助页。/ Nested index for hardware diagnostics and development helpers. | tool app descriptors |
+| `app_settings.c` | 一级应用：统一设备设置与 Wi-Fi OTA 系统更新。/ Root app: unified device settings and Wi-Fi OTA updates. | `settings`, `ota_update`, `ui_gesture` |
 | 其余 `app_*.c` / Other `app_*.c` | 系统工具中的刷新、阅读、触摸、传感器、电源、睡眠、存储、字体与 IOE 页面。/ Refresh, reading, touch, sensor, power, sleep, storage, font and IOE tools. | varies |
 
 新增一级应用：把页面加入 `app_registry.c`；新增硬件诊断：把页面加入 `app_system_tools.c` 的工具表。不要改 `app_loop.c`。

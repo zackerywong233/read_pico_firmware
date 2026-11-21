@@ -87,20 +87,46 @@ static void status_set(ota_update_state_t state, unsigned progress, const char *
     portEXIT_CRITICAL(&s_lock);
 }
 
+static bool is_http_redirect(int status) {
+    return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+}
+
+static esp_err_t open_http_with_redirects(esp_http_client_handle_t client, int *status_out) {
+    // GitHub Release 资产链接会返回 302 重定向到 objects.githubusercontent.com。
+    // GitHub Release asset URLs respond with 302 redirects to objects.githubusercontent.com.
+    for (int hop = 0; hop <= 5; ++hop) {
+        esp_err_t err = esp_http_client_open(client, 0);
+        if (err != ESP_OK) return err;
+        int64_t hdr = esp_http_client_fetch_headers(client);
+        if (hdr < 0) return ESP_FAIL;
+        int status = esp_http_client_get_status_code(client);
+        if (!is_http_redirect(status)) {
+            if (status_out) *status_out = status;
+            return ESP_OK;
+        }
+        if (hop == 5) return ESP_ERR_INVALID_RESPONSE;
+        int flushed = 0;
+        (void)esp_http_client_flush_response(client, &flushed);
+        err = esp_http_client_set_redirection(client);
+        esp_http_client_close(client);
+        if (err != ESP_OK) return err;
+    }
+    return ESP_ERR_INVALID_RESPONSE;
+}
+
 static esp_err_t read_http(const char *url, char *out, size_t cap, int *status) {
-    esp_http_client_config_t cfg = {.url = url, .timeout_ms = 20000, .buffer_size = 2048,
-        .crt_bundle_attach = esp_crt_bundle_attach};
+    esp_http_client_config_t cfg = {.url = url, .timeout_ms = 20000, .buffer_size = 4096,
+        .buffer_size_tx = 2048, .crt_bundle_attach = esp_crt_bundle_attach};
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) return ESP_ERR_NO_MEM;
     esp_http_client_set_header(client, "User-Agent", "ReadPico-OTA");
     esp_http_client_set_header(client, "Accept", "application/vnd.github+json");
-    esp_err_t err = esp_http_client_open(client, 0);
+    esp_err_t err = open_http_with_redirects(client, status);
     if (err == ESP_OK) {
-        (void)esp_http_client_fetch_headers(client);
-        *status = esp_http_client_get_status_code(client);
         size_t used = 0;
         while (used + 1 < cap) {
             int n = esp_http_client_read(client, out + used, cap - used - 1);
+            if (n == -ESP_ERR_HTTP_EAGAIN) continue;
             if (n < 0) { err = ESP_FAIL; break; }
             if (!n) break;
             used += (size_t)n;
@@ -152,20 +178,21 @@ static void ota_task(void *arg) {
         char *buffer = malloc(8192);
         if (!buffer) { read_pico_transfer_ota_wifi_stop(); status_set(OTA_UPDATE_ERROR, 0, "内存不足"); goto done; }
         esp_http_client_config_t cfg = {.url = s_asset_url, .timeout_ms = 30000, .buffer_size = 8192,
-            .crt_bundle_attach = esp_crt_bundle_attach};
+            .buffer_size_tx = 2048, .crt_bundle_attach = esp_crt_bundle_attach};
         esp_http_client_handle_t client = esp_http_client_init(&cfg);
         esp_ota_handle_t handle = 0; bool begun = false;
         const esp_partition_t *partition = esp_ota_get_next_update_partition(NULL);
-        esp_err_t err = client && partition ? esp_http_client_open(client, 0) : ESP_FAIL;
+        int dl_status = 0;
+        esp_err_t err = client && partition ? open_http_with_redirects(client, &dl_status) : ESP_FAIL;
         if (err == ESP_OK) {
-            (void)esp_http_client_fetch_headers(client);
-            if (esp_http_client_get_status_code(client) != 200) err = ESP_FAIL;
+            if (dl_status != 200) err = ESP_FAIL;
             else { err = esp_ota_begin(partition, OTA_SIZE_UNKNOWN, &handle); begun = err == ESP_OK; }
         }
         mbedtls_sha256_context sha; mbedtls_sha256_init(&sha); mbedtls_sha256_starts_ret(&sha, 0);
         int total = client ? esp_http_client_get_content_length(client) : -1; size_t received = 0;
         while (err == ESP_OK && !s_cancel) {
             int n = esp_http_client_read(client, buffer, 8192);
+            if (n == -ESP_ERR_HTTP_EAGAIN) continue;
             if (n < 0) { err = ESP_FAIL; break; }
             if (!n) break;
             if (esp_ota_write(handle, buffer, n) != ESP_OK || mbedtls_sha256_update_ret(&sha, (uint8_t *)buffer, n) != 0) { err = ESP_FAIL; break; }

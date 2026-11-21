@@ -28,6 +28,13 @@ extern const app_desc_t app_book;
 
 #define PERSONAL_NOTE_LINES 4
 #define PERSONAL_NOTE_BYTES 96
+#define PERSONAL_CARDS_Y 220
+#define PERSONAL_SAVER_LABEL_Y 436
+#define PERSONAL_SAVER_Y 488
+#define PERSONAL_SYNC_Y 604
+#define PERSONAL_HINT_Y 720
+#define AMBIENT_ROW_Y(row) (200 + (row) * 94)
+#define AMBIENT_TEST_Y 850
 
 static char s_note[PERSONAL_NOTE_LINES][PERSONAL_NOTE_BYTES];
 static bool s_note_ready;
@@ -160,29 +167,29 @@ static void draw_settings(uint8_t* fb) {
     ui_draw_header(fb, "看板与屏保", "点按卡片开关显示内容");
     uint8_t selected = app_settings_dashboard_items();
     for (int i = 0; i < 4; ++i) {
-        EpdRect r = ui_grid_rect(i % 2, 2, i / 2, 220, UI_BTN_H);
+        EpdRect r = ui_grid_rect(i % 2, 2, i / 2, PERSONAL_CARDS_Y, UI_BTN_H);
         ui_draw_choice_round_rect(fb, r, UI_BTN_RADIUS, (selected & cards[i].bit) != 0);
         ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, UI_PX_BTN,
                    cards[i].label, EPD_DRAW_ALIGN_CENTER, false);
     }
-    ui_text(fb, UI_MARGIN, 440, UI_PX_SECTION, "锁屏内容", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, UI_MARGIN, PERSONAL_SAVER_LABEL_Y, UI_PX_SECTION, "锁屏内容", EPD_DRAW_ALIGN_LEFT, false);
     static const struct { app_saver_style_t style; const char* label; } savers[] = {
         {APP_SAVER_BUILTIN, "默认图案"}, {APP_SAVER_QUOTE, "最近摘录"}, {APP_SAVER_IMAGE, "TF 卡图片"},
     };
     for (int i = 0; i < 3; ++i) {
-        EpdRect r = ui_row_rect(i, 3, 500, UI_BTN_H);
+        EpdRect r = ui_row_rect(i, 3, PERSONAL_SAVER_Y, UI_BTN_H);
         ui_draw_choice_round_rect(fb, r, UI_BTN_RADIUS, app_settings_saver_style() == savers[i].style);
         ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, UI_PX_CAPTION,
                    savers[i].label, EPD_DRAW_ALIGN_CENTER, false);
     }
-    ui_text(fb, UI_MARGIN, 660, UI_PX_CAPTION,
+    ui_draw_button(fb, ui_row_rect(0, 1, PERSONAL_SYNC_Y, UI_BTN_H), "同步设备时间", false);
+    ui_text(fb, UI_MARGIN, PERSONAL_HINT_Y, UI_PX_CAPTION,
             "看板文字：TF 卡根目录 dashboard.txt（最多 4 行）", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, UI_MARGIN, 696, UI_PX_CAPTION,
+    ui_text(fb, UI_MARGIN, PERSONAL_HINT_Y + 40, UI_PX_CAPTION,
             "图片优先 agent_screensaver，其次 screensaver（JPG/PNG）",
             EPD_DRAW_ALIGN_LEFT, false);
     if (s_time_sync_msg[0])
-        ui_text(fb, UI_MARGIN, 732, UI_PX_CAPTION, s_time_sync_msg, EPD_DRAW_ALIGN_LEFT, false);
-    ui_draw_button(fb, ui_row_rect(0, 1, 570, UI_BTN_H), "同步设备时间", false);
+        ui_text(fb, UI_MARGIN, PERSONAL_HINT_Y + 80, UI_PX_CAPTION, s_time_sync_msg, EPD_DRAW_ALIGN_LEFT, false);
     ui_draw_button(fb, ui_bar_rect(0, 1), "返回看板", false);
     ui_draw_menu_handle(fb, false);
 }
@@ -197,40 +204,42 @@ static void draw_ambient_settings(uint8_t* fb) {
     ui_draw_header(fb, "定时刷新", "低功耗看板唤醒计划");
     char line[160];
     snprintf(line, sizeof(line), "自动刷新：%s", cfg.enabled ? "开启" : "关闭");
-    ui_draw_button(fb, ui_row_rect(0, 1, 260, UI_BTN_H), line, false);
+    ui_draw_button(fb, ui_row_rect(0, 1, AMBIENT_ROW_Y(0), UI_BTN_H), line, false);
     snprintf(line, sizeof(line), "刷新周期：%u 分钟", cfg.interval_min);
-    ui_draw_button(fb, ui_row_rect(1, 1, 350, UI_BTN_H), line, false);
+    ui_draw_button(fb, ui_row_rect(0, 1, AMBIENT_ROW_Y(1), UI_BTN_H), line, false);
     snprintf(line, sizeof(line), "免打扰开始：%02u:00", cfg.quiet_start_h);
-    ui_draw_button(fb, ui_row_rect(2, 1, 440, UI_BTN_H), line, false);
+    ui_draw_button(fb, ui_row_rect(0, 1, AMBIENT_ROW_Y(2), UI_BTN_H), line, false);
     snprintf(line, sizeof(line), "免打扰结束：%02u:00", cfg.quiet_end_h);
-    ui_draw_button(fb, ui_row_rect(3, 1, 530, UI_BTN_H), line, false);
+    ui_draw_button(fb, ui_row_rect(0, 1, AMBIENT_ROW_Y(3), UI_BTN_H), line, false);
     static const char *sources[] = {"HTTP JSON 卡片", "HTTP 图片", "本地个人看板"};
-    snprintf(line, sizeof(line), "内容来源：%s", sources[cfg.source_type]);
-    ui_draw_button(fb, ui_row_rect(4, 1, 620, UI_BTN_H), line, false);
-    snprintf(line, sizeof(line), "地址：%.72s", cfg.url[0] ? cfg.url : "未配置");
-    ui_text(fb, UI_MARGIN, 755, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
+    snprintf(line, sizeof(line), "内容来源：%s", sources[cfg.source_type % 3]);
+    ui_draw_button(fb, ui_row_rect(0, 1, AMBIENT_ROW_Y(4), UI_BTN_H), line, false);
     time_t now = s_pmu.time_ok && s_pmu.unix_sec ? (time_t)s_pmu.unix_sec : time(NULL);
+    int tz_min = app_settings_timezone_min();
     if (cfg.enabled && now >= 946684800) {
+        time_t local_now = now + (time_t)tz_min * 60;
         struct tm local;
-        if (localtime_r(&now, &local)) {
+        if (gmtime_r(&local_now, &local)) {
             uint32_t seconds = (uint32_t)local.tm_hour * 3600U +
                 (uint32_t)local.tm_min * 60U + (uint32_t)local.tm_sec;
             uint32_t delay = ambient_sync_next_delay(seconds, (uint32_t)cfg.interval_min * 60U,
                                                       cfg.quiet_start_h, cfg.quiet_end_h);
-            time_t target = now + delay;
-            if (localtime_r(&target, &local)) strftime(line, sizeof(line), "下一次计划唤醒：%m-%d %H:%M", &local);
+            time_t target = local_now + delay;
+            if (gmtime_r(&target, &local)) strftime(line, sizeof(line), "下一次计划唤醒：%m-%d %H:%M", &local);
             else snprintf(line, sizeof(line), "下一次计划唤醒：时间不可用");
         }
     } else snprintf(line, sizeof(line), "下一次计划唤醒：未启用或时间未同步");
-    ui_text(fb, UI_MARGIN, 720, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, UI_MARGIN, 695, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
+    snprintf(line, sizeof(line), "地址：%.72s", cfg.url[0] ? cfg.url : "未配置");
+    ui_text(fb, UI_MARGIN, 735, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
     if (has_result) {
-        time_t raw = (time_t)result_ts;
+        time_t raw = (time_t)result_ts + (time_t)tz_min * 60;
         struct tm local;
-        localtime_r(&raw, &local);
+        gmtime_r(&raw, &local);
         strftime(line, sizeof(line), success ? "上次结果：成功 %H:%M" : "上次结果：失败 %H:%M", &local);
     } else snprintf(line, sizeof(line), "上次结果：暂无");
-    ui_text(fb, UI_MARGIN, 795, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
-    ui_draw_button(fb, ui_row_rect(0, 2, 875, UI_BTN_H), "立即测试刷新", false);
+    ui_text(fb, UI_MARGIN, 775, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
+    ui_draw_button(fb, ui_row_rect(0, 2, AMBIENT_TEST_Y, UI_BTN_H), "立即测试刷新", false);
     ui_draw_button(fb, ui_bar_rect(0, 1), "返回看板", false);
     ui_draw_menu_handle(fb, false);
 }
@@ -280,7 +289,7 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
     if (ctx->leaf == 0) {
         const int bar = ui_bar_hit(touch->x, touch->y, 2);
         if (bar == 0) { ctx->leaf = 1; return APP_REDRAW_PAGE; }
-        if (bar == 1) { ctx->request_app = &app_book; return APP_REDRAW_PAGE; }
+        if (bar == 1) { ctx->request_app = &app_book; return APP_REDRAW_NONE; }
         if (ui_rect_hit(ui_row_rect(0, 1, 900, UI_BTN_H), touch->x, touch->y)) { ctx->leaf = 2; return APP_REDRAW_PAGE; }
         return APP_REDRAW_NONE;
     }
@@ -288,18 +297,18 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
         if (ui_bar_hit(touch->x, touch->y, 1) == 0) { ctx->leaf = 0; return APP_REDRAW_PAGE; }
         app_ambient_settings_t cfg;
         app_settings_ambient_get(&cfg);
-        if (ui_rect_hit(ui_row_rect(0, 1, 260, UI_BTN_H), touch->x, touch->y)) cfg.enabled = !cfg.enabled;
-        else if (ui_rect_hit(ui_row_rect(1, 1, 350, UI_BTN_H), touch->x, touch->y)) {
+        if (ui_rect_hit(ui_row_rect(0, 1, AMBIENT_ROW_Y(0), UI_BTN_H), touch->x, touch->y)) cfg.enabled = !cfg.enabled;
+        else if (ui_rect_hit(ui_row_rect(0, 1, AMBIENT_ROW_Y(1), UI_BTN_H), touch->x, touch->y)) {
             static const uint16_t intervals[] = {15, 30, 60, 120, 360, 720, 1440};
             size_t i = 0;
             while (i < 6 && intervals[i] != cfg.interval_min) ++i;
             cfg.interval_min = intervals[(i + 1) % 7];
-        } else if (ui_rect_hit(ui_row_rect(2, 1, 440, UI_BTN_H), touch->x, touch->y))
+        } else if (ui_rect_hit(ui_row_rect(0, 1, AMBIENT_ROW_Y(2), UI_BTN_H), touch->x, touch->y))
             cfg.quiet_start_h = (uint8_t)((cfg.quiet_start_h + 1) % 24);
-        else if (ui_rect_hit(ui_row_rect(3, 1, 530, UI_BTN_H), touch->x, touch->y))
+        else if (ui_rect_hit(ui_row_rect(0, 1, AMBIENT_ROW_Y(3), UI_BTN_H), touch->x, touch->y))
             cfg.quiet_end_h = (uint8_t)((cfg.quiet_end_h + 1) % 24);
-        else if (ui_rect_hit(ui_row_rect(4, 1, 620, UI_BTN_H), touch->x, touch->y)) cfg.source_type = (uint8_t)((cfg.source_type + 1) % 3);
-        else if (ui_rect_hit(ui_row_rect(0, 2, 875, UI_BTN_H), touch->x, touch->y)) {
+        else if (ui_rect_hit(ui_row_rect(0, 1, AMBIENT_ROW_Y(4), UI_BTN_H), touch->x, touch->y)) cfg.source_type = (uint8_t)((cfg.source_type + 1) % 3);
+        else if (ui_rect_hit(ui_row_rect(0, 2, AMBIENT_TEST_Y, UI_BTN_H), touch->x, touch->y)) {
             if (!ctx->hl || !ctx->fb) return APP_REDRAW_NONE;
             (void)read_pico_pmu_refresh();
             s_pmu = *read_pico_pmu_get();
@@ -313,7 +322,7 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
         return APP_REDRAW_PAGE;
     }
     if (ui_bar_hit(touch->x, touch->y, 1) == 0) { ctx->leaf = 0; return APP_REDRAW_PAGE; }
-    if (ui_rect_hit(ui_row_rect(0, 1, 570, UI_BTN_H), touch->x, touch->y)) {
+    if (ui_rect_hit(ui_row_rect(0, 1, PERSONAL_SYNC_Y, UI_BTN_H), touch->x, touch->y)) {
         time_t now = time(NULL);
         if (now < 946684800) {
             snprintf(s_time_sync_msg, sizeof(s_time_sync_msg), "设备时间不可用，请先校准主机时间");
@@ -341,14 +350,14 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
     uint8_t items = app_settings_dashboard_items();
     static const uint8_t bits[] = {APP_DASH_TIME, APP_DASH_BATTERY, APP_DASH_LAST_BOOK, APP_DASH_NOTE};
     for (int i = 0; i < 4; ++i) {
-        if (ui_rect_hit(ui_grid_rect(i % 2, 2, i / 2, 220, UI_BTN_H), touch->x, touch->y)) {
+        if (ui_rect_hit(ui_grid_rect(i % 2, 2, i / 2, PERSONAL_CARDS_Y, UI_BTN_H), touch->x, touch->y)) {
             app_settings_set_dashboard_items(items ^ bits[i]);
             return APP_REDRAW_PAGE;
         }
     }
     static const app_saver_style_t styles[] = {APP_SAVER_BUILTIN, APP_SAVER_QUOTE, APP_SAVER_IMAGE};
     for (int i = 0; i < 3; ++i) {
-        if (ui_rect_hit(ui_row_rect(i, 3, 500, UI_BTN_H), touch->x, touch->y)) {
+        if (ui_rect_hit(ui_row_rect(i, 3, PERSONAL_SAVER_Y, UI_BTN_H), touch->x, touch->y)) {
             app_settings_set_saver_style(styles[i]);
             return APP_REDRAW_PAGE;
         }

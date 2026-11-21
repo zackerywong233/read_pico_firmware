@@ -15,27 +15,39 @@
 #include "esp_log.h"
 #include "esp_netif_sntp.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/portmacro.h"
 #include "read_pico_pmu.h"
 
 static const char *TAG = "time_sync";
+static portMUX_TYPE s_sync_mux = portMUX_INITIALIZER_UNLOCKED;
 static bool s_sntp_started;
 static bool s_synced_this_boot;
 static int64_t s_retry_after_us;
 
 void app_time_sync_sta_ip(void) {
-    if (s_sntp_started || s_synced_this_boot) return;
+    portENTER_CRITICAL(&s_sync_mux);
+    bool skip = s_sntp_started || s_synced_this_boot;
+    if (!skip) s_sntp_started = true;
+    portEXIT_CRITICAL(&s_sync_mux);
+    if (skip) return;
     esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
     esp_err_t err = esp_netif_sntp_init(&config);
     if (err == ESP_OK) {
-        s_sntp_started = true;
         ESP_LOGI(TAG, "SNTP started after STA acquired IP");
     } else {
+        portENTER_CRITICAL(&s_sync_mux);
+        s_sntp_started = false;
+        portEXIT_CRITICAL(&s_sync_mux);
         ESP_LOGW(TAG, "SNTP init failed: %s", esp_err_to_name(err));
     }
 }
 
 void app_time_sync_poll(void) {
-    if (!s_sntp_started || s_synced_this_boot) return;
+    portENTER_CRITICAL(&s_sync_mux);
+    bool active = s_sntp_started && !s_synced_this_boot;
+    portEXIT_CRITICAL(&s_sync_mux);
+    if (!active) return;
     int64_t now_us = esp_timer_get_time();
     if (now_us < s_retry_after_us) return;
 
@@ -49,7 +61,9 @@ void app_time_sync_poll(void) {
     status = read_pico_pmu_get()->last_op_status;
     if (err == ESP_OK && (status == PMU_STATUS_OK || status == PMU_STATUS_ACCEPTED)
         && read_pico_pmu_get()->time_synced) {
+        portENTER_CRITICAL(&s_sync_mux);
         s_synced_this_boot = true;
+        portEXIT_CRITICAL(&s_sync_mux);
         ESP_LOGI(TAG, "PMU clock synchronized from SNTP");
     } else {
         s_retry_after_us = now_us + 30000000;
@@ -58,8 +72,11 @@ void app_time_sync_poll(void) {
 }
 
 void app_time_sync_stop(void) {
-    if (s_sntp_started) {
+    portENTER_CRITICAL(&s_sync_mux);
+    bool was_started = s_sntp_started;
+    s_sntp_started = false;
+    portEXIT_CRITICAL(&s_sync_mux);
+    if (was_started) {
         esp_netif_sntp_deinit();
-        s_sntp_started = false;
     }
 }
