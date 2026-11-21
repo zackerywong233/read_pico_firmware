@@ -1,0 +1,33 @@
+:root { color-scheme: light; --ink: #20251f; --muted: #6e746b; --paper: #f4f1e9; --card: #fffdf7; --green: #315f48; --line: #dcd9cf; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif; }
+.shell { width: min(100% - 40px, 1000px); margin: 0 auto; }
+.topline, footer { display: flex; align-items: center; justify-content: space-between; }
+.topline { height: 82px; border-bottom: 1px solid var(--line); }
+a { color: inherit; text-decoration: none; }
+.brand { font-weight: 700; letter-spacing: -.03em; font-size: 19px; }
+.brand span, .eyebrow, .steps article > span { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .12em; }
+.brand span { margin-left: 9px; color: var(--muted); font-size: 10px; }
+.source, footer { color: var(--muted); font-size: 13px; }
+.hero { padding: 88px 0 76px; }
+.eyebrow { color: var(--green); font-size: 11px; font-weight: 500; }
+h1 { margin: 22px 0 18px; font-size: clamp(42px, 8vw, 76px); line-height: 1.12; letter-spacing: -.065em; font-weight: 600; }
+.intro { color: var(--muted); font-size: 17px; line-height: 1.75; max-width: 530px; }
+.install-card { margin-top: 38px; padding: 20px 22px; width: min(100%, 600px); min-height: 98px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 20px; box-shadow: 0 8px 24px #20251f0a; }
+.install-copy { display: grid; gap: 6px; }
+.install-copy strong { font-size: 15px; }
+.install-copy span, .install-message { color: var(--muted); font-size: 12px; }
+.install-button { border: 0; border-radius: 7px; padding: 13px 20px; color: white; background: var(--green); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.install-button:hover { background: #254b38; }
+.install-message { display: block; max-width: 220px; line-height: 1.5; }
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 34px; border-top: 1px solid var(--line); padding: 31px 0 45px; }
+.steps article > span { color: var(--green); font-size: 11px; }
+.steps h2 { margin: 15px 0 8px; font-size: 16px; }
+.steps p, .notice li { color: var(--muted); font-size: 13px; line-height: 1.75; margin: 0; }
+.notice { border: 1px solid #dfcda9; background: #f8f2e4; border-radius: 10px; padding: 20px 23px; }
+.notice strong { font-size: 13px; }
+.notice ul { padding-left: 18px; margin: 10px 0 0; }
+.notice li + li { margin-top: 4px; }
+footer { padding: 25px 0 34px; }
+footer a { color: var(--green); }
+@media (max-width: 640px) { .shell { width: min(100% - 32px, 500px); } .hero { padding: 60px 0 56px; } .install-card { align-items: flex-start; flex-direction: column; } .install-button { width: 100%; } .steps { grid-template-columns: 1fr; gap: 23px; } }

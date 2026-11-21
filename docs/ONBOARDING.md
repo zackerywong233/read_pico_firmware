@@ -28,10 +28,9 @@ This document is for **first-time human developers and AI agents**. After readin
 ## 1. 项目定位 / What this is
 
 - **产品**：小纸 Pico（英文/日文文案：Read Pico；型号 RDP-G01-W；内部代号 Read/0，仅限内部使用，不得出现在对外文案）。深圳 MindReset 出品的 4.7 英寸墨水屏开发板。
-- **本仓库**：随板出厂的**官方示例 / 出厂演示固件**。它有两个角色：
-  1. 用户通过功能菜单逐项检查硬件（屏、触摸、传感器、电源、TF 卡、蜂鸣器）。
-  2. 开发者以它的板级支持包（BSP）与芯片驱动为起点写自己的固件。
-- **不是**：通用阅读器产品固件。页面是"演示 + 自检"，不追求功能完备。
+- **本仓库**：随板运行的 Pico OS 固件，提供图书、传书、看板、设备状态与设备自检等原生应用。
+- **系统工具**：硬件演示和开发诊断页统一收纳在二级入口，帮助检查屏、触摸、传感器、电源、TF 卡和蜂鸣器；BSP 与芯片驱动也可独立复用。
+- **产品边界**：这是面向小纸 Pico 开发板的固件，不声称是通用电子书阅读器平台；功能与硬件支持以 README 和应用说明为准。
 - **许可**：主体 Apache-2.0；`components/epdiy` 为 LGPL-3.0-or-later（上游 epdiy v2.0.0 的裁剪 fork）；内置字体 ChillDuanSans 为 SIL OFL-1.1。复用/分发前看各组件 `LICENSE`。
 - **仓库关系**：上游为 `MindReset/read_pico_firmware`。在 fork 上工作时把上游加为 `upstream` 远端；向上游提 PR 前请阅读 [CONTRIBUTING.md](../CONTRIBUTING.md)。
 - **配套生态**：Dot Open Platform <https://github.com/MindReset/dot_open_platform>。
@@ -127,10 +126,10 @@ python -m serial.tools.miniterm COMx 115200     # Ctrl+] 退出，看开机日�
 --flash-mode dio --flash-freq 80m --flash-size 16MB
 0x0 bootloader/bootloader.bin
 0x8000 partition_table/partition-table.bin
-0x10000 Read_Pico.bin
+0x20000 Read_Pico.bin
 ```
 
-`Read_Pico.bin` 只是 app，**必须落在 0x10000**。把它写到 `0x0` 会覆盖 bootloader、分区表、NVS、phy_init，设备不再启动——而墨水屏会保留上一帧画面，看起来"没坏"。这个错误已经在实测中发生过一次，用上面的命令全量重写后恢复（§13.2）。想要单文件烧写，先 `idf.py merge-bin` 生成合并镜像再写 0x0。
+`Read_Pico.bin` 只是 app，初始槽地址为 `0x20000`，运行时备用槽为 `0x420000`。本地开发刷写使用 IDF 生成的 `@flash_args`，不要手写偏移。把 app 写到 `0x0` 会覆盖 bootloader 和分区表，设备不再启动。首次从旧分区迁移要用 Web Flasher 的合并镜像并擦除 Flash。
 
 实测踩坑：
 - 端口写 `COMx`，**不要写 `\\.\COMx`**。后者在 esptool 5.x 下报 `Failed to get VID/PID` + `Write timeout`，很容易被误判成"没进下载模式"。
@@ -138,7 +137,7 @@ python -m serial.tools.miniterm COMx 115200     # Ctrl+] 退出，看开机日�
 - 只读握手检查：`python -m esptool --chip esp32s3 -p COMx --after no-reset chip-id`。能连上并打印 MAC（S3 没有 chip id，esptool 会改读 MAC，这是正常的）才继续 `write-flash`。
 - esptool 报 `Hash of data verified` 只说明字节写对了，**不等于设备能启动**。烧完必须看串口。"真机已验证"的最低证据是下面三行都出现：
   ```
-  I (...) boot: Loaded app from partition at offset 0x10000
+  I (...) boot: Loaded app from partition at offset 0x20000（或 OTA 槽 0x420000）
   I (...) app_init: ESP-IDF:          v6.1
   I (...) app_loop: UI ready on 概览 Overview
   ```
@@ -177,7 +176,7 @@ idf.py size                       # CI 也跑这一步
 
 `idf.py flash` 内部就是 `esptool write_flash @flash_args`，三段镜像各归其位。没有 idf.py 的宿主走 §3.4。
 
-烧写会**覆盖**设备出厂应用固件，但按当前 `flash_args` 不会写入 NVS；睡眠模式 / 字体选择 / 自检结果会保留。VCOM 在 PMU 里，不受影响。分区表 [partitions_16M.csv](../partitions_16M.csv)：nvs 0x9000/0x5000、phy_init 0xE000/0x1000、factory app 0x10000/2 MB、spiffs 0x500000/5 MB（当前代码未挂载 spiffs，仅预留）。
+烧写会**覆盖**设备出厂应用固件。Milestone 5 将分区表改为双 4 MB OTA 槽与 7 MB 内置存储：`ota_0` 0x20000、`ota_1` 0x420000、`storage` 0x820000–0xF20000。首次从旧分区表迁移必须通过 Web Flasher 整机刷写并擦除 Flash；之后可用设置中的 Wi-Fi OTA。擦除会清除 ESP 内置存储和设置，TF 卡文件与 PMU 中的 VCOM 不受影响。
 
 ### 4.2 CI 等价编译（只验证能不能编过）
 
@@ -208,7 +207,7 @@ idf.py size
 
 | 我想… | 去这里 |
 | --- | --- |
-| 加一个演示页 | `main/apps/app_xxx.c` + [main/app/app_registry.c](../main/app/app_registry.c) `s_apps[]` + [main/CMakeLists.txt](../main/CMakeLists.txt) `SRCS` |
+| 加一个一级应用 | `main/apps/app_xxx.c` + [main/app/app_registry.c](../main/app/app_registry.c) `s_apps[]` + [main/CMakeLists.txt](../main/CMakeLists.txt) `SRCS` |
 | 改菜单顺序 | [main/app/app_registry.c](../main/app/app_registry.c) |
 | 改刷新档位（GL16/GC16/DU、多少次软刷后压一次 GC16） | [main/app/app_config.h](../main/app/app_config.h) |
 | 改推屏、pclk、轨道空闲断电 | [main/display.c](../main/display.c) |
@@ -266,7 +265,7 @@ flowchart TD
    - **菜单打开时的 KEY1**：菜单上一叶；菜单里的"上一页/下一页"触摸区翻叶；点条目切页。
    - **菜单关闭时的 KEY1** → 页面 `on_key(UI_KEY_1)`（页面自己决定含义，通常是翻页）；屏内触摸 → `on_touch()`。
 3. 手势页使用 `on_gesture` 替代 `on_touch`；主循环在全局中断/重绘边界发 CANCEL。菜单条目按下高亮、同项抬起切页，滑出取消。
-4. `request_app` / `request_menu` 在 `on_tick` 后统一消费（切页优先）；输入已有请求则跳过旧页 tick。`request_app` 非空 → `switch_to()`：`on_exit` → `on_enter` → `enter_full ? FULL : PAGE`。
+4. `request_app` / `request_menu` 在 `on_tick` 后统一消费（切页优先）；输入已有请求则跳过旧页 tick。`request_app` 非空 → `switch_to()`：`on_exit` → `on_enter` → 整屏 GC16。
 4. `rails_idle_check`：屏电源轨空闲 8 s（`RAILS_IDLE_TIMEOUT_MS`）断电。
 5. 电源键短按 → `enter_lock_and_sleep()`，除非当前页 `holds_pmu`。开机后 2 s 内忽略（`APP_LOCK_IGNORE_BOOT_MS`）。
 6. TF 卡字体延迟加载重试（每 3 s）。
@@ -292,11 +291,19 @@ flowchart TD
 - 换页/怕残影 → `APP_REDRAW_FULL`（`APP_PAGE_FORCE_FULL` 时 GC16）。
 - 自己已经 `present` 过 → `APP_REDRAW_DONE`。
 
-标志：`enter_full`（进页整屏，当前 home / reading / font_pick / key / sleep 开着）、`holds_pmu`（独占 PMU，当前 key / selftest 开着；开着时电源键短按不锁屏）。
+标志：`holds_pmu`（独占 PMU，当前 key / selftest 开着；开着时电源键短按不锁屏）。页面切换、菜单打开和返回均整屏 GC16。
 
 ### 6.4 刷新策略（[main/app/app_config.h](../main/app/app_config.h) + [main/display.c](../main/display.c)）
 
 - 档位 `APP_REFRESH_PROFILE`：`BALANCED`（默认：页 GL16、定稿 GC16、动态 DU、每 14 次软刷强制一次 GC16 压灰底）或 `ALL_DU`（实验，只看速度）。
+- 图书阅读档位由 NVS `bk_ref` 控制：纯净每页整屏 GC16；均衡（默认）每页 GL16 并每 8 页 GC16；极速每页 DU 并每 6 页 GC16。切章、离开阅读弹窗、应用页切换以及菜单打开/关闭/返回仍整屏 GC16。底部进度条始终可点按跳转，章节会补排至目标正文偏移。
+  Book refresh uses NVS `bk_ref`: clean runs full-screen GC16 on every page; balanced (default) uses GL16 and GC16 every 8 pages; fast uses DU and GC16 every 6 pages. Chapter changes, leaving reader dialogs, app switches and menu transitions still use full-screen GC16. The progress track remains tappable, and chapter seeking paginates through the target offset.
+- 行距、左右边距、可变字重、方向和翻页手势分别由 `bk_lh`、`bk_mg`、`bk_wght`、`bk_rot`、`bk_gest` 保存；传感器只在阅读态需要自动旋转或手势时运行，退出阅读时恢复原配置并休眠。
+  Persist line spacing, side margins, variable weight, orientation and page gesture as `bk_lh`, `bk_mg`, `bk_wght`, `bk_rot` and `bk_gest`. The accelerometer runs only while reader rotation or gestures need it and restores its prior configuration before sleeping on reader exit.
+- 书签与摘录可从笔记页导出 UTF-8 Markdown；传书网页对含笔记的图书提供 Markdown 下载；阅读工具栏搜索仅查当前已加载章节。
+  Export bookmarks and excerpts as UTF-8 Markdown from note pages; the transfer page offers Markdown downloads for books with notes; reader search covers the currently loaded chapter.
+- 书签与整页摘录保存在图书根目录的隐藏 `.pico_notes/n_<路径哈希>.bin` sidecar 中，文件内校验完整路径和图书大小；数量与摘录长度均不设软件上限，由可用空间和内存决定。旧 `rp_notes` NVS 记录首次读取时迁移，sidecar 写入成功后才清旧记录。清进度保留笔记，`book_store_delete` 与文件变更回调同步清笔记；最近摘录仍更新看板屏保。
+- 内置 FAT 存储首次按需挂载；只有 `storage` 分区全部字节均为 `0xFF` 才允许格式化初始化。非空分区挂载失败时保留内容并将该来源标记为不可用，不自动重建文件系统。
 - 波形（[components/e0470_epaper_waveform](../components/e0470_epaper_waveform/)）：`E0470_WAVEFORM`（裁剪 GC16 36 相 / GL16 37 相 + 阈值 DU）、`E0470_FULL_WAVEFORM`（48/48/DU 20）、`E0470_GRAY8_WAVEFORM`（30 相，约 360 ms）、`E0470_FOLLOW_WAVEFORM`（开机生成 8 帧，跟手数字用）。帧周期 11090 µs（约 90 Hz）。
 - pclk：默认 18 MHz，安全 12，最大 24。`EPD_DRAW_EMPTY_LINE_QUEUE` 时自动降到 12 MHz 并刷白。
 - 术语（DU / GC16 / GL16 / 跟随 DU / 连续 DU / 跟手 / 定稿 / 把手）见 AGENTS.md 术语表，注释里不要再解释。
@@ -304,11 +311,11 @@ flowchart TD
 ### 6.5 睡眠与锁屏（[main/sleep.c](../main/sleep.c)、[main/settings.c](../main/settings.c)）
 
 - 模式 `app_sleep_mode_t`：LIGHT 0 / DEEP 1 / OFF 2（默认）。
-- 无操作 2 分钟（`APP_AUTO_SLEEP_MS`）走同一条锁屏路径；独占 PMU 的页和传书页不计时。
+- 无操作按“睡眠与唤醒”页所设时间走同一条锁屏路径，默认 2 分钟，可设 30 秒至 60 分钟或关闭；独占 PMU 的页和传书页不计时。
 - 浅睡：`app_light_sleep_wait()`，唤醒源 IOE INT（GPIO41 低电平）+ 可选拿起（SC7A20H，350 mg / 3 拍，带静默窗口）。
 - 软睡/关机：`app_enter_host_sleep()` 经 PMU 执行，成功**不返回**；失败返回错误，锁屏退到浅睡。锁屏前主循环先调当前页 `on_exit`。
 - 三种睡眠前都把常开 SYS_VDD 上的外设收口：触摸深睡、加速度计掉电、9555 的 MODE 拉低与 Port1 推高；关机/软睡另把 CW_INT 改输出低，避免关机期间 INT# 被拉住。
-- NVS 键（命名空间 `read_pico`）：`sleep`(u8)、`font`(str，空 = 内置)、`lwake`、`lboot`、`pickup`。自检结果在命名空间 `pmu_st` 键 `blob`（magic 0xAA）。
+- NVS 键（命名空间 `read_pico`）：`sleep`(u8)、`idle_s`(u16，自动锁屏秒数，0 = 关闭)、`font`(str，空 = 内置)、`lwake`、`lboot`、`pickup`。自检结果在命名空间 `pmu_st` 键 `blob`（magic 0xAA）。
 
 ### 6.6 PMU 协议要点（[components/read_pico_pmu](../components/read_pico_pmu/)）
 
@@ -320,23 +327,25 @@ flowchart TD
 
 ---
 
-## 7. 演示页与冻结决策速查 / Demo pages & Frozen decisions
+## 7. 应用页与冻结决策速查 / App pages & Frozen decisions
 
 菜单顺序 = [main/app/app_registry.c](../main/app/app_registry.c) `s_apps[]`。每页文件头都有 `冻结 / Frozen:` 段，**改行为前必须先改那段并说明决策为何变化**。摘要（以文件头为准）：
 
 | 页 | 文件 | 标志 | Frozen 摘要 |
 | --- | --- | --- | --- |
-| 概览 | `app_home.c` | enter_full | — |
+| 概览 | `app_home.c` | — | — |
 | 墨水屏刷新 | `app_refresh.c` | — | GC16 / DU / 灰阶梯子与耗时矩阵 |
-| 阅读测试 | `app_reading.c` | enter_full | 后台排版任务跑在 core 1、结果放 PSRAM |
+| 阅读测试 | `app_reading.c` | — | 后台排版任务跑在 core 1、结果放 PSRAM |
 | 触摸 | `app_touch.c` | — | 连续 DU 跟手；TAP_SLEEP 10 s 进深睡演示 |
 | 加速度 / 诊断 | `app_axis.c`（两个 `app_desc_t` 共享 `.user`） | — | 默认不跟手，点"监听"才 DU；敲击 200 Hz；FIFO 默认存满即停 |
 | 电源与电池 | `app_power.c` | — | 不关轨；**不写 SY7636A 任何寄存器**；只读条 |
 | 电源管理协议 | `app_pmu.c` | — | 四视图 信息/事件/配置/动作；Off/Reset/DL 走主机路径；不做出厂复位/硬复位/软睡；VCOM 只读 |
-| 电源按键 | `app_key.c` | holds_pmu, enter_full | 本页独占 PMU 事件，短按不锁屏；进页 GL16 后只刷变化块 |
-| 睡眠与唤醒 | `app_sleep.c` | enter_full | 底栏走 `ui_bar_rect`；拿起唤醒默认关；浅睡 350 mg / 3 拍 |
+| 电源按键 | `app_key.c` | holds_pmu | 本页独占 PMU 事件，短按不锁屏；进页后只刷变化块 |
+| 睡眠与唤醒 | `app_sleep.c` | — | 默认深睡（短按开机）；底栏走 `ui_bar_rect`；拿起唤醒默认关；浅睡 350 mg / 3 拍 |
+| 网页阅读 | `app_web.c` | — | 仅 HTTP/HTTPS 静态正文提取；512 KiB 响应上限；离页停 WiFi 与剪藏服务 |
+| Agent 收件 | `app_agent.c` | — | MQTT/TLS 精确主题；有界 JSON；文字分页、HTTPS 图片（2 MiB）保存为 TF 锁屏屏保；离页停止网络 |
 | TF 卡与蜂鸣器 | `app_sd.c` | — | 无字体走 `ui_draw_no_font_page`；格式化两次确认（**会清空卡**）；探测 A/B/1b/4k |
-| 字体 | `app_font_pick.c` | enter_full | 列表行高 `UI_BTN_H`；行数由剩余高度解出；换字体/字重整屏 GC16 |
+| 字体 | `app_font_pick.c` | — | 列表行高 `UI_BTN_H`；行数由剩余高度解出；换字体/字重整屏 GC16 |
 | 扩展口 | `app_ioe.c` | — | CFG/INV 只读；不拨 SY_EN / VCOM_EN / MODE / XOE；只允许脉冲 TP_RST |
 | 设备功能自检 | `app_selftest.c` | holds_pmu | 底栏只留探测/清空；不等闹钟、不目视灯、不断电续跑 |
 | （出厂）VCOM 标定 | `factory/vcom_setup.c` | 非菜单页 | 副标题不写范围；数字带只用 FOLLOW DU；三位合法自动进确认；不写 ESP NVS |
@@ -345,7 +354,7 @@ flowchart TD
 
 ## 8. 常见任务操作手册 / Playbooks
 
-### 8.1 加一个演示页
+### 8.1 加一个应用页
 
 1. 复制一个结构相近的页（读数类抄 `app_power.c`，交互类抄 `app_sd.c`）到 `main/apps/app_xxx.c`。
 2. 写文件头（SPDX + 中文/English 职责 + 冻结/Frozen），只实现需要的回调，末尾导出一个 `const app_desc_t app_xxx`。
@@ -576,7 +585,7 @@ Read AGENTS.md, then docs/ONBOARDING.md, then docs/HANDOFF.md. Do not duplicate 
 | 开机图之后不进菜单，日志 `No touch controller, UI cannot run` | 触摸未就绪，`app_main` 直接返回（明确设计）。查 I2C 普查日志、TP_RST（FCA9555 P0.7）、INT GPIO43 |
 | 开机停在一个三位数字页 | 这是 `vcom_setup` 出厂标定拦截，PMU 里没有 VCOM。不要在产品页加旁路 |
 | 中文显示成缺字方块 | 新字串没进 `builtin.ttf`，跑 `tools/gen_builtin_font.py` |
-| 刷新后屏边缘留边 | 页面切换用了 PAGE 而不是 FULL；给该页加 `enter_full = true` 或返回 `APP_REDRAW_FULL` |
+| 页面切换后有残影 | 图书可改用“纯净”档或长按 KEY2 手动 GC16；其他页面仍检查切页/返回/菜单路径是否走 `APP_REDRAW_FULL` |
 | 刷新出现横条、随后自动变白 | `EPD_DRAW_EMPTY_LINE_QUEUE` 保护触发，pclk 已降 12 MHz；检查是否有别的核在抢 PSRAM 带宽 |
 | 电源键短按不锁屏 | 当前页 `holds_pmu = true`（key / selftest），设计如此 |
 
@@ -598,8 +607,15 @@ Read AGENTS.md, then docs/ONBOARDING.md, then docs/HANDOFF.md. Do not duplicate 
 
 ### 图书与传书的契约扩展 / Book and transfer contract extensions
 
-`owns_keys` 只在菜单关闭时接管三键；图书工具条提供强刷，中键长按或把手打开演示菜单。传书组件不依赖页面；由 `app_transfer` 注入存储根、限额、容量回调。文件提交、删除或进度清理重试后通过书源 revision 请求下次进图书时重扫；文件变更回调只清对应路径进度。传书与阅读互斥，停止HTTP并等待退出后才切图书页，进度API由调用端串行化。
-`owns_keys` captures three keys outside the menu; Books provides toolbar refresh; holding the middle key or using the handle opens the demo menu. Transfer receives storage policy from its page. File commits, deletions and metadata retries invalidate the shelf through a storage revision; an injected callback clears progress only for the affected path. Transfer and reading are exclusive; HTTP is stopped and joined before entering Books, serializing progress API callers.
+`owns_keys` 只在菜单关闭时接管三键；图书工具条提供强刷、书签和摘录，中键长按或把手打开应用菜单。传书组件不依赖页面；由 `app_transfer` 注入存储根、限额、容量回调。TF 卡与内置存储同时可用时，点按传书页容量行切换图书目的地；仅在没有接收请求时停止并重启 HTTP，字体上传始终只写 TF 卡。显式选择 TF 卡但卡不可用时不回退内置存储。文件提交、删除或进度清理重试后通过书源 revision 请求下次进图书时重扫；文件变更回调只清对应路径的进度与笔记，用户单独清进度则保留笔记。传书与阅读互斥，停止HTTP并等待退出后才切图书页，进度API由调用端串行化。
+
+`app_web` 复用该组件的 STA 生命周期提供同网剪藏服务，并用 `esp_http_client` 访问输入的网址。每次开机首次启动服务时生成随机剪藏口令，停启服务不轮换；设备重启后须在网页上重新生成剪藏书签。表单字段按 URL 编码解码后校验并原子保存为书架 TXT；剪藏正文上限 64 KiB，请求体上限 640 KiB（容纳 UTF-8 表单编码膨胀）。网页抓取仅限 512 KiB 响应，交给 `html_text` 做静态提取；不执行脚本、不解释 CSS、不取图片。产品与 CI 配置需启用 ESP x509 根证书包以验证 HTTPS。
+
+`app_web` reuses the transfer component's STA lifecycle for same-LAN clipping and uses `esp_http_client` for entered URLs. The first service start per boot creates a random clip token, which survives service stop/start; recreate the browser bookmark after reboot. URL-encoded form fields are decoded and validated before an atomic TXT commit. Clip text is capped at 64 KiB and request bodies at 640 KiB to allow for UTF-8 form-encoding expansion. Page fetches are capped at 512 KiB and passed to `html_text` for static extraction; scripts, CSS and images are not processed. Product and CI configurations must enable the ESP x509 root certificate bundle for HTTPS verification.
+
+`app_agent` also reuses the transfer component's STA lifecycle and reads `agent_mqtt.json` from the active book-storage root. The local `/agent` page never returns the password; the file is plaintext on device storage and must be treated as a secret. MQTT delivery uses an exact topic (no `+` or `#`) and bounded JSON messages up to 8 KiB. Text bodies are limited to 6 KiB. Image messages accept HTTPS only, disable redirects, cap downloads at 2 MiB, verify certificates with the x509 bundle, decode before an atomic save to `/sdcard/agent_screensaver.jpg` or `.png`, then select the image lock-screen style. The lock renderer checks these Agent paths before the user's `screensaver.jpg/png`. Only one image download may run at a time; leaving the page stops MQTT and transfer networking and joins the image task.
+
+`owns_keys` captures three keys outside the menu; Books provides toolbar refresh, bookmarks and excerpts; holding the middle key or using the handle opens the app menu. Transfer receives storage policy from its page. When both roots are available, tapping the capacity row switches the book destination; HTTP restarts only if no upload is active, and fonts remain TF-only. Explicit TF selection does not fall back to flash when the card is unavailable. File commits, deletions and metadata retries invalidate the shelf through a storage revision; an injected callback clears progress and notes only for the affected path, while a user-requested progress clear preserves notes. Transfer and reading are exclusive; HTTP is stopped and joined before entering Books, serializing progress API callers.
 
 
 传书页通过 `display_set_bulk_io` 在页内提高扫描预填余量，退出恢复默认；大文件进度用低频FOLLOW DU，结束/离页清残影。欠载恢复必须保留目标前缓冲，不能调用 `epd_hl_set_all_white` 丢掉整页。相关回归：`tools/run_display_host_test.sh`。

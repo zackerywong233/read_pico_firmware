@@ -57,7 +57,11 @@ static EpdRect menu_btn_rect(void) {
 }
 
 static EpdRect menu_nav_rect(bool next) {
-    return ui_bar_rect(next ? 1 : 0, 2);
+    return ui_bar_rect(next ? 2 : 0, 3);
+}
+
+static EpdRect menu_home_rect(void) {
+    return ui_bar_rect(1, 3);
 }
 
 static void draw_menu_arrow(
@@ -134,14 +138,15 @@ void ui_draw_menu_page(uint8_t* framebuffer, const app_desc_t* current, int leaf
         "第 %d / %d 页　Page %d / %d",
         leaf + 1, leaves, leaf + 1, leaves
     );
-    ui_draw_header(framebuffer, "演示项目 Demo Projects", line);
+    ui_draw_header(framebuffer, "小纸 Pico 应用与工具", line);
 
     for (int row = 0; row < count; row++) {
         ui_draw_menu_row_pressed(framebuffer, current, leaf, row, false);
     }
 
-    ui_draw_button(framebuffer, menu_nav_rect(false), "上一页 Prev", leaf > 0);
-    ui_draw_button(framebuffer, menu_nav_rect(true), "下一页 Next", leaf + 1 < leaves);
+    ui_draw_button(framebuffer, menu_nav_rect(false), "上一页", leaf > 0);
+    ui_draw_button(framebuffer, menu_home_rect(), "回桌面", current == app_home_page());
+    ui_draw_button(framebuffer, menu_nav_rect(true), "下一页", leaf + 1 < leaves);
     ui_draw_menu_handle(framebuffer, true);
 }
 
@@ -154,6 +159,9 @@ int ui_menu_hit_test(uint16_t x, uint16_t y, int leaf) {
 
     if (ui_rect_hit(menu_nav_rect(false), x, y)) {
         return leaf > 0 ? UI_MENU_HIT_PREV : UI_MENU_HIT_NONE;
+    }
+    if (ui_rect_hit(menu_home_rect(), x, y)) {
+        return UI_MENU_HIT_HOME;
     }
     if (ui_rect_hit(menu_nav_rect(true), x, y)) {
         return leaf + 1 < ui_menu_leaf_count() ? UI_MENU_HIT_NEXT : UI_MENU_HIT_NONE;

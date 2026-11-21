@@ -19,6 +19,7 @@ SCAN_DIRS = [
     ROOT / "main/factory",
     ROOT / "main/assets",
     ROOT / "main/app_main.c",
+    ROOT / "main/ble_service.c",
     ROOT / "main/display.c",
     ROOT / "main/sleep.c",
     ROOT / "main/settings.c",
@@ -112,6 +113,14 @@ def rename_subset(font) -> None:
                     font["name"].setName(value, name_id, record.platformID, record.platEncID, record.langID)
 
 
+def patch_dash_fallback(font) -> None:
+    # ChillDuanSans omits U+2013; map it to the supported hyphen glyph for UI copy.
+    # ChillDuanSans 不含 U+2013；将其映射到字体已有的连字符字形供界面使用。
+    for table in font["cmap"].tables:
+        if table.isUnicode() and ord("-") in table.cmap:
+            table.cmap[0x2013] = table.cmap[ord("-")]
+
+
 def subset_variable(src: Path, text: str, dest: Path) -> int:
     from fontTools.subset import Subsetter, Options
     from fontTools.ttLib import TTFont
@@ -128,6 +137,7 @@ def subset_variable(src: Path, text: str, dest: Path) -> int:
     subsetter = Subsetter(options=options)
     subsetter.populate(text=text)
     subsetter.subset(font)
+    patch_dash_fallback(font)
     rename_subset(font)
     dest.parent.mkdir(parents=True, exist_ok=True)
     font.save(dest)
@@ -153,6 +163,7 @@ def subset_regular(src: Path, text: str, dest: Path) -> int:
     subsetter = Subsetter(options=options)
     subsetter.populate(text=text)
     subsetter.subset(vf)
+    patch_dash_fallback(vf)
     rename_subset(vf)
     dest.parent.mkdir(parents=True, exist_ok=True)
     vf.save(dest)

@@ -15,7 +15,7 @@ typedef struct { int x, y, count, error; } sample_t;
 static sample_t samples[32];
 static int sample_count, step, ticks, enters, exits, touch_calls, keys[3], events[8];
 static int menus, highlights, restores, fulls, mode, tick_consumed[32];
-static int long_keys;
+static int long_keys, lock_calls;
 static app_redraw_t long_key(app_ctx_t* c, int k) { assert(k==UI_KEY_2); ++long_keys; c->request_menu=true; return APP_REDRAW_NONE; }
 static app_redraw_t response;
 static bool request_on_touch, request_on_tick, menu_on_tick, menu_on_touch, cancel_clobber;
@@ -51,9 +51,10 @@ bool display_take_white_exit(void) {return false;}
 void rails_idle_check(int64_t n) {(void)n;}
 bool read_pico_pmu_ready(void) {return lock_due;}
 bool read_pico_pmu_take_key_short(void) {return true;}
-void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a) {(void)h;(void)t;(void)a;lock_due=false;time_offset+=1000000;}
+void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a) {(void)h;(void)t;(void)a;lock_due=false;++lock_calls;time_offset+=1000000;}
 bool app_lock_powers_down(void) {return false;}
 const char* app_settings_font_path(void) {return "builtin";}
+uint16_t app_settings_auto_sleep_sec(void) {return 120;}
 bool ttf_font_path_is_builtin(const char*p) {(void)p;return !font_due&&!saved_sd_font;}
 bool ttf_font_ready(void) {return true;}
 bool ttf_font_is_builtin(void) {return !font_due&&!sd_font;}
@@ -71,7 +72,7 @@ bool ui_menu_handle_hit_test(uint16_t x,uint16_t y) {return x>600 && y>1100 && y
 int ui_menu_leaf_for_app(const app_desc_t*a) {return a==&second?1:0;}
 int ui_menu_leaf_count(void) {return 2;}
 void ui_draw_menu_page(uint8_t*f,const app_desc_t*a,int l) {(void)f;menu_background=a;last_menu_leaf=l;menus++;}
-int ui_menu_hit_test(uint16_t x,uint16_t y,int l) {(void)l;if(x==550&&y==500)return UI_MENU_HIT_NEXT;return x<500&&y>=100&&y<300?(y-100)/100:-1;}
+int ui_menu_hit_test(uint16_t x,uint16_t y,int l) {(void)l;if(x==550&&y==500)return UI_MENU_HIT_NEXT;if(x==300&&y==1150)return UI_MENU_HIT_HOME;return x<500&&y>=100&&y<300?(y-100)/100:-1;}
 bool ui_menu_row_rect(int l,int r,EpdRect*out) {(void)l;*out=(EpdRect){0,r*100+100,500,100};return r>=0&&r<2;}
 void ui_draw_menu_row_pressed(uint8_t*f,const app_desc_t*a,int l,int r,bool p) {(void)f;(void)a;(void)l;(void)r;if(p)highlights++;else restores++;}
 static void enter(app_ctx_t*c) {(void)c;enters++;}
@@ -124,6 +125,34 @@ static void home_case(void) {
     second=first;second.title="transfer";
     first.on_enter=home_enter;first.render=home_render;first.on_tick=NULL;first.on_touch=NULL;
 }
+static bool bg_switch_triggered;
+static int bg_ticks;
+static bool bg_test_redraw_and_lock;
+static bool bg_tick_switch(app_ctx_t* c, const app_desc_t* cur, bool menu_open) {
+    (void)menu_open;
+    ++bg_ticks;
+    if (bg_test_redraw_and_lock) {
+        if (step == 0) { c->request_redraw = true; return true; }
+        if (step == 1) { c->request_lock = true; return true; }
+        return false;
+    }
+    if (!bg_switch_triggered && cur == &first && step == 1) {
+        bg_switch_triggered = true;
+        c->request_app = &second;
+        return true;
+    }
+    if (bg_switch_triggered && cur == &second && step == 2) {
+        c->request_return = true;
+        return true;
+    }
+    return false;
+}
+
+static void run_bg(void) {
+    app_loop_config_t cfg = { .first_app = &first, .on_bg_tick = bg_tick_switch };
+    if (!setjmp(done)) app_loop_run(&cfg);
+}
+
 int main(void) {
     reset();add(100,400,1,0);add(110,400,1,0);add(0,0,0,0);run();
     assert(touch_calls==1&&ticks==3&&!tick_consumed[0]);
@@ -139,7 +168,7 @@ int main(void) {
     reset();menu_on_tick=true;add(0,0,0,0);add(0,0,0,0);run();assert(menus==1&&ticks==1);
     reset();first.owns_keys=true;for(int k=0;k<3;k++){add(k*160+80,1500,1,0);add(0,0,0,0);}run();
     assert(keys[0]==1&&keys[1]==1&&keys[2]==1&&!menus&&fulls==1);
-    reset();add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();assert(!keys[1]&&!keys[2]&&menus==1&&fulls==2);
+    reset();add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();assert(!keys[1]&&!keys[2]&&menus==1&&fulls==3);
     reset();add(650,1150,1,0);add(0,0,0,0);add(100,220,1,0);add(0,0,0,0);run();
     assert(highlights==1&&restores==1&&enters==2&&exits==1);
     reset();add(650,1150,1,0);add(0,0,0,0);add(100,220,1,0);add(550,220,1,0);add(100,220,1,0);add(0,0,0,0);run();
@@ -150,7 +179,7 @@ int main(void) {
     reset();first.on_gesture=gesture;font_due=true;time_offset=4000000;add(100,400,1,0);add(0,0,0,0);run();
     assert(events[UI_GESTURE_CANCEL]==1&&!events[UI_GESTURE_TAP]&&tick_consumed[0]);
     reset();first.owns_keys=true;add(650,1150,1,0);add(0,0,0,0);add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();
-    assert(!keys[1]&&!keys[2]&&fulls==2&&menus==2);
+    assert(!keys[1]&&!keys[2]&&fulls==4&&menus==2);
     reset();add(650,1150,1,0);add(0,0,0,0);
     for(int i=0;i<3;i++){add(100,220,1,0);add(550,220,1,0);add(0,0,0,0);}run();
     assert(du_areas==6&&gl_areas==1);
@@ -172,7 +201,7 @@ int main(void) {
     add(0,0,0,0);add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);add(0,0,0,0);run();assert(!lock_due&&!long_keys);
     home_case();home_on_tick=true;add(0,0,0,0);add(0,0,0,0);run();
     assert(exits==0&&home_enters==0&&menus==1&&last_menu_leaf==1&&menu_background==&second);
-    assert(home_renders==0&&ticks==1&&fulls==1&&mode==1);
+    assert(home_renders==0&&ticks==1&&fulls==2&&mode==0);
     home_case();home_on_tick=true;add(0,0,0,0);add(400,1500,1,0);add(0,0,0,0);run();
     assert(exits==0&&home_enters==0&&menus==1&&home_renders==0);
     home_case();home_on_touch=true;request_on_touch=true;menu_on_touch=true;add(100,400,1,0);run();
@@ -235,6 +264,24 @@ int main(void) {
     reset();media_test=sd_font=saved_sd_font=true;mounted_steps[0]=mounted_steps[2]=true;time_step=4000000;first.on_media_lost=lost;
     add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);run();
     assert(media_lost==2&&builtin_opens==2&&!probes&&font_opens==2);
-    puts("app_loop: 42 scheduler scenarios passed");
+    // 菜单栏“回桌面”可直接从任意页切回宫格首页。
+    // The menu bar Home action returns directly to app_home_page() from any page.
+    reset();start_second=true;first.on_enter=home_enter;first.render=home_render;second.on_exit=leave;
+    add(650,1150,1,0);add(0,0,0,0);add(300,1150,1,0);add(0,0,0,0);run();
+    assert(menus==1&&exits==1&&home_enters==1&&home_renders==1);
+    // 后台服务回调（如 BLE）可安全请求切页并返回原页。
+    // Background service callback (such as BLE) can request page switches and return safely.
+    reset();bg_switch_triggered=false;bg_ticks=0;bg_test_redraw_and_lock=false;second.on_exit=leave;
+    add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);run_bg();
+    assert(bg_ticks==4&&enters==3&&exits==2);
+    // 后台服务回调可触发整屏强刷与全局锁屏，holds_pmu 页忽略远程锁屏。
+    // Background service callback can trigger full redraw and lock; holds_pmu ignores remote lock.
+    reset();bg_test_redraw_and_lock=true;bg_ticks=0;lock_calls=0;
+    add(0,0,0,0);add(0,0,0,0);run_bg();
+    assert(fulls==2&&lock_calls==1);
+    reset();bg_test_redraw_and_lock=true;bg_ticks=0;lock_calls=0;first.holds_pmu=true;
+    add(0,0,0,0);add(0,0,0,0);run_bg();
+    assert(fulls==2&&lock_calls==0);
+    puts("app_loop: 46 scheduler scenarios passed");
     return 0;
 }

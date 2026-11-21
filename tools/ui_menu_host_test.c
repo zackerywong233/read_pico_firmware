@@ -11,10 +11,11 @@ static int pressed, texts, clears;
 int app_count(void) {return 10;}
 const app_desc_t* app_at(int i) {return i>=0&&i<10?&items[i]:NULL;}
 int app_index_of(const app_desc_t*a) {return (int)(a-items);}
+const app_desc_t* app_home_page(void) {return &items[0];}
 int epd_rotated_display_width(void) {return 684;}
 void epd_fill_triangle(int a,int b,int c,int d,int e,int f,uint8_t g,uint8_t*h) {(void)a;(void)b;(void)c;(void)d;(void)e;(void)f;(void)g;(void)h;}
 int ui_content_width(void) {return 684-2*UI_MARGIN;}
-EpdRect ui_bar_rect(int col,int cols) {return (EpdRect){UI_MARGIN+col*240,UI_BAR_TOP,480/cols,UI_BAR_H};}
+EpdRect ui_bar_rect(int col,int cols) {int w=480/cols;return (EpdRect){UI_MARGIN+col*w,UI_BAR_TOP,w,UI_BAR_H};}
 bool ui_rect_hit(EpdRect r,uint16_t x,uint16_t y) {return x>=r.x&&x<r.x+r.width&&y>=r.y&&y<r.y+r.height;}
 void ui_clear_rect_fast(uint8_t*f,EpdRect r) {(void)f;(void)r;clears++;}
 void ui_clear_page(uint8_t*f) {(void)f;}
@@ -42,5 +43,7 @@ int main(void) {
     assert(!selected);
     ui_draw_menu_row_pressed(NULL,&items[8],1,2,true);
     assert(pressed==1);
+    EpdRect home_btn = ui_bar_rect(1, 3);
+    assert(ui_menu_hit_test(home_btn.x + 10, home_btn.y + 10, 1) == UI_MENU_HIT_HOME);
     puts("ui_menu: local row bounds and current selection restoration passed");
 }

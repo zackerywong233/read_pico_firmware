@@ -3,16 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * 睡眠与唤醒。试浅睡看按键/拿起；深睡和关机从本页下电。
- * 三项锁屏选择写入 NVS，电源键锁屏时由 sleep.c 执行。
+ * 锁屏模式和自动睡眠时间写入 NVS，电源键或空闲计时锁屏时由 sleep.c 执行。
  *
  * Sleep and wake. Trial light sleep for key/pickup; deep and off power down
- * from this page. The three lock choices go to NVS; sleep.c runs them on
- * a power-key lock.
+ * from this page. Lock mode and idle timeout go to NVS; sleep.c runs the
+ * selected mode on a power-key or idle-timeout lock.
  *
- * 冻结：底栏试睡 / 读取走 ui_bar_rect；拿起默认关；浅睡 350mg/3 拍；
- * 说明栏随模式变；KEY3 走主循环菜单把手。
- * Frozen: try-sleep / read use ui_bar_rect; pickup defaults off; light sleep
- * is 350mg / 3 samples; description follows the mode. KEY3 is the loop menu handle.
+ * 冻结：自动睡眠默认 2 分钟，可选 30 秒至 60 分钟或关闭；自动睡眠沿用已选锁屏档位。
+ * 底栏试睡 / 读取走 ui_bar_rect；拿起默认关；浅睡 350mg/3 拍；说明栏随模式变；KEY3 走主循环菜单把手。
+ * Frozen: Auto sleep defaults to 2 minutes, with 30 seconds to 60 minutes or off, and uses the selected lock mode.
+ * Try-sleep / read use ui_bar_rect; pickup defaults off; light sleep is 350mg / 3 samples; description follows the mode; KEY3 is the loop menu handle.
  */
 
 #include "app.h"
@@ -41,12 +41,18 @@ extern const app_desc_t app_sleep;
 #define SLEEP_HIT_TRY 10
 #define SLEEP_HIT_READ 11
 #define SLEEP_HIT_PICKUP 12
+#define SLEEP_HIT_TIMEOUT_BASE 20
+#define SLEEP_TIMEOUT_COLS 3
+#define SLEEP_TIMEOUT_ROWS 3
+#define SLEEP_TIMEOUT_H 56
 
 typedef struct {
     int wake_y;
     int chip_y;
     int lock_y;
     int mode_y;
+    int timeout_y;
+    int timeout_btn_y;
     int desc_y;
     EpdRect pickup;
     EpdRect try_btn;
@@ -70,6 +76,20 @@ static const char* const k_mode_btn[] = {
 static const int k_mode_ids[] = {
     SLEEP_HIT_LIGHT, SLEEP_HIT_DEEP, SLEEP_HIT_OFF,
 };
+static const uint16_t k_timeout_sec[] = {
+    30, 60, 120, 300, 600, 900, 1800, 3600, 0,
+};
+static const char* const k_timeout_labels[] = {
+    "30 秒", "1 分钟", "2 分钟", "5 分钟", "10 分钟",
+    "15 分钟", "30 分钟", "60 分钟", "关闭 Off",
+};
+static const int k_timeout_ids[] = {
+    SLEEP_HIT_TIMEOUT_BASE, SLEEP_HIT_TIMEOUT_BASE + 1,
+    SLEEP_HIT_TIMEOUT_BASE + 2, SLEEP_HIT_TIMEOUT_BASE + 3,
+    SLEEP_HIT_TIMEOUT_BASE + 4, SLEEP_HIT_TIMEOUT_BASE + 5,
+    SLEEP_HIT_TIMEOUT_BASE + 6, SLEEP_HIT_TIMEOUT_BASE + 7,
+    SLEEP_HIT_TIMEOUT_BASE + 8,
+};
 static const char* const k_chip_btn[] = {
     "按键 Key", "拿起 Pickup", "闹钟 Alarm", "来电开机 AC On",
 };
@@ -91,12 +111,19 @@ static sleep_geom_t sleep_geom(void) {
     const int chip_y = wake_y + UI_SEC_HEAD + 2 * UI_ROW_H_SM + UI_GAP;
     const int lock_y = chip_y + SLEEP_CHIP_H + UI_SECTION_GAP;
     const int mode_y = lock_y + UI_SEC_HEAD;
+    const int timeout_y = mode_y + UI_BTN_H + UI_SECTION_GAP;
+    const int timeout_btn_y = timeout_y + UI_SEC_HEAD;
+    const int desc_y = timeout_btn_y
+        + SLEEP_TIMEOUT_ROWS * SLEEP_TIMEOUT_H
+        + (SLEEP_TIMEOUT_ROWS - 1) * UI_GAP + UI_SECTION_GAP;
     return (sleep_geom_t){
         .wake_y = wake_y,
         .chip_y = chip_y,
         .lock_y = lock_y,
         .mode_y = mode_y,
-        .desc_y = mode_y + UI_BTN_H + UI_SECTION_GAP,
+        .timeout_y = timeout_y,
+        .timeout_btn_y = timeout_btn_y,
+        .desc_y = desc_y,
         .pickup = sleep_chip_rect(1, chip_y),
         .try_btn = ui_bar_rect(0, 2),
         .read_btn = ui_bar_rect(1, 2),
@@ -230,7 +257,7 @@ static bool sleep_ui_same(const sleep_ui_t* a, const sleep_ui_t* b) {
         && a->wake_on_charge == b->wake_on_charge && a->pmu_ok == b->pmu_ok;
 }
 
-// 试睡先整屏定稿，避免客人把静止的演示页当成死机。/ Settle the whole screen before a trial sleep so a still demo page is not taken for a hang.
+// 试睡先整屏定稿，避免客人把静止的诊断页当成死机。/ Settle the whole screen before a trial sleep so a still diagnostic page is not taken for a hang.
 static void sleep_show_notice(app_ctx_t* ctx, app_sleep_mode_t mode) {
     const char* zh;
     const char* en;
@@ -284,6 +311,19 @@ static void draw_sleep_page(uint8_t* framebuffer) {
     };
     sleep_draw_grid(framebuffer, 3, g.mode_y, k_mode_btn, mode_on);
 
+    ui_draw_section(framebuffer, g.timeout_y, "待机多久后睡眠 Idle sleep");
+    const uint16_t selected_timeout = app_settings_auto_sleep_sec();
+    for (int i = 0; i < SLEEP_TIMEOUT_ROWS * SLEEP_TIMEOUT_COLS; i++) {
+        const EpdRect rect = ui_grid_rect(
+            i % SLEEP_TIMEOUT_COLS, SLEEP_TIMEOUT_COLS,
+            i / SLEEP_TIMEOUT_COLS, g.timeout_btn_y, SLEEP_TIMEOUT_H
+        );
+        sleep_draw_btn(
+            framebuffer, rect, k_timeout_labels[i],
+            selected_timeout == k_timeout_sec[i]
+        );
+    }
+
     int y_desc = ui_draw_section(framebuffer, g.desc_y, "说明 Description");
     ui_text(
         framebuffer, UI_MARGIN, y_desc, UI_PX_BODY, note_zh,
@@ -303,6 +343,14 @@ static int sleep_hit_test(const sleep_geom_t* g, uint16_t x, uint16_t y) {
     if (ui_rect_hit(g->pickup, x, y)) return SLEEP_HIT_PICKUP;
     int hit = ui_grid_hit(x, y, 3, 1, g->mode_y, UI_BTN_H, k_mode_ids);
     if (hit >= 0) return hit;
+    hit = ui_grid_hit(
+        x, y, SLEEP_TIMEOUT_COLS, SLEEP_TIMEOUT_ROWS,
+        g->timeout_btn_y, SLEEP_TIMEOUT_H, k_timeout_ids
+    );
+    if (hit >= SLEEP_HIT_TIMEOUT_BASE
+        && hit < SLEEP_HIT_TIMEOUT_BASE + SLEEP_TIMEOUT_ROWS * SLEEP_TIMEOUT_COLS) {
+        return hit;
+    }
     if (ui_rect_hit(g->try_btn, x, y)) return SLEEP_HIT_TRY;
     if (ui_rect_hit(g->read_btn, x, y)) return SLEEP_HIT_READ;
     return SLEEP_HIT_NONE;
@@ -321,6 +369,13 @@ static void sleep_try(app_ctx_t* ctx) {
 }
 
 static app_redraw_t sleep_on_hit(app_ctx_t* ctx, int hit) {
+    if (hit >= SLEEP_HIT_TIMEOUT_BASE
+        && hit < SLEEP_HIT_TIMEOUT_BASE + SLEEP_TIMEOUT_ROWS * SLEEP_TIMEOUT_COLS) {
+        const uint16_t seconds = k_timeout_sec[hit - SLEEP_HIT_TIMEOUT_BASE];
+        app_settings_set_auto_sleep_sec(seconds);
+        ESP_LOGI(TAG, "auto sleep after %u s", (unsigned)seconds);
+        return APP_REDRAW_PAGE;
+    }
     switch (hit) {
         case SLEEP_HIT_LIGHT:
         case SLEEP_HIT_DEEP:
@@ -340,8 +395,7 @@ static app_redraw_t sleep_on_hit(app_ctx_t* ctx, int hit) {
             sleep_try(ctx);
             sleep_reload(ctx);
             return APP_REDRAW_FULL;
-        default:
-            return APP_REDRAW_NONE;
+        default: return APP_REDRAW_NONE;
     }
 }
 
@@ -378,7 +432,6 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
 const app_desc_t app_sleep = {
     .title = SLEEP_TITLE,
     .detail = "试睡与锁屏 Try Sleep & Lock",
-    .enter_full = true,
     .render = render,
     .on_enter = on_enter,
     .on_touch = on_touch,

@@ -29,15 +29,18 @@ idf.py build
 | 路径 / Path | 职责 / Role |
 | --- | --- |
 | `main/app_main.c` | 开机装配：板级 init、读设置、定 VCOM、开机图、字体，然后交给 `app_loop`。/ Boot wiring, then `app_loop`. |
+| `main/ble_service.*` | 轻量 BLE 配套控制桥接：在主循环串行执行配网、远程传书、对时、设置与短文本指令。/ Lightweight BLE companion bridge executing provisioning, remote transfer, time, settings and memos on the main loop. |
+| `main/reading_stats.c` | 持久化累计阅读时间、最近摘录与最近图书进度。/ Persist cumulative reading time, saved excerpt and recent book progress. |
 | `main/app/app.h` | `app_desc_t` / `app_ctx_t` / `app_redraw_t` 契约。/ Page contract. |
 | `main/app/app_loop.c` | 与页面无关的事件循环：触摸去抖、三键与菜单把手、切页、刷屏、锁屏、SD 字体延迟加载。/ Shared event loop. |
-| `main/app/app_registry.c` | 菜单顺序。加页只改这张表。/ Menu table. |
+| `main/app/app_registry.c` | 一级应用菜单顺序。底层工具由 `app_system_tools.c` 汇总。/ Root app menu order; low-level tools are grouped by `app_system_tools.c`. |
 | `main/app/app_config.h` | 均衡 / ALL_DU 刷新档位。/ Refresh profile. |
 | `main/ui/` | `ui_kit` 排版常量与绘制原语；`ui_menu` 两层菜单。页面互不引用。/ Shared drawing; pages do not include each other. |
 | `main/font/` | stb_truetype 字形缓存。`fallback.h` 是生成位图，勿手改。/ Glyph cache. Do not edit `fallback.h` by hand. |
 | `main/factory/` | 设备功能自检与出厂 VCOM 标定。/ Device self-test and factory VCOM. |
 | `main/display.*` `sleep.*` `settings.*` | 刷屏封装、睡眠/锁屏、NVS 设置。/ Present helpers, sleep/lock, NVS. |
 | `components/read_pico/` | 板级 BSP：I2C、EPD 板定义与扫描时序、TF 卡、蜂鸣器、flash HPM。/ Board BSP. |
+| `components/read_pico_ble/` | 独立 NimBLE 外设组件：ReadPico 广播信标、DIS/BAS、配套控制 GATT 与分包重组。/ Standalone NimBLE peripheral: ReadPico beacon, DIS/BAS, companion GATT and chunk framing. |
 | `components/read_pico_search/` | 离线拼音/首字母/英文书名匹配，设备和网页共用；字表由工具生成。/ Shared offline pinyin, initials and English matching with a generated table. |
 | `components/read_pico_pmu/` | CW32L010 协议主机端。线格式在 `read_pico_pmu_protocol.h`。/ PMU host. |
 | `components/epdiy/` | 上游裁剪 fork（LCD 路径）。改动清单在其 LICENSE。不要为注释去改它。/ Trimmed upstream fork. Leave it alone for comment work. |
@@ -46,8 +49,13 @@ idf.py build
 | `components/e0470_epaper_waveform/` | 面板波形与裁剪。`waveforms/*.h` 是数据表。/ Panel waveforms. |
 | `components/pwm_audio/` | PWM 音频（蜂鸣器底层之一）。/ PWM audio helper. |
 | `docs/CHANGELOG.md` | 按版本简述对用户可见的功能变化与修复。/ Brief user-visible changes and fixes by version. |
+| `docs/BLE_PROTOCOL.md` | 面向 iOS 配套客户端的 BLE GATT UUID、分包与 JSON 控制协议规范。/ BLE GATT UUID, framing and JSON control protocol specification for iOS companion apps. |
+| `docs/HTTP_API.md` | 面向 iOS 配套客户端的局域网 HTTP API v2 与 mDNS 发现规范。/ Companion LAN HTTP API v2 and mDNS discovery specification. |
+| `docs/WEB_FLASHER.md` | 浏览器刷写的发布、部署、使用与排障说明。/ Browser flashing release, deployment, use and troubleshooting. |
+| `web/` | ESP Web Tools 安装页与固件清单；固件镜像和页面同源部署。/ ESP Web Tools installer and manifest; deploy the firmware image on the same origin as the page. |
+| `.github/workflows/release-firmware.yml` | 版本标签触发产品配置构建、合并镜像、GitHub Release 与 Pages 发布。/ Tag-triggered product build, merged image, GitHub Release and Pages deployment. |
 
-功能操作见三份 README；页面契约以本文及 `main/app/app.h` 为准。/ See the READMEs for feature usage; this file and `main/app/app.h` define the page contract.
+功能操作见三份 README；浏览器刷写流程见 `docs/WEB_FLASHER.md`；页面契约以本文及 `main/app/app.h` 为准。/ See the READMEs for feature usage and `docs/WEB_FLASHER.md` for browser flashing; this file and `main/app/app.h` define the page contract.
 
 ### 文档交付边界 / Documentation delivery boundary
 
@@ -57,33 +65,33 @@ Deliver implementation, reproducible tests, feature documentation and necessary 
 计划、检查点、过程审查、验收结果和调试日志在 `docs/local/` 或被忽略的构建目录内部闭环，不加入提交。长期有效的行为与限制整理进对应功能文档，不要求读者查内部计划。只有需要交接未完功能或责任时才按 `docs/HANDOFF.md` 提供最小必要摘要；本机账本仍不入库。
 Keep plans, checkpoints, review records, acceptance results and debug logs in ignored `docs/local/` or build directories. Put lasting behavior and limits in feature documentation without dependencies on internal plans. Use `docs/HANDOFF.md` for the minimal necessary handoff of unfinished work or responsibility; the local ledger remains untracked.
 
-### demo 页 / Demo pages
+### 应用页与系统工具 / App pages and system tools
 
-每个文件只导出 `app_desc_t`。顺序与 `app_registry.c` 一致。
+每个文件只导出 `app_desc_t`。一级应用顺序与 `app_registry.c` 一致；底层硬件诊断由 `app_system_tools.c` 的工具表索引。
 
-One file, one `app_desc_t`. Order matches `app_registry.c`.
+One file, one `app_desc_t`. Root app order matches `app_registry.c`; low-level diagnostics are indexed by the tool table in `app_system_tools.c`.
 
-| 文件 / File | 演示 / Demo | 依赖 / Depends on |
+| 文件 / File | 功能 / Role | 依赖 / Depends on |
 | --- | --- | --- |
-| `app_home.c` | 概览：I2C 普查、识别码、电池、构建时间。/ Overview. | `read_pico`, `read_pico_pmu` |
-| `app_refresh.c` | GC16 / DU / 灰阶梯子与耗时。/ Refresh matrix. | `epdiy`, `e0470_epaper_waveform` |
-| `app_reading.c` | 内置正文翻页。/ Reading demo. | `ttf_font` |
-| `app_touch.c` | 两点跟手连续 DU、深睡唤醒。/ Touch + continuous DU. | `cst836u`, `continuous_du` |
-| `app_axis.c` | 读数页 Live/Tap/Orient 与诊断页 Setup/Event/FIFO/Test。/ IMU pages. | `sc7a20h` |
-| `app_power.c` | 电池与 SY7636A 只读。/ Battery + rails. | `read_pico_pmu`, `sy7636a` |
-| `app_pmu.c` | CW32 协议五视图。/ Protocol views. | `read_pico_pmu` |
-| `app_key.c` | 电源键原始事件。/ Power-key events. | `read_pico_pmu` |
-| `app_sleep.c` | 浅睡 / 深睡 / 关机。/ Sleep modes. | `sleep`, `read_pico_pmu`, `sc7a20h` |
-| `app_sd.c` | TF 卡与蜂鸣器。/ Card + buzzer. | `read_pico_sd`, `read_pico_buzzer` |
-| `app_font_pick.c` | 卡上 TTF 列表与字重。/ Font picker. | `ttf_font` |
-| `app_ioe.c` | FCA9555 Port-0。/ Expander pins. | `fca9555` |
-| `app_selftest.c` | 设备功能自检入口。/ Device self-test UI. | `pmu_selftest` |
-| `app_book.c` | TXT / EPUB 书架、目录、字号与逐书进度；晃动翻页实验默认关。/ TXT / EPUB shelf, TOC, size and per-book progress; experimental shake defaults off. | `book_*`, `ttf_font` |
-| `app_transfer.c` | 设备热点/已有 WiFi 传 TXT/EPUB 与 TF 卡 TTF 字体，触屏/网页配网与热点二维码，离页停止；停留期间不计空闲自动休眠；停止按钮返回进入前的位置。/ AP/STA book and TF font upload with touchscreen/web provisioning and hotspot QR; stops on exit; idle auto-sleep does not run while the page is current; the stop button returns to the entry origin. | `read_pico_transfer`, `book_store` |
+| `app_pico_home.c` | Pico OS 默认桌面与日常应用入口。/ Pico OS launcher and daily app entry points. | `ui_kit` |
+| `app_book.c` | 一级应用：TXT / EPUB 书架、目录、字号、逐书进度、书签和摘录。/ Root app: TXT / EPUB shelf, TOC, size, progress, bookmarks and excerpts. | `book_*`, `ttf_font` |
+| `app_transfer.c` | 一级应用：设备热点/已有 WiFi 传书与 TF 字体上传。/ Root app: WiFi book and TF font transfer. | `read_pico_transfer`, `book_store` |
+| `app_web.c` | 一级应用：静态抓取 HTTP/HTTPS 网页正文并开放同网剪藏入口。/ Root app: static HTTP/HTTPS page reader and local browser-clip endpoint. | `read_pico_transfer`, `html_text`, `book_layout`, `esp_http_client` |
+| `app_feeds.c` | 一级应用：订阅书库（RSS / OPDS / WebDAV）入口。/ Root app: feeds and online library entry. | `ui_kit`, `ui_menu` |
+| `app_sketch.c` | 一级应用：手写便签与 PNG 导出。/ Root app: handwritten sketch pad with PNG export. | `settings`, `read_pico_sd`, `ui_kit`, `ui_menu` |
+| `app_focus.c` | 一级应用：桌面时钟与前台番茄钟。/ Root app: desk clock and foreground pomodoro timer. | `settings`, `reading_stats`, `read_pico_pmu`, `read_pico_buzzer` |
+| `app_agent.c` | 一级应用：活动期间订阅 MQTT/TLS；接收分页文字和 HTTPS 锁屏图片。/ Root app: subscribe to MQTT/TLS while active; receive paginated text and HTTPS lock-screen images. | `read_pico_transfer`, `book_layout`, `book_image`, `esp-mqtt` |
+| `app_home.c` | 一级应用：I2C 普查、识别码、电池、构建时间。/ Root app: device and system status. | `read_pico`, `read_pico_pmu` |
+| `app_personal.c` | 一级应用：个人看板与锁屏主题。/ Root app: personal dashboard and lock-screen theme. | `settings`, `reading_stats`, `read_pico_pmu`, `read_pico_sd` |
+| `app_selftest.c` | 一级应用：设备探活与 PMU 命令 ACK 自检。/ Root app: device probe and PMU command self-test. | `pmu_selftest` |
+| `app_font_pick.c` | 一级应用：预览并切换内置或 TF 卡字体。/ Root app: preview and switch built-in or TF card fonts. | `ttf_font`, `settings`, `read_pico_sd` |
+| `app_system_tools.c` | 二级入口：集中导航至硬件诊断与开发辅助页。/ Nested index for hardware diagnostics and development helpers. | tool app descriptors |
+| `app_settings.c` | 一级应用：统一设备设置与 Wi-Fi OTA 系统更新。/ Root app: unified device settings and Wi-Fi OTA updates. | `settings`, `ota_update`, `ui_gesture` |
+| 其余 `app_*.c` / Other `app_*.c` | 系统工具中的刷新、阅读、触摸、传感器、电源、睡眠、存储、字体与 IOE 页面。/ Refresh, reading, touch, sensor, power, sleep, storage, font and IOE tools. | varies |
 
-加页：在 `main/apps/` 新建文件，实现需要的回调，把它加入 `app_registry.c` 的 `s_apps[]`。不要改 `app_loop.c`。
+新增一级应用：把页面加入 `app_registry.c`；新增硬件诊断：把页面加入 `app_system_tools.c` 的工具表。不要改 `app_loop.c`。
 
-To add a page: new file in `main/apps/`, implement the callbacks you need, append it to `s_apps[]` in `app_registry.c`. Leave `app_loop.c` alone.
+Add root apps to `app_registry.c`; add hardware diagnostics to the tool table in `app_system_tools.c`. Leave `app_loop.c` alone.
 
 ## `app_desc_t` 契约 / Contract
 
@@ -109,13 +117,13 @@ Defined in [`main/app/app.h`](main/app/app.h). The loop presents via `app_presen
 - `on_touch()` / `on_gesture()` / `on_key()` / `on_tick()`：可有副作用，用返回值要刷屏。/ Side effects OK; return the redraw.
 - `on_key_long()` 可选：仅接管三键的页面在同键单指保持500ms后触发一次，原按下动作先执行；滑出、多点、读错、睡眠、字体重载或切页取消。/ Optional owned-key hold callback fires once at 500ms after the normal press; leaving, multitouch, read errors, sleep, font reload and page switches cancel.
 - `on_gesture()` 可选；提供后不再接收 `on_touch()`。主循环负责识别与全局中断取消，页面解释动作。/ Optional gesture callback replaces `on_touch`; the loop recognizes and cancels, the page interprets.
-- `on_key()` 默认只收 `UI_KEY_1`；`owns_keys` 页面在菜单关闭时接收三键，并须提供强刷和演示菜单出口。/ Normally KEY1 only; `owns_keys` pages receive all three outside the menu and must expose full refresh and the demo menu.
+- `on_key()` 默认只收 `UI_KEY_1`；`owns_keys` 页面在菜单关闭时接收三键，并须提供强刷和应用菜单出口。/ Normally KEY1 only; `owns_keys` pages receive all three outside the menu and must expose full refresh and the app menu.
 
 标志：
 
 - `holds_pmu`：长时间独占 PMU（自检）。主循环的锁屏按键轮询让路。/ Page owns the PMU; lock-key poll yields.
 - `owns_keys`：接管三键；不影响菜单打开时的全局键和菜单把手。/ Own all three keys outside the menu; global menu keys and the handle remain.
-- `enter_full`：进页走 `APP_REDRAW_FULL`，避免差分刷留边。/ Enter with a full refresh.
+- 页面切换与菜单打开/返回统一走整屏 GC16；图书每次翻页整屏 GC16。/ App switches, menu open/return and each book turn use full-screen GC16.
 
 `app_ctx_t.request_app` 非空时，主循环在本轮末尾切页；`request_menu` 请求打开根菜单。同时设置时切页优先。/ At tick end, `request_app` switches pages and `request_menu` opens the root menu; a page request takes priority.
 
@@ -151,6 +159,7 @@ A `冻结 / Frozen:` block is a decision, not a hint. Change the behavior only a
 - 面板 VCOM 存在 PMU 里。主机开机读一次，不写 ESP NVS，产品页不提供修改入口。标定页（`vcom_setup.c`）是未标定时的出厂拦住路径。/ VCOM lives in the PMU. Host reads once. No NVS copy. No product UI to edit it. `vcom_setup.c` is the factory gate when unset.
 - 不要写 SY7636A 的 VCOM / VLDO / 放电 / 延时 / VCOMCTL。电源页只读。/ Do not write SY7636A VCOM / VLDO / discharge / delay / VCOMCTL. Power page is read-only.
 - `sdkconfig.defaults` 的 120 MHz 时序依赖真机 Zbit flash。覆盖 HPM 表见 `read_pico_flash_hpm.c`。/ 120 MHz timing needs the onboard Zbit part. HPM override is `read_pico_flash_hpm.c`.
+- 浏览器发布固件必须使用 `sdkconfig.defaults`，不得使用仅编译检查的 `sdkconfig.ci`；`web/manifest.json` 的 ESP32-S3 合并镜像路径须与部署产物保持一致。/ Browser releases must use `sdkconfig.defaults`, never compile-only `sdkconfig.ci`; keep the ESP32-S3 merged image path in `web/manifest.json` aligned with the deployed artifact.
 - 不要改 `components/epdiy/**` 来“整理注释”。/ Do not touch `components/epdiy/**` for comment cleanup.
 - 不要手改 `main/font/fallback.h`、`main/font/stb_truetype.h`、`components/e0470_epaper_waveform/waveforms/*.h`。/ Do not hand-edit generated or vendored tables.
 - 不改 UI 字面量或日志字符串，除非任务明确要求。/ Do not change UI strings or log text unless asked.

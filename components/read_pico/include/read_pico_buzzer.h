@@ -77,6 +77,8 @@ void read_pico_buzzer_duty_map_get(buzzer_duty_map_t *map);
 esp_err_t read_pico_buzzer_duty_map_set(const buzzer_duty_map_t *map);
 
 esp_err_t read_pico_buzzer_effect(void);
+/// 全局静音；启用时拒绝新的蜂鸣器音效与音调。/ Global mute; reject new buzzer effects and tones while enabled.
+void read_pico_buzzer_set_muted(bool muted);
 
 #ifdef __cplusplus
 }

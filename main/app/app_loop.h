@@ -23,6 +23,9 @@ typedef struct {
     bool sensor_ready;
     /// 开机停在哪一页。断电续跑自检时是自检页，平时是概览页。/ First page: self-test when resuming a power-cut run, otherwise overview.
     const app_desc_t* first_app;
+    /// 可选后台服务轮询（如 BLE 控制通道）；返回 true 表示有远程活动以重置空闲休眠计时。
+    /// Optional background service poll (such as BLE companion control); return true on remote activity to reset idle sleep.
+    bool (*on_bg_tick)(app_ctx_t* ctx, const app_desc_t* current, bool menu_open);
 } app_loop_config_t;
 
 /// 不返回。/ Does not return.

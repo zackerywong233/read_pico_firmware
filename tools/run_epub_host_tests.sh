@@ -12,9 +12,9 @@ export UBSAN_OPTIONS=halt_on_error=1
 cd "$(dirname "$0")/.."
 mkdir -p build/book-tests
 
-python tools/gen_book_fixtures.py
-python tools/test_zip_reader.py
-python tools/test_book_epub.py
+python3 tools/gen_book_fixtures.py
+python3 tools/test_zip_reader.py
+python3 tools/test_book_epub.py
 
 flags=(-std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-omit-frame-pointer)
 includes=(-Itools/book_epub_stubs -Itools/zip_host_stubs -Imain/book)
@@ -24,7 +24,7 @@ build/book-tests/epub-html
 # 同时链接 TXT 与 EPUB，防止分派变更破坏旧书源。
 # Link TXT and EPUB together so dispatch changes retain the existing source behavior.
 cc "${flags[@]}" "${includes[@]}" tools/book_source_host_test.c \
-    main/book/book_source.c main/book/book_txt.c main/book/gbk.c \
+    main/book/book_source.c main/book/book_txt.c main/book/book_md.c main/book/book_cbz.c main/book/gbk.c \
     main/book/book_epub.c main/book/zip_reader.c main/book/html_text.c main/book/book_image.c main/book/vendor/tjpgd.c \
     -lz -o build/book-tests/epub-source
 shopt -s nullglob

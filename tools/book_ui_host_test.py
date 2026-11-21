@@ -51,13 +51,15 @@ unit = r'''
 #define MALLOC_CAP_8BIT 2
 #define ESP_LOGI(...) ((void)0)
 typedef int esp_err_t;
-typedef struct {int leaf;bool request_menu;} app_ctx_t;
-typedef enum {APP_REDRAW_PAGE,APP_REDRAW_AREA,APP_REDRAW_NONE} app_redraw_t;
+typedef struct {int leaf;bool request_menu;int64_t now_ms;} app_ctx_t;
+typedef enum {APP_REDRAW_PAGE,APP_REDRAW_AREA,APP_REDRAW_NONE,APP_REDRAW_FULL} app_redraw_t;
 typedef struct {int x,y,width,height;} EpdRect;
 static EpdRect ui_bar_rect(int i,int count){int width=(508-(count-1)*12)/count;return(EpdRect){40+i*(width+12),1096,width,96};}
 static bool ui_rect_hit(EpdRect r,int x,int y){return x>=r.x&&x<r.x+r.width&&y>=r.y&&y<r.y+r.height;}
 typedef struct {char name[256],path[288];uint32_t size;bool is_flash,has_progress;uint8_t pct;uint32_t recent;bool selected,removed,search_match;} shelf_entry_t;
 #define BOOK_ROWS 7
+#define BOOK_SEARCH_RESULTS 7
+#define BOOK_NOTE_ROWS 8
 #define UI_BTN_H 84
 static EpdRect ui_row_rect(int i,int count,int y,int height){EpdRect r=ui_bar_rect(i,count);r.y=y;r.height=height;return r;}
 static char s_query[65],s_search_draft[65],s_batch_message[128];
@@ -70,7 +72,7 @@ static bool s_recent_sort;
 static shelf_entry_t* s_shelf;
 static size_t s_shelf_capacity;
 static int s_count,s_visible_count;
-static char s_message[128],s_shelf_warning[128],s_storage[128];
+static char s_message[128],s_shelf_warning[128],s_storage[128],s_book_name[128];
 static bool s_pending_invalidated,test_oom,test_degraded;
 static unsigned s_store_revision;
 typedef struct {char path[288];bool is_flash;} book_store_root_t;
@@ -106,6 +108,8 @@ static int s_unsaved,s_px=48;
 static uint32_t s_file_size=1000;
 static size_t s_chapter,s_page;
 typedef struct {char* image_src;bool image_repeated;uint16_t image_first_chapter;bool image_title;} blk_t;
+typedef struct {size_t bookmark_count,excerpt_count;} book_notes_t;
+static book_notes_t s_notes;
 static blk_t* s_blocks;
 static size_t s_block_count;
 static bool s_image_open;
@@ -132,7 +136,7 @@ static void invalidate_prep(void){}
 static shelf_entry_t s_managed;
 static bool s_delete_confirm,s_file_removed,s_clear_confirm;
 static char s_manage_message[128];
-typedef enum {SHELF,READING,TOC,MANAGE,BULK,SEARCH} book_view_t;
+typedef enum {SHELF,READING,TOC,MANAGE,BULK,SEARCH,BOOKMARKS,EXCERPTS,TYPOGRAPHY,CHAPTER_RESULTS} book_view_t;
 static book_view_t s_view,s_search_parent;
 #define UI_KEY_1 1
 #define UI_KEY_2 2
@@ -140,14 +144,27 @@ static book_view_t s_view,s_search_parent;
 static int s_pressed_control;
 static bool s_scan_pending,s_toolbar;
 static bool s_resume_pending,s_full,s_shake_enabled;
+static bool s_chapter_search;
+static size_t s_chapter_matches[BOOK_SEARCH_RESULTS],s_chapter_match_count,s_text_len;
+static bool s_note_delete_confirm,s_note_delete_index_valid,s_reader_landscape;
+static int64_t s_reading_tick_ms;
+static uint32_t s_reading_acc_ms;
 static int s_du_count;
 static int64_t s_size_settle_ms,s_poll_ms;
 static void* s_prep_task,*s_prep_done,*s_draw_lock,*s_next_fb;
 static void ensure_prep(void){}
 static int app_settings_book_px(void){return 48;}
-static bool app_settings_book_shake(void){return false;}
 static void read_pico_sd_start_probe(void){}
 static void sensor_set(app_ctx_t* ctx,bool on){(void)ctx;(void)on;}
+static bool reader_sensor_required(void){return false;}
+static int app_settings_book_rotation(void){return 0;}
+static int app_settings_book_gesture(void){return 0;}
+static void reading_stats_set_last_book(const char* name,uint8_t pct){(void)name;(void)pct;}
+static void reading_stats_add_seconds(uint32_t seconds){(void)seconds;}
+static void reader_rotation_end(void){}
+static void reader_touch_map(uint16_t* x,uint16_t* y){(void)x;(void)y;}
+static app_redraw_t delete_note(app_ctx_t* ctx){(void)ctx;return APP_REDRAW_PAGE;}
+static size_t book_text_search(const char* text,size_t len,const char* query,size_t from,size_t* offsets,size_t cap){(void)text;(void)len;(void)query;(void)from;(void)offsets;(void)cap;return 0;}
 static void vTaskDelete(void* p){(void)p;}
 static void vSemaphoreDelete(void* p){(void)p;}
 static unsigned test_turns;

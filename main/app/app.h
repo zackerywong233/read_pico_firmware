@@ -2,17 +2,17 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * demo 页的统一接口。每个页面是一个 app_desc_t，放在 main/apps/ 下自己的文件里，
+ * 固件应用页的统一接口。每个页面是一个 app_desc_t，放在 main/apps/ 下自己的文件里，
  * 绘制、命中、轮询和页内状态都封在那一个文件中；app_loop.c 只按这套回调调度，
  * 加一个页面不必再改主循环。
  *
- * Shared page contract. Each page is an app_desc_t in its own main/apps/ file.
+ * Shared firmware app contract. Each page is an app_desc_t in its own main/apps/ file.
  * Draw, hit-test, poll and page state stay there. app_loop.c only dispatches
  * these callbacks; adding a page does not touch the loop.
  *
  * 冻结：手势回调替代旧触摸回调；三键接管页须保留强刷与菜单出口。
  * Frozen: Gesture callbacks replace legacy touch callbacks. Pages owning keys
- * must retain full refresh and menu exits.
+ * must retain full refresh and app-menu exits.
  * 冻结：返回恢复最近切页来源，菜单来源保留菜单位置。
  * Frozen: Return restores the latest page origin, preserving its menu position.
  */
@@ -84,6 +84,12 @@ typedef struct {
     /// 返回最近切页来源；菜单来源直接恢复菜单，无历史打开当前所属菜单；优先于其它请求。
     /// Return to the latest page origin and its menu; no history opens the current menu leaf. Overrides other requests.
     bool request_return;
+    /// 本轮末对当前页执行整屏 GC16 强刷（不切页且菜单关闭时生效）。
+    /// Request a full GC16 redraw of the current page at tick end (when no navigation or menu is active).
+    bool request_redraw;
+    /// 本轮末走全局锁屏路径（页面未 holds_pmu 且无切页请求时生效）。
+    /// Request the global lock/sleep flow at tick end (ignored when holds_pmu or navigation is pending).
+    bool request_lock;
 } app_ctx_t;
 
 struct app_desc_s {
@@ -93,9 +99,6 @@ struct app_desc_s {
     /// true = 这一页会长时间独占 PMU，主循环的锁屏按键轮询要让路（设备功能自检）。
     /// / true = page owns the PMU; lock-key poll yields (device self-test).
     bool holds_pmu;
-    /// true = 进页走 APP_REDRAW_FULL（均衡配置下整屏 GC16）。内容和上一页差别大的页面用，避免差分刷留边。
-    /// / true = enter with APP_REDRAW_FULL so a differential update does not leave a seam.
-    bool enter_full;
     /// 菜单关闭时接管三键，页面必须提供强刷和菜单入口。
     /// Own all three keys outside the menu; provide full refresh and menu exits.
     bool owns_keys;
@@ -136,12 +139,10 @@ struct app_desc_s {
     void* user;
 };
 
-// 锁屏：浅睡按键或拿起回原页；软睡 EN=0，再短按开机；关机 EN=0，长按开机。
-// Lock: light-sleep key or pickup returns to the page; soft sleep drops EN
-// and a short press powers on; power-off drops EN and needs a long press.
-// 无操作满这段时间走同一条锁屏路径，档位仍由睡眠设置决定。
-// Idle this long, then the same lock path; the sleep setting still picks the mode.
-#define APP_AUTO_SLEEP_MS (2 * 60 * 1000)
+// 锁屏默认软睡，侧键短按开机；浅睡按键或拿起回原页；显式关机后需长按开机。
+// Default lock uses soft sleep and a short power-key press to boot; light sleep returns on key or pickup; explicit power-off needs a long press.
+// 无操作达到睡眠页设置的时长后走同一条锁屏路径；0 表示关闭自动锁屏。
+// After the Sleep page's idle interval, use the same lock path; 0 disables auto-lock.
 #define APP_LOCK_POLL_MS 200
 #define APP_LOCK_IGNORE_BOOT_MS 2000
 #define APP_LOCK_IGNORE_SELFTEST_MS 2000

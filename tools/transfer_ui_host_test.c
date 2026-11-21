@@ -7,6 +7,17 @@
  */
 #include "transfer_ui_test_env.h"
 #include "../main/apps/app_transfer.c"
+
+const app_desc_t app_focus = { .title = "专注时钟 Focus" };
+static app_focus_status_t test_focus = { .running = false, .duration_min = 25, .completed_count = 3 };
+void app_focus_get_status(app_focus_status_t* out) { *out = test_focus; }
+bool app_focus_remote_start(int minutes) {
+    if (minutes != 15 && minutes != 25 && minutes != 45) return false;
+    test_focus.running = true; test_focus.is_break = false; test_focus.duration_min = (uint16_t)minutes;
+    test_focus.remaining_sec = (uint32_t)minutes * 60U;
+    return true;
+}
+void app_focus_remote_stop(void) { test_focus.running = false; test_focus.remaining_sec = 0; }
 #include <assert.h>
 static void tap(app_ctx_t* ctx, EpdRect rect) {
     ui_gesture_event_t ev = {.type = UI_GESTURE_PRESS, .x0 = rect.x + 2, .y0 = rect.y + 2, .x = rect.x + 2, .y = rect.y + 2};
@@ -156,7 +167,28 @@ int main(void) {
     test_scan_error = ESP_FAIL;
     tap(&ctx, network_control_rect(8));
     network_ui_tick(&ctx);
-    assert(!s_network_count && s_network_message[0]);
+    assert(!s_network_count && strstr(s_network_message, "FFFF") != NULL);
+    // 蓝牙未连接时直接暂停并恢复；已连接时共存失败后自动暂停 BLE 重试并恢复。
+    // Idle BLE pauses/resumes around scan; connected BLE retries with a brief pause after a coex failure.
+    test_scan_error = ESP_OK;
+    test_scan_count = 3;
+    test_ble_connected = false;
+    test_ble_suspended = false;
+    int susp_before = test_ble_suspend_calls, res_before = test_ble_resume_calls;
+    test_scan_fail_when_ble_active = true;
+    tap(&ctx, network_control_rect(8));
+    network_ui_tick(&ctx);
+    assert(s_network_count == 3 && !s_network_message[0]);
+    assert(test_ble_suspend_calls == susp_before + 1 && test_ble_resume_calls == res_before + 1 && !test_ble_suspended);
+    test_ble_connected = true;
+    susp_before = test_ble_suspend_calls; res_before = test_ble_resume_calls;
+    int scans_before = test_scan_calls;
+    tap(&ctx, network_control_rect(8));
+    network_ui_tick(&ctx);
+    assert(s_network_count == 3 && test_scan_calls == scans_before + 2);
+    assert(test_ble_suspend_calls == susp_before + 1 && test_ble_resume_calls == res_before + 1 && !test_ble_suspended);
+    test_ble_connected = false;
+    test_scan_fail_when_ble_active = false;
     tap(&ctx, network_control_rect(6));
     assert(s_view == TRANSFER_HOME && s_start_pending && s_mode == READ_PICO_TRANSFER_MODE_STA);
     int stops_before = test_stop_count;
@@ -185,5 +217,103 @@ int main(void) {
     s_root.is_flash = true;
     app_transfer.on_media_lost(&ctx);
     assert(test_stop_count == stops_before + 1);
+
+    // 配套接口回调：设置延迟同步与远程空闲切换存储。/ Companion callbacks: deferred settings sync and remote idle storage switch.
+    on_enter(&ctx);
+    on_tick(&ctx);
+    assert(test_last_cfg.settings_get_cb && test_last_cfg.settings_set_cb);
+    assert(test_last_cfg.storage_info_cb && test_last_cfg.storage_switch_cb);
+    read_pico_device_settings_t got_settings = {0};
+    assert(test_last_cfg.settings_get_cb(&got_settings, test_last_cfg.settings_ctx));
+    assert(got_settings.book_px == 48 && got_settings.timezone_min == 480);
+    got_settings.book_px = 56;
+    got_settings.timezone_min = 0;
+    got_settings.charge_led = false;
+    int apply_before = test_runtime_apply_calls;
+    assert(test_last_cfg.settings_set_cb(&got_settings, test_last_cfg.settings_ctx) == ESP_OK);
+    assert(test_runtime_apply_calls == apply_before);
+    on_tick(&ctx);
+    assert(test_runtime_apply_calls == apply_before + 1);
+    assert(test_settings.book_px == 56 && test_settings.timezone_min == 0 && !test_settings.charge_led);
+
+    s_storage_info.flash_available = true;
+    s_storage_info.sd_available = true;
+    test_busy = true;
+    stops_before = test_stop_count;
+    assert(test_last_cfg.storage_switch_cb(true, test_last_cfg.storage_ctx));
+    on_tick(&ctx);
+    assert(test_stop_count == stops_before);
+    test_busy = false;
+    assert(on_tick(&ctx) == APP_REDRAW_PAGE);
+    assert(test_stop_count == stops_before + 1 && s_start_pending);
+    on_tick(&ctx);
+    assert(!s_start_pending);
+
+    // 对时延迟写入、字体切换、看板统计与 PIN 复位。/ Deferred time sync, font select, dashboard stats and PIN reset.
+    assert(test_last_cfg.time_get_cb && test_last_cfg.time_set_cb);
+    assert(test_last_cfg.font_select_cb && test_last_cfg.dashboard_stats_cb);
+    read_pico_time_info_t tinfo = {0};
+    assert(test_last_cfg.time_get_cb(&tinfo, test_last_cfg.time_ctx) && tinfo.time_valid);
+    int time_calls_before = test_time_set_calls;
+    assert(test_last_cfg.time_set_cb(1763729999U, true, 540, test_last_cfg.time_ctx) == ESP_OK);
+    assert(test_time_set_calls == time_calls_before);
+    on_tick(&ctx);
+    assert(test_time_set_calls == time_calls_before + 1 && test_utc_time == 1763729999U && test_settings.timezone_min == 540);
+    assert(test_last_cfg.font_select_cb("/sdcard/fonts/New.ttf", test_last_cfg.font_ctx) == ESP_OK);
+    assert(!strcmp(test_settings.font_path, "/sdcard/fonts/New.ttf"));
+    read_pico_dashboard_stats_t dstats = {0};
+    assert(test_last_cfg.dashboard_stats_cb(&dstats, test_last_cfg.dashboard_ctx));
+    assert(dstats.total_reading_sec == 3661U && dstats.has_last_book && dstats.last_book_percent == 42 && dstats.has_excerpt);
+    assert(test_pin_reset_calls > 0 && test_pmu_poll_calls > 0);
+
+    // BLE 远程启动/切模式/停止钩子：上传忙时拒绝切换和停止，空闲时正常切换与返回。
+    // BLE remote start/switch/stop hooks: refuse while busy, switch mode and request return when idle.
+    app_transfer_set_preferred_mode(READ_PICO_TRANSFER_MODE_STA);
+    on_enter(&ctx);
+    assert(s_mode == READ_PICO_TRANSFER_MODE_STA && s_start_pending);
+    on_tick(&ctx);
+    assert(!s_start_pending);
+    test_busy = true;
+    assert(!app_transfer_remote_switch_mode(READ_PICO_TRANSFER_MODE_AP));
+    assert(!app_transfer_remote_stop(&ctx));
+    test_busy = false;
+    assert(app_transfer_remote_switch_mode(READ_PICO_TRANSFER_MODE_AP));
+    assert(s_mode == READ_PICO_TRANSFER_MODE_AP && s_start_pending);
+    ctx.request_return = false;
+    assert(app_transfer_remote_stop(&ctx));
+    assert(ctx.request_return && !s_start_pending);
+
+    // 传书页收到 /webopen 链接时应排队并自动请求切入网页阅读页。
+    // Transfer page receiving a /webopen URL queues it and requests switching to app_web.
+    on_enter(&ctx);
+    on_tick(&ctx);
+    ctx.request_app = NULL;
+    snprintf(test_pending_webopen, sizeof(test_pending_webopen), "https://example.com/article");
+    test_queued_web_url[0] = 0;
+    on_tick(&ctx);
+    assert(ctx.request_app == &app_web);
+    assert(strcmp(test_queued_web_url, "https://example.com/article") == 0);
+
+    // 图书进度、网页收藏夹与专注时钟伴侣回调验证。
+    // Book progress, web bookmarks and focus timer companion callback checks.
+    assert(test_last_cfg.book_progress_cb && test_last_cfg.webmarks_list_cb &&
+           test_last_cfg.webmarks_upsert_cb && test_last_cfg.webmarks_delete_cb &&
+           test_last_cfg.focus_get_cb && test_last_cfg.focus_ctrl_cb);
+    read_pico_book_progress_t bp = {0};
+    assert(test_last_cfg.book_progress_cb("/sdcard/books/prog.txt", 1024, &bp, test_last_cfg.book_progress_ctx));
+    assert(bp.has_progress && bp.percent == 65 && bp.chapter == 2 && bp.byte_off == 512);
+    assert(test_last_cfg.webmarks_upsert_cb("示例", "https://example.com", test_last_cfg.webmarks_ctx) == ESP_OK);
+    read_pico_webmark_t wm[4];
+    assert(test_last_cfg.webmarks_list_cb(wm, 4, test_last_cfg.webmarks_ctx) == 1);
+    assert(strcmp(wm[0].url, "https://example.com") == 0);
+    assert(test_last_cfg.webmarks_delete_cb("https://example.com", test_last_cfg.webmarks_ctx) == ESP_OK);
+    assert(test_last_cfg.webmarks_list_cb(wm, 4, test_last_cfg.webmarks_ctx) == 0);
+    read_pico_focus_status_t fs = {0};
+    assert(test_last_cfg.focus_get_cb(&fs, test_last_cfg.focus_ctx) && !fs.running && fs.completed_count == 3);
+    ctx.request_app = NULL;
+    assert(test_last_cfg.focus_ctrl_cb(true, 45, test_last_cfg.focus_ctx) == ESP_OK);
+    on_tick(&ctx);
+    assert(ctx.request_app == &app_focus && test_focus.running && test_focus.duration_min == 45);
+
     puts("transfer_ui_host_test: PASS");
 }

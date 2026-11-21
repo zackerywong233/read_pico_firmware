@@ -6,6 +6,11 @@
  *
  * Device self-test. Live probes are real measurements; the rest send a command
  * and watch ACK. Power-cut items only record results in the backend.
+ *
+ * 冻结：只把实际执行且失败的项目记为失败；PMU 未就绪或前置探活失败时，未执行项必须记为跳过。
+ * 原因：避免一次通信故障被显示成整组硬件故障。
+ * Frozen: Mark only executed checks as failed. Mark unexecuted checks skipped
+ * when the PMU or a prerequisite probe fails, avoiding cascaded false failures.
  */
 
 #include "pmu_selftest.h"
@@ -141,14 +146,36 @@ static void wr32(uint8_t* p, uint32_t v) {
     p[3] = (uint8_t)(v >> 24);
 }
 
+static bool pmu_fw_compatible(uint8_t major, uint8_t minor, uint8_t patch) {
+    // 兼容同主版本且版本号不低于主机最低要求的 PMU 固件。
+    // Accept PMU firmware on the same major version that meets the host minimum version.
+    const uint32_t fw_ver = ((uint32_t)minor << 8) | patch;
+    const uint32_t min_ver = ((uint32_t)PMU_FW_MINOR << 8) | PMU_FW_PATCH;
+    return major == PMU_FW_MAJOR && fw_ver >= min_ver;
+}
+
 static bool run_ident(void) {
-    if (read_pico_pmu_refresh() != ESP_OK) return false;
+    if (read_pico_pmu_refresh() != ESP_OK) {
+        snprintf(s_detail, sizeof(s_detail), "PMU 读取失败：%s",
+                 esp_err_to_name(read_pico_pmu_get()->last_err));
+        return false;
+    }
     const pmu_snapshot_t* s = read_pico_pmu_get();
-    if (!s->identity_ok || s->device_id != PMU_DEVICE_ID) return false;
-    if (s->proto_major != 1) return false;
-    if (s->fw_major != PMU_FW_MAJOR) return false;
-    if (s->fw_minor != PMU_FW_MINOR) return false;
-    return s->fw_patch >= PMU_FW_PATCH;
+    if (!s->identity_ok || s->device_id != PMU_DEVICE_ID) {
+        strlcpy(s_detail, "设备 ID 不匹配", sizeof(s_detail));
+        return false;
+    }
+    if (s->proto_major != 1) {
+        snprintf(s_detail, sizeof(s_detail), "协议版本不匹配：%u.%u",
+                 s->proto_major, s->proto_minor);
+        return false;
+    }
+    if (!pmu_fw_compatible(s->fw_major, s->fw_minor, s->fw_patch)) {
+        snprintf(s_detail, sizeof(s_detail), "PMU 固件版本不兼容：%u.%u.%u",
+                 s->fw_major, s->fw_minor, s->fw_patch);
+        return false;
+    }
+    return true;
 }
 
 static bool run_handshake(void) {
@@ -347,13 +374,16 @@ void pmu_selftest_run_probe(void) {
     s_blob.magic = BLOB_MAGIC;
     recount();
     if (!read_pico_pmu_ready()) {
-        for (int i = 0; i < PMU_ST_CMD_END; i++) {
-            mark(i, PMU_ST_RES_FAIL, "PMU 未就绪");
-        }
+        const pmu_snapshot_t* snap = read_pico_pmu_get();
+        const char* reason = snap->last_err != ESP_OK
+            ? esp_err_to_name(snap->last_err) : "PMU 未就绪，请检查连接或固件";
+        mark(PMU_ST_IDENT, PMU_ST_RES_FAIL, reason);
+        for (int i = PMU_ST_IDENT + 1; i < PMU_ST_CMD_END; i++)
+            mark(i, PMU_ST_RES_SKIP, NULL);
         for (int i = PMU_ST_CMD_END; i < PMU_ST_COUNT; i++) {
             mark(i, PMU_ST_RES_SKIP, NULL);
         }
-        hint("PMU 未就绪");
+        hint(reason);
         recount();
         save_blob();
         return;
@@ -362,11 +392,12 @@ void pmu_selftest_run_probe(void) {
     bool gate_ok = true;
     for (int i = 0; i < PMU_ST_CMD_END; i++) {
         if (!gate_ok) {
-            mark(i, PMU_ST_RES_FAIL, "探活未过");
+            mark(i, PMU_ST_RES_SKIP, NULL);
             continue;
         }
         if (i2c_dead()) {
-            mark(i, PMU_ST_RES_FAIL, "I2C 中断");
+            mark(i, PMU_ST_RES_FAIL,
+                 esp_err_to_name(read_pico_pmu_get()->last_err));
             gate_ok = false;
             continue;
         }
@@ -375,9 +406,22 @@ void pmu_selftest_run_probe(void) {
             continue;
         }
         bool ok = run_case(i);
+        if (!ok && s_detail[0] == '\0') {
+            const pmu_snapshot_t* snap = read_pico_pmu_get();
+            if (snap->last_err != ESP_OK) {
+                snprintf(s_detail, sizeof(s_detail), "%s",
+                         esp_err_to_name(snap->last_err));
+            } else if (snap->last_op_status != PMU_STATUS_OK
+                       && snap->last_op_status != PMU_STATUS_ACCEPTED) {
+                snprintf(s_detail, sizeof(s_detail), "%s",
+                         pmu_status_name(snap->last_op_status));
+            } else {
+                strlcpy(s_detail, "检查条件不满足", sizeof(s_detail));
+            }
+        }
         mark(i, ok ? PMU_ST_RES_PASS : PMU_ST_RES_FAIL,
-             s_detail[0] ? s_detail : (ok ? "通过" : "断言失败"));
-        if (i < PMU_ST_GATE_END && !ok) gate_ok = false;
+             s_detail[0] ? s_detail : "通过");
+        if (i <= PMU_ST_GATE_END && !ok) gate_ok = false;
     }
     for (int i = PMU_ST_CMD_END; i < PMU_ST_COUNT; i++) {
         mark(i, PMU_ST_RES_SKIP, NULL);
@@ -386,7 +430,7 @@ void pmu_selftest_run_probe(void) {
     save_blob();
     if (s_view.fail_n) {
         hint("探活失败");
-        note("探活失败");
+        if (!s_view.last_msg[0]) note("探活失败");
     } else {
         hint("探活通过");
         note("探活通过");

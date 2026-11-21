@@ -17,10 +17,16 @@
 
 /// 重排借用文本；空文一页，失败清空布局，超过 4096 页返回 false。/ Borrow and paginate; empty text has one page, failure clears layout, over 4096 pages fails.
 bool book_layout_build(const char* utf8, size_t len, EpdRect rect, int px);
+/// 使用指定行高百分比建立布局（135、150 或 175）；既有入口保持 150%。/ Build with a line-height percentage (135, 150 or 175); existing entry points keep 150%.
+bool book_layout_build_blocks_metrics(const char* utf8, size_t len, const blk_t* blocks, size_t count,
+                                     EpdRect rect, int px, unsigned line_height_percent);
 /// 借用块表；标题字号加8，块间单换行；原文与块表须存活至free。/ Borrow blocks; headings add 8 px, with one newline between blocks; text and blocks must outlive layout.
 bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks, size_t count, EpdRect rect, int px);
 /// 初始化并只排前两页；后续由调用方分批推进，原文继续借用。/ Initialize the first two pages; caller advances later batches while retaining source ownership.
 bool book_layout_begin_blocks(const char* utf8, size_t len, const blk_t* blocks, size_t count, EpdRect rect, int px);
+/// 使用指定行高百分比开始增量布局。/ Begin incremental pagination with the selected line-height percentage.
+bool book_layout_begin_blocks_metrics(const char* utf8, size_t len, const blk_t* blocks, size_t count,
+                                     EpdRect rect, int px, unsigned line_height_percent);
 /// 最多增加指定页数；失败清空布局，调用方必须停止阅读。/ Add at most the requested pages; failure clears layout and requires ending reading.
 bool book_layout_extend(size_t pages);
 /// 是否完成整章分页。/ Whether the whole chapter has been paginated.
@@ -39,3 +45,9 @@ size_t book_layout_page_for_offset(size_t off);
 /// 返回页首偏移；已完成页数索引是待排页起点（完成后为文本末尾），更大索引返回文本长度。
 /// Return a page start; index equal to completed count marks the pending page (EOF when complete), larger indexes return text length.
 size_t book_layout_page_start_offset(size_t page);
+/// 将基础正文区域收窄为给定左右边距，失败时返回空矩形。/ Apply symmetric side margins to a base text area; return empty on invalid input.
+EpdRect book_layout_side_margins(EpdRect rect, unsigned margin);
+/// 在 UTF-8 文本中查找匹配并返回字节偏移；ASCII 忽略大小写，其余码点按字节匹配。
+/// Search UTF-8 text and return byte offsets; ASCII is case-insensitive and non-ASCII code points match exactly.
+size_t book_text_search(const char* utf8, size_t len, const char* query,
+                        size_t from, size_t* offsets, size_t capacity);

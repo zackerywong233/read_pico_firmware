@@ -74,6 +74,7 @@
 static bool s_ledc_ready;
 static bool s_pwm_up;
 static volatile bool s_score_playing;
+static volatile bool s_muted;
 static volatile bool s_score_stop;
 static uint32_t s_carrier_hz;
 static uint32_t s_underrun;
@@ -723,6 +724,7 @@ static void score_task(void *arg) {
 }
 
 static esp_err_t start_job(uint8_t job) {
+    if (s_muted) return ESP_ERR_INVALID_STATE;
     lock_once();
     if (s_lock == NULL) {
         return ESP_ERR_NO_MEM;
@@ -791,6 +793,11 @@ esp_err_t read_pico_buzzer_effect(void) {
     return read_pico_buzzer_score_play();
 }
 
+void read_pico_buzzer_set_muted(bool muted) {
+    s_muted = muted;
+    if (muted) (void)read_pico_buzzer_score_stop();
+}
+
 static esp_err_t ledc_tone_init(void) {
     if (s_ledc_ready) {
         return ESP_OK;
@@ -827,6 +834,7 @@ static esp_err_t ledc_tone_init(void) {
 }
 
 esp_err_t read_pico_buzzer_tone(uint32_t frequency_hz, uint32_t duration_ms) {
+    if (s_muted) return ESP_ERR_INVALID_STATE;
     if (frequency_hz == 0 || duration_ms == 0) {
         return ESP_ERR_INVALID_ARG;
     }

@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * 事件循环。只做和页面无关的事：读触摸并去抖、三个实体键与菜单把手的路由、切页
- * 时调 on_exit/on_enter、按回调返回值决定怎么刷屏、电源键锁屏、无操作 2 分钟走
+ * 时调 on_exit/on_enter、按回调返回值决定怎么刷屏、电源键锁屏、无操作按设置时长走
  * 同一锁屏、SD 卡上的字体延迟加载。页面自己的状态和刷新节奏都在 main/apps/ 各自的文件里。
  *
  * Event loop for page-agnostic work: touch debounce, the three keys and
- * the menu handle, on_exit/on_enter, present, lock, the same lock after
- * 2 minutes idle, delayed SD font load.
+ * the menu handle, on_exit/on_enter, present, lock after the configured idle
+ * interval, delayed SD font load.
  * Page state and refresh cadence stay in main/apps/; gesture recognition is shared.
  *
  * 冻结：主循环只产出手势、不解释含义；只有 owns_keys 页可接管三键，
@@ -158,7 +158,7 @@ static void switch_to(
     if ((*current)->on_exit != NULL) (*current)->on_exit(ctx);
     *current = next;
     if (next->on_enter != NULL) next->on_enter(ctx);
-    app_present(ctx, next, next->enter_full ? APP_REDRAW_FULL : APP_REDRAW_PAGE);
+    app_present(ctx, next, APP_REDRAW_FULL);
     ESP_LOGI(TAG, "page -> %s", next->title);
 }
 
@@ -169,7 +169,7 @@ static void present_menu(app_ctx_t* ctx, const app_desc_t* current, int leaf, me
         guard_draw_result(ctx->hl, update_display_white(ctx->hl));
     }
     ui_draw_menu_page(ctx->fb, current, leaf);
-    guard_draw_result(ctx->hl, update_display_mode(ctx->hl, APP_PAGE_REFRESH_MODE));
+    guard_draw_result(ctx->hl, update_display_full(ctx->hl));
 }
 
 // 空槽常带着抬起事件或残留坐标，不能进页面看到的快照；抬手后保留最后一次位置。
@@ -330,6 +330,8 @@ void app_loop_run(const app_loop_config_t* config) {
         ctx.request_app = NULL;
         ctx.request_menu = false;
         ctx.request_return = false;
+        ctx.request_redraw = false;
+        ctx.request_lock = false;
         bool selected_from_menu = false;
 
         if (ctx.now_ms - last_media_poll_ms >= MEDIA_POLL_INTERVAL_MS) {
@@ -389,7 +391,7 @@ void app_loop_run(const app_loop_config_t* config) {
                 if (menu_open) {
                     menu_leaf = ui_menu_leaf_for_app(current);
                     present_menu(&ctx, current, menu_leaf, &feedback);
-                } else app_present(&ctx, current, APP_REDRAW_PAGE);
+                } else app_present(&ctx, current, APP_REDRAW_FULL);
             } else if (key >= 0 && menu_open) {
                 int next = menu_leaf + (key == UI_KEY_1 ? -1 : 1);
                 if (next >= 0 && next < ui_menu_leaf_count()) {
@@ -406,6 +408,11 @@ void app_loop_run(const app_loop_config_t* config) {
                 if (hit == UI_MENU_HIT_PREV || hit == UI_MENU_HIT_NEXT) {
                     menu_leaf += hit == UI_MENU_HIT_NEXT ? 1 : -1;
                     present_menu(&ctx, current, menu_leaf, &feedback);
+                } else if (hit == UI_MENU_HIT_HOME) {
+                    menu_open = false;
+                    ctx.request_app = app_home_page();
+                    selected_from_menu = true;
+                    if (ctx.request_app == current) app_present(&ctx, current, APP_REDRAW_FULL);
                 } else if (hit >= 0 && touch.count == 1) {
                     menu_pressed = hit;
                     menu_feedback(&ctx, current, menu_leaf, hit, true, &feedback);
@@ -465,7 +472,9 @@ void app_loop_run(const app_loop_config_t* config) {
                     last_input_ms = ctx.now_ms;
                 }
             } else if (ctx.now_ms >= s_lock_ignore_until_ms
-                       && ctx.now_ms - last_input_ms >= APP_AUTO_SLEEP_MS) {
+                       && app_settings_auto_sleep_sec() != 0
+                       && ctx.now_ms - last_input_ms
+                           >= (int64_t)app_settings_auto_sleep_sec() * 1000) {
                 ESP_LOGI(TAG, "idle lock");
                 lock_and_resume(
                     &ctx, current, &gesture, &held_key, &menu_pressed, &feedback,
@@ -512,6 +521,24 @@ void app_loop_run(const app_loop_config_t* config) {
             if (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL) held_key = -1;
             present_page(&ctx, current, &gesture, redraw);
         }
+        if (config->on_bg_tick != NULL && config->on_bg_tick(&ctx, current, menu_open)) {
+            last_input_ms = ctx.now_ms;
+        }
+        if (ctx.request_lock && !current->holds_pmu &&
+            !ctx.request_return && !ctx.request_app && !ctx.request_menu) {
+            ctx.request_lock = false;
+            ctx.request_redraw = false;
+            lock_and_resume(
+                &ctx, current, &gesture, &held_key, &menu_pressed, &feedback,
+                menu_open, menu_leaf, &media_mounted, &media_invalidated,
+                &last_media_poll_ms
+            );
+            last_input_ms = ctx.now_ms;
+        } else if (ctx.request_redraw && !menu_open &&
+                   !ctx.request_return && !ctx.request_app && !ctx.request_menu) {
+            ctx.request_redraw = false;
+            present_page(&ctx, current, &gesture, APP_REDRAW_FULL);
+        }
         if (menu_open && feedback.updates > 0
             && ctx.now_ms - feedback.last_ms >= UI_SETTLE_IDLE_MS) {
             guard_draw_result(ctx.hl, update_display_area_with(
@@ -544,7 +571,7 @@ void app_loop_run(const app_loop_config_t* config) {
                     ctx.leaf = return_leaf;
                 }
                 if (menu_open) present_menu(&ctx, current, menu_leaf, &feedback);
-                else app_present(&ctx, current, APP_REDRAW_PAGE);
+                else app_present(&ctx, current, APP_REDRAW_FULL);
             } else if (next) {
                 if (next != current) {
                     return_app = current;

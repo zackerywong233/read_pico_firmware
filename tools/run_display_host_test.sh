@@ -5,8 +5,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p build/book-tests
+gc_flag=-Wl,--gc-sections
+if [[ "$(uname -s)" == "Darwin" ]]; then gc_flag=-Wl,-dead_strip; fi
 cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
-    -ffunction-sections -fdata-sections -Wl,--gc-sections \
+    -ffunction-sections -fdata-sections "$gc_flag" \
     -Itools/display_host_stubs -Imain -Imain/app \
     tools/display_host_test.c main/display.c -o build/book-tests/display
 build/book-tests/display

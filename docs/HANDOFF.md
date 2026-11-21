@@ -33,7 +33,7 @@ This file holds **only the protocol and the template** and is safe to merge upst
 - **验证等级**：未编译 | 已编译 ci | 已编译 defaults（本机 IDF / docker run / devcontainer）| 已烧写未验证启动 | 真机已验证（板 RDP-G01-W，IDF v6.1，COMx，USB 供电；验证了 …；未覆盖 …）
 - **烧写记录**（本次没烧写就写"无"）：
   - 命令原文：`cd build; python -m esptool … write-flash '@flash_args'`（必须包含地址或 `@flash_args`）
-  - 串口里看到的开机日志片段（至少 `Loaded app from partition at offset 0x10000` 与 `UI ready on …`）/ "没看串口"
+  - 串口里看到的开机日志片段（至少 `Loaded app from partition at offset 0x20000` 或 `0x420000` 与 `UI ready on …`）/ "没看串口"
 - **涉及文件**（新建标 N，修改标 M）：
   - M `main/apps/app_xxx.c`
 - **Frozen 触碰**：无 | `app_xxx.c` 文件头第 N 行，原因：…
