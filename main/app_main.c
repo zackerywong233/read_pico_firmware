@@ -99,8 +99,9 @@ static void arm_next_ambient_alarm(const app_ambient_settings_t *config) {
     time_t now = snapshot && snapshot->time_ok && snapshot->unix_sec
         ? (time_t)snapshot->unix_sec : time(NULL);
     if (now >= 946684800) {
+        time_t local_now = now + (time_t)app_settings_timezone_min() * 60;
         struct tm local;
-        if (localtime_r(&now, &local)) {
+        if (gmtime_r(&local_now, &local)) {
             uint32_t since_midnight = (uint32_t)local.tm_hour * 3600U +
                 (uint32_t)local.tm_min * 60U + (uint32_t)local.tm_sec;
             delay = ambient_sync_next_delay(since_midnight, interval,
@@ -143,7 +144,8 @@ void app_main(void) {
         time_t now = pmu && pmu->time_ok && pmu->unix_sec
             ? (time_t)pmu->unix_sec : time(NULL);
         struct tm local;
-        if (now >= 946684800 && localtime_r(&now, &local)) {
+        time_t local_now = now + (time_t)app_settings_timezone_min() * 60;
+        if (now >= 946684800 && gmtime_r(&local_now, &local)) {
             uint32_t since_midnight = (uint32_t)local.tm_hour * 3600U +
                 (uint32_t)local.tm_min * 60U + (uint32_t)local.tm_sec;
             quiet = ambient_sync_is_quiet(since_midnight, ambient.quiet_start_h, ambient.quiet_end_h);

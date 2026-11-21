@@ -64,8 +64,9 @@ static void arm_ambient_alarm_before_sleep(app_sleep_mode_t mode) {
     uint32_t interval = (uint32_t)cfg.interval_min * 60U;
     uint32_t delay = interval;
     if (now >= 946684800) {
+        time_t local_now = now + (time_t)app_settings_timezone_min() * 60;
         struct tm local;
-        if (localtime_r(&now, &local)) {
+        if (gmtime_r(&local_now, &local)) {
             uint32_t midnight = (uint32_t)local.tm_hour * 3600U +
                 (uint32_t)local.tm_min * 60U + (uint32_t)local.tm_sec;
             delay = ambient_sync_next_delay(midnight, interval, cfg.quiet_start_h, cfg.quiet_end_h);

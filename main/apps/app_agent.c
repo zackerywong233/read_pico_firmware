@@ -788,6 +788,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
 }
 
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
+    (void)ctx;
     if (!s_action_count && key == UI_KEY_1 && s_history_size) {
         s_history_list = !s_history_list;
         if (!s_history_list) s_history_selected = -1;
