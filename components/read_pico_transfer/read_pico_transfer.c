@@ -2107,7 +2107,7 @@ static esp_err_t ota_upload_handler(httpd_req_t *req) {
         else
             sha_active = true;
     }
-    if (err == ESP_OK) err = esp_ota_begin(partition, (size_t)req->content_len, &handle);
+    if (err == ESP_OK) err = esp_ota_begin(partition, OTA_WITH_SEQUENTIAL_WRITES, &handle);
     bool ota_begun = err == ESP_OK;
     uint8_t buffer[4096];
     uint8_t image_header[sizeof(esp_image_header_t)];

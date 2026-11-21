@@ -1,5 +1,10 @@
 # 版本变更 / Changelog
 
+## v0.1.22 · 2026-11-21
+
+- OTA 升级可靠性修复：Wi-Fi OTA 与局域网 `PUT /ota` 改用 `OTA_WITH_SEQUENTIAL_WRITES` 按扇区按需擦除，消除已建连下载前的整片擦除阻塞；GitHub Releases 跨主机 302 重定向改为捕获 `Location` 后重建干净 HTTPS 客户端并扩大收发缓冲（`16 KB / 4 KB`）；补齐完整流接收校验、有界超时重试、分阶段中文错误提示与详细错误日志。
+  OTA reliability fixes: switch Wi-Fi OTA and LAN `PUT /ota` to `OTA_WITH_SEQUENTIAL_WRITES` to eliminate full-partition erase stalls on active HTTP streams; rebuild a clean HTTPS client with larger buffers (`16 KB / 4 KB`) across GitHub Releases cross-host 302 redirects; add complete-stream verification, bounded `EAGAIN` retries, stage-specific status messages, and error logging.
+
 ## v0.1.21 · 2026-11-21
 
 - 配套客户端局域网接口（`api_version: 2`）：扩充 `GET /info`（固件版本、双存储余量、能力开关与缓存电池状态），新增锁屏图片管理（`GET/PUT/DELETE /screensaver`）、手写便签同步（`GET/DELETE /sketches`）、设备设置读写（`GET/PATCH /settings`）、空闲切换上传存储目标（`POST /storage`）、手机一键对时与时区同步（`GET/POST /time`）、字体列举/删除/切换（`GET/DELETE/POST /fonts`）以及个人看板文字与阅读统计（`GET/PUT/DELETE /dashboard`）。
