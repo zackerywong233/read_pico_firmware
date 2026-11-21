@@ -25,13 +25,19 @@ struct book_md { char *data; uint32_t len; md_entry_t *entries; size_t count; };
 static bool heading(const char *p, size_t n, size_t *skip) {
     size_t i=0; while(i<n && i<3 && p[i]=='#') ++i;
     if (!i || i>3 || (i<n && p[i]!=' ' && p[i]!='\t')) return false;
-    while(i<n && (p[i]==' '||p[i]=='\t')) ++i; *skip=i; return true;
+    while(i<n && (p[i]==' '||p[i]=='\t')) ++i;
+    *skip=i;
+    return true;
 }
 static void title_copy(char *out, size_t cap, const char *p, size_t n) {
-    if (!cap) return; if (n>=cap) n=cap-1; memcpy(out,p,n); out[n]=0;
+    if (!cap) return;
+    if (n>=cap) n=cap-1;
+    memcpy(out,p,n);
+    out[n]=0;
 }
 esp_err_t book_md_open(const char *path, book_md_t **out) {
-    if (!out || !path) return ESP_ERR_INVALID_ARG; *out=NULL;
+    if (!out || !path) return ESP_ERR_INVALID_ARG;
+    *out=NULL;
     FILE *f=fopen(path,"rb"); if(!f) return ESP_ERR_NOT_FOUND;
     if(fseek(f,0,SEEK_END)){fclose(f);return ESP_FAIL;} long n=ftell(f);
     if(n<0 || (unsigned long)n>MD_MAX){fclose(f);return ESP_ERR_INVALID_SIZE;} rewind(f);
@@ -58,6 +64,12 @@ static size_t inline_clean(const char*p,size_t n,char*out,size_t cap){size_t w=0
 esp_err_t book_md_load(const book_md_t*b,size_t i,html_text_t*out){if(!out)return ESP_ERR_INVALID_ARG;memset(out,0,sizeof(*out));if(!b||i>=b->count)return ESP_ERR_INVALID_ARG;
     uint32_t start=b->entries[i].start,end=i+1<b->count?b->entries[i+1].start:b->len;char *text=heap_caps_malloc(MD_MAX+1,PSRAM);blk_t *blocks=heap_caps_calloc(MD_BLOCKS,sizeof(*blocks),PSRAM);char *line=heap_caps_malloc(MD_MAX+1,PSRAM);if(!text||!blocks||!line){free(text);free(blocks);free(line);return ESP_ERR_NO_MEM;}size_t used=0,count=0,pos=start;
     while(pos<end&&count<MD_BLOCKS){size_t le=pos;while(le<end&&b->data[le]!='\n')++le;size_t n=le-pos;if(n&&b->data[le-1]=='\r')--n;size_t skip=0;bool h=heading(b->data+pos,n,&skip);const char*p=b->data+pos+skip;size_t pn=n-skip;if(pn){char prefix[4];size_t pre=0;if(!h&&pn>=2&&p[0]=='-'&&p[1]==' '){prefix[0]=0xE2;prefix[1]=0x80;prefix[2]=0xA2;prefix[3]=' ';pre=4;p+=2;pn-=2;}else if(!h&&pn>=2&&p[0]=='>'&&p[1]==' '){prefix[0]='>';prefix[1]=' ';pre=2;p+=2;pn-=2;}else if(!h&&pn>=3&&p[0]>='0'&&p[0]<='9'&&p[1]=='.'&&p[2]==' '){prefix[0]=p[0];prefix[1]='.';prefix[2]=' ';pre=3;p+=3;pn-=3;}
-        if(count)append(text,&used,'\n');size_t off=used;if(pre>MD_MAX-used)pre=0;if(pre){memcpy(text+used,prefix,pre);used+=pre;}size_t clean=inline_clean(p,pn,line,MD_MAX-used);memcpy(text+used,line,clean);used+=clean;blocks[count]=(blk_t){.offset=off,.len=used-off,.heading=h};++count;}
+        if(count)append(text,&used,'\n');
+        size_t off=used;
+        if(pre>MD_MAX-used)pre=0;
+        if(pre){memcpy(text+used,prefix,pre);used+=pre;}
+        size_t clean=inline_clean(p,pn,line,MD_MAX-used);
+        memcpy(text+used,line,clean);used+=clean;
+        blocks[count]=(blk_t){.offset=off,.len=used-off,.heading=h};++count;}
         pos=le+1;}
     text[used]=0;free(line);if(!count){free(blocks);blocks=NULL;}out->utf8=text;out->len=used;out->blocks=blocks;out->count=count;return ESP_OK;}
