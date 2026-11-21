@@ -149,9 +149,9 @@ static void wr32(uint8_t* p, uint32_t v) {
 static bool pmu_fw_compatible(uint8_t major, uint8_t minor, uint8_t patch) {
     // 兼容同主版本且版本号不低于主机最低要求的 PMU 固件。
     // Accept PMU firmware on the same major version that meets the host minimum version.
-    if (major != PMU_FW_MAJOR) return false;
-    if (minor != PMU_FW_MINOR) return minor > PMU_FW_MINOR;
-    return patch >= PMU_FW_PATCH;
+    const uint32_t fw_ver = ((uint32_t)minor << 8) | patch;
+    const uint32_t min_ver = ((uint32_t)PMU_FW_MINOR << 8) | PMU_FW_PATCH;
+    return major == PMU_FW_MAJOR && fw_ver >= min_ver;
 }
 
 static bool run_ident(void) {
