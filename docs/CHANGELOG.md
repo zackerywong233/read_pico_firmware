@@ -1,5 +1,10 @@
 # 版本变更 / Changelog
 
+## v0.1.27 · 2026-11-22
+
+- 根治 Wi-Fi/BLE 共存导致的联网与扫描失败：改为按需分时独占射频。进入传书、网页阅读、Agent 收件及启动 Wi-Fi OTA 前自动暂停 BLE，离开页面或 OTA 结束后自动恢复广播（不改写设置里的蓝牙开关）；BLE 收到 `transfer_start` / `webopen` / 切入联网页指令时先回包并延迟 120 ms 再切换，避免吞掉蓝牙响应；新增局域网 `POST /transfer/stop` 接口，便于 iOS 配套应用传书完成后远程退出传书页并恢复蓝牙重连。
+  Root-fix Wi-Fi/BLE coexistence failures by time-sharing the radio on demand: pause BLE while Transfer, Web Reader, Agent Inbox or Wi-Fi OTA is active and resume automatically afterward without altering the Settings switch; defer BLE-triggered transitions to Wi-Fi pages by 120 ms so the OK notification flushes first; add LAN `POST /transfer/stop` so the iOS companion can end Transfer remotely and trigger automatic BLE reconnection.
+
 ## v0.1.26 · 2026-11-22
 
 - 修复触屏配网“扫描失败”反复出现：扫描前自动暂停空闲 BLE 并在结束后恢复（已连接时共存失败再暂停重试一次）；扫描对瞬态 `ESP_ERR_WIFI_STATE`/超时重试、将结果取尽的 `ESP_FAIL` 视为结束、清理失败不再覆盖已成功的结果；失败提示附带错误码，串口日志输出失败阶段与内部堆余量；调大内部 DMA 预留并缩减 Wi-Fi 静态缓冲与 BLE 活动数以腾出内部内存。

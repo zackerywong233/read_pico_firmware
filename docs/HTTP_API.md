@@ -40,6 +40,7 @@ STA 模式下广播 mDNS 主机名 `readpico.local` 与 `_http._tcp` 80 端口�
 | `GET /info` | 否 | 返回 `api_version`、`firmware_version`、`build_date/time`、`device_id`、`ble_name`、`ble_supported`、`ble_enabled`、`ble_pin_required`、`active_storage`、`free_bytes`、`file_limit`、`flash_available/free_bytes`、`sd_available/free_bytes`、`can_switch_storage`、`mode`、`network_ready`、`url`、`mdns_host`、`wifi_configured`、`wifi_ssid`、`wifi_ssids`、`clip_token`、`pin_required`、能力开关（含 `book_download_enabled`、`book_progress_enabled`、`notes_json_enabled`、`webmarks_enabled`、`focus_enabled`）与缓存电池状态（`battery_soc`、`battery_mv`、`charging`、`charge_state`） |
 | `POST /auth/verify` | 校验 PIN | 请求头 `X-Pico-Pin` 或 JSON `{"pin":"123456"}`，返回 `{"ok":true,"pin_required":...}` |
 | `POST /storage` | PIN | 请求 `{"target":"flash"|"sd"}`；空闲时切换图书上传目标并重启服务 |
+| `POST /transfer/stop` | PIN | 空闲时返回 `{"ok":true,"stopping":true}`，约 120 ms 后停止局域网传书并退出传书页以自动恢复 BLE 广播；上传中返回 `409` |
 
 ### 3.2 图书、笔记、网页收藏与网页投递
 

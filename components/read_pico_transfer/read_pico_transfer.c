@@ -3554,6 +3554,31 @@ static esp_err_t focus_handler(httpd_req_t *req) {
     return send_json(req, json);
 }
 
+static esp_err_t transfer_stop_handler(httpd_req_t *req) {
+    if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
+    if (check_pin_or_respond(req) != ESP_OK) return ESP_FAIL;
+    if (!s_cfg.stop_request_cb)
+        return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持远程停止传书\"}");
+    if (req->content_len > 256) return respond_error(req, 413);
+    if (req->content_len) {
+        char discard[256];
+        size_t got = 0;
+        while (got < req->content_len) {
+            int n = receive_http(req, discard, req->content_len - got);
+            if (n <= 0) return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400);
+            got += (size_t)n;
+        }
+    }
+    bool busy = false;
+    portENTER_CRITICAL(&s_lock);
+    busy = s_upload_active;
+    portEXIT_CRITICAL(&s_lock);
+    if (busy) return wifi_response(req, "409 Conflict", "{\"error\":\"上传进行中，暂不能停止传书\"}");
+    if (!s_cfg.stop_request_cb(s_cfg.stop_request_ctx))
+        return wifi_response(req, "409 Conflict", "{\"error\":\"当前无法停止传书\"}");
+    return wifi_response(req, "200 OK", "{\"ok\":true,\"stopping\":true}");
+}
+
 static esp_err_t auth_verify_handler(httpd_req_t *req) {
     if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
     char pin[16] = {0};
@@ -3769,6 +3794,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         { .uri = "/dashboard", .method = HTTP_GET, .handler = dashboard_handler },
         { .uri = "/dashboard", .method = HTTP_PUT, .handler = dashboard_handler },
         { .uri = "/dashboard", .method = HTTP_DELETE, .handler = dashboard_handler },
+        { .uri = "/transfer/stop", .method = HTTP_POST, .handler = transfer_stop_handler },
     };
     for (size_t i = 0; i < sizeof(routes)/sizeof(*routes); ++i) {
         err = httpd_register_uri_handler(s_http, &routes[i]); if (err != ESP_OK) goto fail;

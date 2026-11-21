@@ -168,27 +168,23 @@ int main(void) {
     tap(&ctx, network_control_rect(8));
     network_ui_tick(&ctx);
     assert(!s_network_count && strstr(s_network_message, "FFFF") != NULL);
-    // 蓝牙未连接时直接暂停并恢复；已连接时共存失败后自动暂停 BLE 重试并恢复。
-    // Idle BLE pauses/resumes around scan; connected BLE retries with a brief pause after a coex failure.
+    // 传书页进入时独占射频（BLE 关闭），退出后释放。
+    // Entering the page takes the radio (BLE off); leaving releases it.
     test_scan_error = ESP_OK;
     test_scan_count = 3;
-    test_ble_connected = false;
-    test_ble_suspended = false;
-    int susp_before = test_ble_suspend_calls, res_before = test_ble_resume_calls;
-    test_scan_fail_when_ble_active = true;
-    tap(&ctx, network_control_rect(8));
-    network_ui_tick(&ctx);
-    assert(s_network_count == 3 && !s_network_message[0]);
-    assert(test_ble_suspend_calls == susp_before + 1 && test_ble_resume_calls == res_before + 1 && !test_ble_suspended);
-    test_ble_connected = true;
-    susp_before = test_ble_suspend_calls; res_before = test_ble_resume_calls;
-    int scans_before = test_scan_calls;
-    tap(&ctx, network_control_rect(8));
-    network_ui_tick(&ctx);
-    assert(s_network_count == 3 && test_scan_calls == scans_before + 2);
-    assert(test_ble_suspend_calls == susp_before + 1 && test_ble_resume_calls == res_before + 1 && !test_ble_suspended);
-    test_ble_connected = false;
-    test_scan_fail_when_ble_active = false;
+    {
+        app_ctx_t c2 = {.fb = &fb};
+        int holds = test_ble_hold_calls, rels = test_ble_release_calls;
+        on_enter(&c2);
+        assert(test_ble_held && test_ble_hold_calls == holds + 1);
+        int scans_before = test_scan_calls;
+        tap(&c2, network_control_rect(8));
+        enter_networks();
+        network_ui_tick(&c2);
+        assert(test_scan_calls == scans_before + 1 && s_network_count == 3 && test_ble_held);
+        transfer_on_exit(&c2);
+        assert(!test_ble_held && test_ble_release_calls == rels + 1);
+    }
     tap(&ctx, network_control_rect(6));
     assert(s_view == TRANSFER_HOME && s_start_pending && s_mode == READ_PICO_TRANSFER_MODE_STA);
     int stops_before = test_stop_count;
@@ -314,6 +310,22 @@ int main(void) {
     assert(test_last_cfg.focus_ctrl_cb(true, 45, test_last_cfg.focus_ctx) == ESP_OK);
     on_tick(&ctx);
     assert(ctx.request_app == &app_focus && test_focus.running && test_focus.duration_min == 45);
+
+    // 经局域网 POST /transfer/stop 延迟 120 ms 停服并返回，确保 HTTP 200 响应发出后再释放射频。
+    // LAN POST /transfer/stop waits 120 ms before stopping and returning so HTTP 200 flushes first.
+    assert(test_last_cfg.stop_request_cb != NULL);
+    ctx.request_return = false;
+    ctx.now_ms = 5000;
+    stops_before = test_stop_count;
+    assert(test_last_cfg.stop_request_cb(test_last_cfg.stop_request_ctx));
+    on_tick(&ctx);
+    assert(!ctx.request_return && test_stop_count == stops_before);
+    ctx.now_ms = 5080;
+    on_tick(&ctx);
+    assert(!ctx.request_return && test_stop_count == stops_before);
+    ctx.now_ms = 5120;
+    on_tick(&ctx);
+    assert(ctx.request_return && test_stop_count == stops_before + 1);
 
     puts("transfer_ui_host_test: PASS");
 }

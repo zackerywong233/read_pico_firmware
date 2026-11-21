@@ -12,3 +12,4 @@
 void app_ble_set_enabled(bool enabled);
 void app_ble_set_pin_required(bool required);
 void app_ble_format_status(char *buf, size_t cap);
+void app_ble_yield_to_ota(void);

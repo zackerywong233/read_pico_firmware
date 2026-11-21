@@ -81,6 +81,8 @@ static _Atomic uint32_t s_pending_time_utc;
 static _Atomic bool s_pending_focus_ctrl;
 static _Atomic bool s_pending_focus_start;
 static _Atomic int s_pending_focus_min;
+static _Atomic bool s_remote_stop_pending;
+static int64_t s_remote_stop_at_ms;
 static int64_t s_pmu_poll_ms;
 
 static bool transfer_storage_info(read_pico_storage_info_t* out, void* ctx) {
@@ -258,6 +260,12 @@ static esp_err_t transfer_focus_ctrl(bool start, int minutes, void* ctx) {
     return ESP_OK;
 }
 
+static bool transfer_stop_request(void* ctx) {
+    (void)ctx;
+    atomic_store(&s_remote_stop_pending, true);
+    return true;
+}
+
 static void clear_qr(void) {
     ui_wifi_qr_clear();
     s_qr_ready = false;
@@ -287,6 +295,7 @@ static int s_keyboard_mode;
 
 static void render(app_ctx_t* ctx, uint8_t* fb);
 static void stop_session(void);
+bool app_transfer_remote_stop(app_ctx_t* ctx);
 
 /* ---- 设备端配网 / Device provisioning ---- */
 static void fit_label(char* text, int px, int width) {
@@ -482,21 +491,9 @@ static app_redraw_t network_ui_tick(app_ctx_t* ctx) {
     if (s_view != TRANSFER_NETWORKS || s_forget_confirm || !s_scan_pending || ctx->consumed) return APP_REDRAW_NONE;
     s_scan_pending = false;
     s_network_count = s_network_page = 0;
-    // 无蓝牙连接时先暂停 BLE 释放内部内存与无线电；有连接时优先共存扫描，失败后再短暂暂停重扫一次。
-    // Pause idle BLE before scanning to free internal RAM and radio; when connected, try coex first and fall back to a brief pause on error.
-    bool paused_ble = false;
-    if (!app_ble_is_connected()) {
-        app_ble_suspend();
-        paused_ble = true;
-    }
+    // 进入传书页时已关闭 BLE（独占射频），此处直接扫描。
+    // BLE is already off for the whole page (radio owned by Wi-Fi), so scan directly.
     esp_err_t err = read_pico_transfer_scan_wifi(s_networks, &s_network_count);
-    if (err != ESP_OK && !paused_ble) {
-        app_ble_suspend();
-        paused_ble = true;
-        s_network_count = 0;
-        err = read_pico_transfer_scan_wifi(s_networks, &s_network_count);
-    }
-    if (paused_ble) app_ble_resume();
     if (err != ESP_OK) {
         s_network_count = 0;
         snprintf(s_network_message, sizeof(s_network_message), "扫描失败(%04X)，请重扫",
@@ -750,6 +747,9 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
 
 static void on_enter(app_ctx_t* ctx) {
     (void)ctx;
+    // 先关 BLE 再碰 Wi-Fi：两者共存会耗尽内部内存。
+    // Stop BLE before touching Wi-Fi: coexistence exhausts internal RAM.
+    app_ble_wifi_hold(true);
     // 先关闭卡上字库，再开放替换；主循环的字体重试也会被暂停。
     // Close the card font before allowing replacement; event-loop font retries are suspended too.
     s_font_error = ttf_font_suspend_sd(true);
@@ -780,6 +780,8 @@ static void on_enter(app_ctx_t* ctx) {
     atomic_store(&s_remote_switch_pending, false);
     atomic_store(&s_pending_time_sync, false);
     atomic_store(&s_pending_focus_ctrl, false);
+    atomic_store(&s_remote_stop_pending, false);
+    s_remote_stop_at_ms = 0;
     s_pmu_poll_ms = 0;
     read_pico_transfer_reset_pin();
     if (read_pico_pmu_ready()) (void)read_pico_pmu_poll();
@@ -830,12 +832,15 @@ static void transfer_on_exit(app_ctx_t* ctx) {
     clear_password();
     s_scan_pending = false;
     atomic_store(&s_remote_switch_pending, false);
+    atomic_store(&s_remote_stop_pending, false);
+    s_remote_stop_at_ms = 0;
     stop_session();
     if (atomic_exchange(&s_settings_runtime_dirty, false)) app_settings_apply_runtime();
     if (atomic_exchange(&s_pending_time_sync, false))
         (void)app_time_set_utc(atomic_load(&s_pending_time_utc), NULL);
     ttf_font_suspend_sd(false);
     display_set_bulk_io(false);
+    app_ble_wifi_hold(false);
     guard_draw_result(ctx->hl, update_display_white(ctx->hl));
     if (s_any_changed) book_store_notify_changed();
     ESP_LOGI(TAG, "heap before=%u after=%u internal_before=%u internal_after=%u",
@@ -888,6 +893,17 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
         if (ctx) ctx->request_app = &app_web;
         return APP_REDRAW_NONE;
     }
+    if (!s_start_pending && atomic_load(&s_remote_stop_pending)) {
+        if (!s_remote_stop_at_ms) {
+            // 留出 120 ms 让 HTTP 200 响应包发给客户端，再停服离页并恢复 BLE。
+            // Wait 120 ms so the HTTP 200 response flushes before tearing down Wi-Fi and resuming BLE.
+            s_remote_stop_at_ms = ctx ? ctx->now_ms + 120 : 1;
+        } else if (!ctx || ctx->now_ms >= s_remote_stop_at_ms) {
+            atomic_store(&s_remote_stop_pending, false);
+            s_remote_stop_at_ms = 0;
+            if (app_transfer_remote_stop(ctx)) return APP_REDRAW_NONE;
+        }
+    }
     if (!s_start_pending && atomic_load(&s_remote_switch_pending)) {
         bool prefer_flash = atomic_load(&s_remote_switch_flash);
         if (switch_upload_root(prefer_flash, true)) {
@@ -937,7 +953,8 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
                 .webmarks_upsert_cb = transfer_webmarks_upsert,
                 .webmarks_delete_cb = transfer_webmarks_delete,
                 .focus_get_cb = transfer_focus_get,
-                .focus_ctrl_cb = transfer_focus_ctrl};
+                .focus_ctrl_cb = transfer_focus_ctrl,
+                .stop_request_cb = transfer_stop_request};
             err = read_pico_transfer_start(&cfg);
             s_session_started = err == ESP_OK;
             read_pico_transfer_get_status(&s_status);

@@ -14,6 +14,7 @@
  */
 
 #include "app.h"
+#include "ble_service.h"
 #include "time_sync.h"
 
 #include <ctype.h>
@@ -628,6 +629,8 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
 
 static void on_enter(app_ctx_t *ctx) {
     (void)ctx;
+    // 先关 BLE 再联网。/ Stop BLE before networking.
+    app_ble_wifi_hold(true);
     if (!s_result_queue) s_result_queue = xQueueCreate(1, sizeof(web_result_t *));
     s_storage_changed = false;
     load_bookmarks();
@@ -657,6 +660,7 @@ static void web_on_exit(app_ctx_t *ctx) {
     while (s_result_queue && xQueueReceive(s_result_queue, &result, 0) == pdTRUE) free_result(result);
     network_stop();
     free_article();
+    app_ble_wifi_hold(false);
     if (s_storage_changed) book_store_notify_changed();
     if (s_result_queue) { vQueueDelete(s_result_queue); s_result_queue = NULL; }
     display_set_bulk_io(false);

@@ -200,6 +200,8 @@ typedef struct {
     bool(*focus_get_cb)(read_pico_focus_status_t*,void*);
     esp_err_t(*focus_ctrl_cb)(bool,int,void*);
     void* focus_ctx;
+    bool(*stop_request_cb)(void*);
+    void* stop_request_ctx;
 } read_pico_transfer_cfg_t;
 static read_pico_transfer_cfg_t test_last_cfg;
 typedef struct {read_pico_transfer_mode_t mode;read_pico_transfer_state_t state;bool wifi_configured,network_ready,pin_required;char ssid[33],pin[7],wifi_ssid[33],url[64],mdns_host[64],cur_name[121];unsigned sta_count,done_count,changed_count;size_t cur_bytes,cur_total;int last_error;} read_pico_transfer_status_t;
@@ -213,11 +215,9 @@ static int test_forget_count, test_forget_error;
 static bool test_configured = true;
 static int test_scan_error, test_save_count, test_scan_calls;
 static size_t test_scan_count = 8;
-static bool test_ble_connected, test_ble_suspended, test_scan_fail_when_ble_active;
-static int test_ble_suspend_calls, test_ble_resume_calls;
-static inline bool app_ble_is_connected(void) { return test_ble_connected && !test_ble_suspended; }
-static inline void app_ble_suspend(void) { test_ble_suspended = true; ++test_ble_suspend_calls; }
-static inline void app_ble_resume(void) { test_ble_suspended = false; ++test_ble_resume_calls; }
+static bool test_ble_held;
+static int test_ble_hold_calls, test_ble_release_calls;
+static inline void app_ble_wifi_hold(bool hold) { test_ble_held = hold; if (hold) ++test_ble_hold_calls; else ++test_ble_release_calls; }
 static char test_saved_ssid[33];
 static inline bool read_pico_transfer_try_stop_if_idle(void) {return !test_busy;}
 static int test_stop_count;
@@ -229,7 +229,7 @@ static inline int read_pico_transfer_start(const read_pico_transfer_cfg_t* c) {t
 static inline void read_pico_transfer_service_poll(void) {}
 static inline int read_pico_transfer_save_wifi(const char* s,const char* p) {(void)p;test_save_count++;snprintf(test_saved_ssid,33,"%s",s);return test_save_error;}
 static inline int read_pico_transfer_forget_wifi_ssid(const char* s) {(void)s;test_forget_count++;return test_forget_error;}
-static inline int read_pico_transfer_scan_wifi(read_pico_transfer_network_t* out,size_t* count) {++test_scan_calls;int err=(test_scan_fail_when_ble_active && !test_ble_suspended)?ESP_FAIL:test_scan_error;*count=err?0:test_scan_count;for(size_t i=0;i<*count;i++){out[i]=(read_pico_transfer_network_t){.supported=true,.requires_password=true};snprintf(out[i].ssid,33,"network%u",(unsigned)i);}if(*count)snprintf(out[0].ssid,33,"中文家庭网络");return err;}
+static inline int read_pico_transfer_scan_wifi(read_pico_transfer_network_t* out,size_t* count) {++test_scan_calls;int err=test_scan_error;*count=err?0:test_scan_count;for(size_t i=0;i<*count;i++){out[i]=(read_pico_transfer_network_t){.supported=true,.requires_password=true};snprintf(out[i].ssid,33,"network%u",(unsigned)i);}if(*count)snprintf(out[0].ssid,33,"中文家庭网络");return err;}
 static int test_qr_encodes;
 static bool test_qr_failure;
 static char test_qr_payload[128];

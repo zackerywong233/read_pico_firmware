@@ -108,22 +108,8 @@ Lightweight Bluetooth Low Energy (BLE) control protocol for companion iOS apps (
 ### 4.3 远程拉起与停止局域网传书（BLE -> Wi-Fi 切换）
 
 - **`transfer_start`**：`{"id":7,"cmd":"transfer_start","mode":"sta"|"ap"|"auto"}`（默认已配网走 `sta`，否则走 `ap`）。
-  - Wi-Fi 取得 IP 或状态变化时，设备主动通过 TX Notify 推送异步事件：
-    ```json
-    {
-      "event": "transfer_status",
-      "active": true,
-      "mode": "sta",
-      "state": "ready",
-      "network_ready": true,
-      "url": "http://192.168.1.42",
-      "mdns_host": "readpico",
-      "ssid": "HomeWiFi",
-      "pin_required": false,
-      "error": ""
-    }
-    ```
-- **`transfer_stop`**：空闲时停止局域网传书并返回原页面（上传或 OTA 进行中返回 `code: "busy"`）。
+  - 为避免 ESP32-S3 上 Wi-Fi 与 BLE 同时运行导致片内内存/射频竞争，设备回复 `ok: true` 后约 120 ms 切入传书页并自动暂停 BLE；STA 模式下 iOS 端应通过 mDNS（`_http._tcp` / `readpico.local`，TXT 含 `id`/`ble`）发现局域网服务（热点模式固定 `http://192.168.4.1`），传完书后可调用局域网 `POST /transfer/stop` 或在设备端退出传书页，BLE 将自动恢复广播。
+- **`transfer_stop`**：空闲时停止局域网传书并返回原页面（上传或 OTA 进行中返回 `code: "busy"`；进入传书页暂停 BLE 时请改用局域网 `POST /transfer/stop`）。
 
 ### 4.4 远程操控与网页直达
 

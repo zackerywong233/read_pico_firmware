@@ -702,6 +702,7 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
     if (s_view == SETTINGS_VIEW_UPDATE) {
         if (hit == 0) {
             s_notice[0] = '\0';
+            app_ble_yield_to_ota();
             (void)ota_update_check_start();
             return APP_REDRAW_PAGE;
         }
@@ -716,7 +717,10 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
             s_notice[0] = '\0';
             ota_update_status_t status;
             ota_update_get_status(&status);
-            if (status.state == OTA_UPDATE_AVAILABLE) (void)ota_update_install_start();
+            if (status.state == OTA_UPDATE_AVAILABLE) {
+                app_ble_yield_to_ota();
+                (void)ota_update_install_start();
+            }
             return APP_REDRAW_PAGE;
         }
         if (hit == 2) {

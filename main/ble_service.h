@@ -34,8 +34,12 @@ void app_ble_get_pin(char out[7]);
 void app_ble_suspend(void);
 /// 浅睡唤醒后按 NVS 设置恢复 NimBLE 广播。/ Resume NimBLE advertising after light-sleep wake if enabled in NVS.
 void app_ble_resume(void);
-/// 返回当前是否有蓝牙配套客户端处于连接态。/ Return true when a BLE companion peer is currently connected.
-bool app_ble_is_connected(void);
+/// 联网页面独占射频：true 时停止 NimBLE 并保持关闭，false 时按 NVS 设置恢复；不改写 NVS 开关。
+/// Wi-Fi pages own the radio: true stops NimBLE and keeps it off, false restores it per NVS; never rewrites the NVS switch.
+void app_ble_wifi_hold(bool hold);
+/// 启动后台 OTA 任务前在主循环同步停止 NimBLE，避免刷屏期间与 OTA 联网竞争；OTA 结束后由轮询自动恢复。
+/// Stop NimBLE synchronously on the main loop before spawning OTA so display redraws cannot race OTA Wi-Fi; poll resumes it when OTA ends.
+void app_ble_yield_to_ota(void);
 /// 主循环后台轮询：消费挂起的 BLE 指令并推送状态/电量通知；有远程活动时返回 true。
 /// Main-loop background poll: process pending BLE commands and push status/battery notifications; returns true on remote activity.
 bool app_ble_poll(app_ctx_t *ctx, const app_desc_t *current, bool menu_open);

@@ -68,6 +68,8 @@ static bool s_disable_pending;
 static int64_t s_disable_at_ms;
 static bool s_lock_pending;
 static int64_t s_lock_at_ms;
+static const app_desc_t *s_deferred_app;
+static int64_t s_deferred_app_at_ms;
 
 static char s_device_id[13];
 static char s_ble_pin[7];
@@ -186,14 +188,22 @@ static void apply_device_settings_snapshot(const read_pico_device_settings_t *ne
     app_settings_apply_runtime();
 }
 
+// Wi-Fi 页面持有射频期间 BLE 必须关闭（Wi-Fi/BLE 共存会耗尽内部内存）。
+// BLE stays off while a Wi-Fi page owns the radio (coexistence exhausts internal RAM).
+static bool s_wifi_hold;
+
 static bool ota_is_busy(void) {
     ota_update_status_t st = {0};
     ota_update_get_status(&st);
     return st.state == OTA_UPDATE_CHECKING || st.state == OTA_UPDATE_DOWNLOADING;
 }
 
+static bool is_wifi_page(const app_desc_t *page) {
+    return page == &app_transfer || page == &app_web || page == &app_agent;
+}
+
 static bool wifi_is_busy(const app_desc_t *current) {
-    if (current == &app_transfer || current == &app_web || current == &app_agent) return true;
+    if (is_wifi_page(current)) return true;
     if (ota_is_busy()) return true;
     read_pico_transfer_status_t tr = {0};
     read_pico_transfer_get_status(&tr);
@@ -810,7 +820,10 @@ static void handle_command(app_ctx_t *ctx, const app_desc_t *current,
                 }
             } else {
                 app_transfer_set_preferred_mode(mode);
-                if (ctx) ctx->request_app = &app_transfer;
+                // 延迟 120 ms 再切入传书页，确保 BLE 响应包先发给客户端后再释放射频。
+                // Defer entering Transfer by 120 ms so the BLE OK response flushes before BLE yields the radio.
+                s_deferred_app = &app_transfer;
+                s_deferred_app_at_ms = now_ms + 120;
             }
 
             cJSON *res = ble_make_response_base(has_id, id, cmd_name, true);
@@ -1147,7 +1160,8 @@ static void handle_command(app_ctx_t *ctx, const app_desc_t *current,
                 break;
             }
             app_web_queue_url(url_item->valuestring);
-            if (ctx) ctx->request_app = &app_web;
+            s_deferred_app = &app_web;
+            s_deferred_app_at_ms = now_ms + 120;
             cJSON *res = ble_make_response_base(has_id, id, cmd_name, true);
             if (res) {
                 cJSON_AddStringToObject(res, "url", url_item->valuestring);
@@ -1179,7 +1193,14 @@ static void handle_command(app_ctx_t *ctx, const app_desc_t *current,
                     "app 须为 home/books/transfer/web/sketch/focus/agent/personal/settings"));
                 break;
             }
-            if (ctx && page != current) ctx->request_app = page;
+            if (ctx && page != current) {
+                if (is_wifi_page(page)) {
+                    s_deferred_app = page;
+                    s_deferred_app_at_ms = now_ms + 120;
+                } else {
+                    ctx->request_app = page;
+                }
+            }
             cJSON *res = ble_make_response_base(has_id, id, cmd_name, true);
             if (res) {
                 cJSON_AddStringToObject(res, "app", app_item->valuestring);
@@ -1605,7 +1626,7 @@ void app_ble_init(void) {
 void app_ble_set_enabled(bool enabled) {
     app_settings_set_ble_enabled(enabled);
     s_start_failed = false;
-    if (!s_initialized || s_suspended) return;
+    if (!s_initialized || s_suspended || s_wifi_hold) return;
     if (enabled) start_ble_internal();
     else stop_ble_internal();
 }
@@ -1632,20 +1653,32 @@ void app_ble_get_pin(char out[7]) {
 
 void app_ble_suspend(void) {
     s_suspended = true;
+    s_deferred_app = NULL;
     stop_ble_internal();
 }
 
 void app_ble_resume(void) {
     s_suspended = false;
     s_start_failed = false;
-    if (s_initialized && app_settings_ble_enabled()) start_ble_internal();
+    if (s_initialized && !s_wifi_hold && app_settings_ble_enabled()) start_ble_internal();
 }
 
-bool app_ble_is_connected(void) {
-    if (!read_pico_ble_is_running()) return false;
-    read_pico_ble_status_t st = {0};
-    read_pico_ble_get_status(&st);
-    return st.peer_connected;
+void app_ble_wifi_hold(bool hold) {
+    s_wifi_hold = hold;
+    s_start_failed = false;
+    if (hold) s_deferred_app = NULL;
+    if (!s_initialized) return;
+    if (hold) {
+        stop_ble_internal();
+    } else if (!s_suspended && app_settings_ble_enabled()) {
+        start_ble_internal();
+    }
+}
+
+void app_ble_yield_to_ota(void) {
+    s_deferred_app = NULL;
+    if (!s_initialized) return;
+    stop_ble_internal();
 }
 
 bool app_ble_poll(app_ctx_t *ctx, const app_desc_t *current, bool menu_open) {
@@ -1669,8 +1702,16 @@ bool app_ble_poll(app_ctx_t *ctx, const app_desc_t *current, bool menu_open) {
         }
         return false;
     }
+    if (s_deferred_app) {
+        if (now_ms >= s_deferred_app_at_ms) {
+            const app_desc_t *target = s_deferred_app;
+            s_deferred_app = NULL;
+            if (ctx) ctx->request_app = target;
+        }
+        return false;
+    }
 
-    if (ota_is_busy()) {
+    if (s_wifi_hold || ota_is_busy()) {
         if (running) stop_ble_internal();
         return false;
     }

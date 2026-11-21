@@ -71,6 +71,8 @@ typedef struct {
     bool (*focus_get_cb)(read_pico_focus_status_t *out, void *ctx); ///< 可选：读取专注时钟状态 / Optional: read focus timer status
     esp_err_t (*focus_ctrl_cb)(bool start, int minutes, void *ctx); ///< 可选：远程启动或停止专注时钟 / Optional: start or stop focus timer remotely
     void *focus_ctx; ///< 专注时钟回调上下文 / Context for focus timer callbacks
+    bool (*stop_request_cb)(void *ctx); ///< 可选：经局域网 HTTP 请求主循环延迟退出传书页 / Optional: request main loop to stop Transfer and exit over LAN HTTP
+    void *stop_request_ctx; ///< 远程停止回调上下文 / Context for stop request callback
 } read_pico_transfer_cfg_t;
 
 typedef struct {

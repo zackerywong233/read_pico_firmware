@@ -14,6 +14,7 @@
  */
 
 #include "app.h"
+#include "ble_service.h"
 #include "time_sync.h"
 
 #include <stdio.h>
@@ -571,6 +572,8 @@ static void network_start(void) {
 
 static void on_enter(app_ctx_t *ctx) {
     (void)ctx;
+    // 先关 BLE 再联网。/ Stop BLE before networking.
+    app_ble_wifi_hold(true);
     s_messages = xQueueCreate(2, sizeof(char *));
     s_image_results = xQueueCreate(1, sizeof(agent_image_result_t *));
     s_history = heap_caps_calloc(AGENT_HISTORY_COUNT, sizeof(*s_history), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -639,6 +642,7 @@ static void cleanup(void) {
 
 static void agent_on_exit(app_ctx_t *ctx) {
     (void)ctx; cleanup(); display_set_bulk_io(false); (void)ttf_font_suspend_sd(false);
+    app_ble_wifi_hold(false);
 }
 
 static void on_media_lost(app_ctx_t *ctx) { (void)ctx; cleanup(); display_set_bulk_io(false); (void)ttf_font_suspend_sd(false); snprintf(s_notice, sizeof(s_notice), "TF 卡已移除，网络和图片任务已停止"); }

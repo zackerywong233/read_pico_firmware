@@ -242,6 +242,7 @@ bool app_settings_ble_pin_required(void) { return s_ble_pin_required; }
 void app_settings_set_ble_pin_required(bool v) { s_ble_pin_required = v; }
 void app_ble_set_enabled(bool enabled) { s_ble_enabled = enabled; }
 void app_ble_set_pin_required(bool required) { s_ble_pin_required = required; }
+void app_ble_yield_to_ota(void) {}
 void app_ble_format_status(char *buf, size_t cap) {
     if (!s_ble_enabled) snprintf(buf, cap, "已关闭");
     else if (s_ble_pin_required) snprintf(buf, cap, "ReadPico-1234 · 码 654321");
