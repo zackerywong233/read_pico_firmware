@@ -1,6 +1,6 @@
 # 版本变更 / Changelog
 
-## 未发布 / Unreleased
+## v0.1.19 · 2026-11-21
 
 - 桌面与应用菜单：将“小纸 Pico 宫格桌面”加入一级菜单首位，并在应用菜单底栏新增“回桌面”按钮，可从任意页直接返回开机宫格首页。
   Launcher & App Menu: add the Pico OS grid home to the top of the root app menu and add a Home button to the menu bottom bar so any page can return directly to the boot grid.
