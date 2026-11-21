@@ -429,28 +429,17 @@ static bool s_mdns;
 static uint8_t s_connect_index;
 static char s_webopen_url[READ_PICO_WEBOPEN_URL_MAX];
 
-static void mdns_hostname_changed(const char *hostname, void *arg) {
-    (void)arg;
-    if (hostname && hostname[0]) {
-        portENTER_CRITICAL(&s_lock);
-        snprintf(s_status.mdns_host, sizeof(s_status.mdns_host), "%s", hostname);
-        portEXIT_CRITICAL(&s_lock);
-    }
-    ESP_LOGI("transfer", "mDNS hostname updated: %s", hostname ? hostname : "unknown");
-}
-
 static esp_err_t start_mdns(void) {
     if (s_mdns) return ESP_OK;
     esp_err_t err = mdns_init();
     if (err != ESP_OK) return err;
-    err = mdns_register_hostname_changed_callback(mdns_hostname_changed, NULL);
-    if (err == ESP_OK) err = mdns_hostname_set("readpico");
+    err = mdns_hostname_set("readpico");
     if (err == ESP_OK) err = mdns_instance_name_set("小纸 Pico");
     if (err == ESP_OK) err = mdns_service_add("Read Pico", "_http", "_tcp", 80, NULL, 0);
     if (err != ESP_OK) { mdns_free(); return err; }
     s_mdns = true;
     portENTER_CRITICAL(&s_lock);
-    if (!s_status.mdns_host[0]) strcpy(s_status.mdns_host, "readpico");
+    strcpy(s_status.mdns_host, "readpico");
     portEXIT_CRITICAL(&s_lock);
     return ESP_OK;
 }
