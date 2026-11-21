@@ -9,8 +9,10 @@
  * Frozen: never format SD; mount internal storage lazily and auto-initialize only an erased partition, preserving data on other mount failures.
  * 冻结：有卡但挂载失效时不把上传静默切换到内置存储；拔卡不复用旧容量。
  * Frozen: present but invalid media must not silently redirect uploads to flash; never reuse removed-card capacity.
- * 冻结：用户确认后仅删已挂载根内的直接普通书籍；文件与进度部分失败必须返回，不通知 UI 版本。
- * Frozen: after user confirmation, delete only direct regular books in mounted roots; report partial failures without notifying UI revision.
+ * 决策变更：书架删除允许 TXT、EPUB、Markdown 与 CBZ 四种直接普通文件。
+ * Decision change: shelf deletion accepts direct regular TXT, EPUB, Markdown and CBZ files.
+ * 冻结：文件与进度部分失败必须返回，不通知 UI 版本。
+ * Frozen: Report partial file/progress failures without notifying the UI revision.
  * 冻结：删除前清除同名普通覆盖备份；仅有备份时先恢复，失败保留可恢复的原书。
  * Frozen: clear a matching regular replacement backup before deletion; restore backup-only books first and preserve recovery on failure.
  */
@@ -175,7 +177,7 @@ esp_err_t book_store_delete(const char* path, bool* removed) {
         if (*p < 32 || *p == 127 || *p == '/' || *p == '\\' || *p == ':') return ESP_ERR_INVALID_ARG;
     }
     const char* ext = strrchr(name, '.');
-    if (!ext || (strcasecmp(ext, ".txt") && strcasecmp(ext, ".epub"))) return ESP_ERR_INVALID_ARG;
+    if (!ext || (strcasecmp(ext, ".txt") && strcasecmp(ext, ".epub") && strcasecmp(ext, ".md") && strcasecmp(ext, ".cbz"))) return ESP_ERR_INVALID_ARG;
     struct stat st;
     if (stat(root, &st) != 0 || !S_ISDIR(st.st_mode)) return ESP_ERR_INVALID_STATE;
     // FAT 没有符号链接；主机测试用 lstat，确保不会跟随主机链接删其他文件。

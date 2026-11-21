@@ -41,6 +41,8 @@ Agent-facing layout, `app_desc_t` contract, glossary and comment style are in
 
 ## Build & Flash
 
+For the first move to the dual OTA partition layout, install through the [browser flasher](https://zackerywong233.github.io/read_pico_firmware/) over USB and select erase flash. This rebuilds the partition table and 7 MB internal storage; files on the TF card remain untouched. Later versions can be installed over Wi-Fi from Settings → System Update. See [browser flashing](docs/WEB_FLASHER.md).
+
 Requires ESP-IDF v6.1. `components/read_pico/read_pico_flash_hpm.c` depends on
 `esp_flash_chips/spi_flash_override.h`, which is available only in v6.
 

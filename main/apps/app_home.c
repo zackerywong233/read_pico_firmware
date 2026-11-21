@@ -320,7 +320,7 @@ static void draw_status_page(uint8_t* fb) {
 
         y = ui_draw_section(fb, y + UI_SECTION_GAP, "固件 Firmware");
         snprintf(line, sizeof(line), "%s", desc->version);
-        y = ui_draw_row(fb, y, "主机 Host", line);
+        y = ui_draw_row(fb, y, "固件版本 Firmware", line);
         snprintf(line, sizeof(line), "%s %s", desc->date, desc->time);
         const char* build_label = "构建 UTC 时间";
         int build_px = UI_PX_VALUE;

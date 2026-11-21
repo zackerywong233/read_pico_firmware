@@ -81,7 +81,11 @@ void ttf_measure_line(int size, const char* text, int* above, int* below);
 void ttf_measure_line_px(int pixel_height, const char* text, int* above, int* below);
 int ttf_text_width_px(int pixel_height, const char* text);
 void ttf_set_weight(int wght);
+/// 0 restores the variable font's declared default weight. / 传入 0 恢复字体声明的默认可变字重。
+void ttf_font_set_weight(int wght);
 int ttf_get_weight(void);
+/// True when the active font has usable variable weight axes. / 当前字体具有可用可变字重轴时返回 true。
+bool ttf_font_has_variable_weight(void);
 
 void ttf_font_cache_clear(void);
 void ttf_bench_begin(void);

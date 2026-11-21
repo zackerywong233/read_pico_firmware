@@ -54,6 +54,7 @@ bool read_pico_pmu_take_key_short(void) {return true;}
 void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a) {(void)h;(void)t;(void)a;lock_due=false;time_offset+=1000000;}
 bool app_lock_powers_down(void) {return false;}
 const char* app_settings_font_path(void) {return "builtin";}
+uint16_t app_settings_auto_sleep_sec(void) {return 120;}
 bool ttf_font_path_is_builtin(const char*p) {(void)p;return !font_due&&!saved_sd_font;}
 bool ttf_font_ready(void) {return true;}
 bool ttf_font_is_builtin(void) {return !font_due&&!sd_font;}
@@ -139,7 +140,7 @@ int main(void) {
     reset();menu_on_tick=true;add(0,0,0,0);add(0,0,0,0);run();assert(menus==1&&ticks==1);
     reset();first.owns_keys=true;for(int k=0;k<3;k++){add(k*160+80,1500,1,0);add(0,0,0,0);}run();
     assert(keys[0]==1&&keys[1]==1&&keys[2]==1&&!menus&&fulls==1);
-    reset();add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();assert(!keys[1]&&!keys[2]&&menus==1&&fulls==2);
+    reset();add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();assert(!keys[1]&&!keys[2]&&menus==1&&fulls==3);
     reset();add(650,1150,1,0);add(0,0,0,0);add(100,220,1,0);add(0,0,0,0);run();
     assert(highlights==1&&restores==1&&enters==2&&exits==1);
     reset();add(650,1150,1,0);add(0,0,0,0);add(100,220,1,0);add(550,220,1,0);add(100,220,1,0);add(0,0,0,0);run();
@@ -150,7 +151,7 @@ int main(void) {
     reset();first.on_gesture=gesture;font_due=true;time_offset=4000000;add(100,400,1,0);add(0,0,0,0);run();
     assert(events[UI_GESTURE_CANCEL]==1&&!events[UI_GESTURE_TAP]&&tick_consumed[0]);
     reset();first.owns_keys=true;add(650,1150,1,0);add(0,0,0,0);add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();
-    assert(!keys[1]&&!keys[2]&&fulls==2&&menus==2);
+    assert(!keys[1]&&!keys[2]&&fulls==4&&menus==2);
     reset();add(650,1150,1,0);add(0,0,0,0);
     for(int i=0;i<3;i++){add(100,220,1,0);add(550,220,1,0);add(0,0,0,0);}run();
     assert(du_areas==6&&gl_areas==1);
@@ -172,7 +173,7 @@ int main(void) {
     add(0,0,0,0);add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);add(0,0,0,0);run();assert(!lock_due&&!long_keys);
     home_case();home_on_tick=true;add(0,0,0,0);add(0,0,0,0);run();
     assert(exits==0&&home_enters==0&&menus==1&&last_menu_leaf==1&&menu_background==&second);
-    assert(home_renders==0&&ticks==1&&fulls==1&&mode==1);
+    assert(home_renders==0&&ticks==1&&fulls==2&&mode==0);
     home_case();home_on_tick=true;add(0,0,0,0);add(400,1500,1,0);add(0,0,0,0);run();
     assert(exits==0&&home_enters==0&&menus==1&&home_renders==0);
     home_case();home_on_touch=true;request_on_touch=true;menu_on_touch=true;add(100,400,1,0);run();

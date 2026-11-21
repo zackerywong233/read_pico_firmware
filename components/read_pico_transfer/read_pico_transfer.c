@@ -4,20 +4,23 @@
  *
  * 热点与已有WiFi、HTTP接收和临时文件提交；容量策略由页面注入。
  * AP/STA networking, HTTP reception and file commit; page injects capacity policy.
- * 冻结：图书 TXT/EPUB；为完整字库部署增加独立 TF 字体目录的 TTF 上传。
- * Frozen: TXT/EPUB books; deploy complete fonts through TTF uploads to a separate TF font directory.
+ * 决策变更：书籍上传和管理同时接受 TXT、EPUB、Markdown 与 CBZ。
+ * Frozen: Book upload and management accept TXT, EPUB, Markdown and CBZ.
+ * 冻结：传书网页可下载本书书签与摘录的 Markdown 导出；UTF-8 文件名原样保留。
+ * Frozen: The transfer page can download Markdown exports of a book's bookmarks and excerpts; UTF-8 names remain unchanged.
  * 冻结：UTF-8 名字不转写；先验限额，字体提交前校验，失败清理临时文件。
  * Frozen: Preserve UTF-8 names; check limits first, validate fonts before commit and remove failed parts.
  * 冻结：有完整目标文件时，同名 rename-backup 是已提交文件的过期备份，可安全清理；目标缺失时必须先恢复备份。
  * Frozen: When a complete destination exists, its same-name rename-backup is stale and may be removed; restore the backup first when the destination is missing.
- * 冻结：热点网页或停服设备触屏可配置网络，不自动切模式；凭据只存单个NVS blob，状态不含密码。
- * Frozen: AP webpage or stopped-service device UI may provision without switching mode; one NVS blob holds secrets outside public status.
+ * 冻结：热点网页或停服设备触屏可管理最多五组网络，不自动切模式；凭据存于私有NVS blob，状态不含密码。
+ * Frozen: AP webpage or stopped-service device UI manages up to five networks without switching modes; private NVS credentials never enter status.
  * 决策变更：网页阅读页可通过同网 HTTP 剪藏；每次开机首次启动服务生成随机口令，停启服务期间保持不变。
  * Decision change: the web reader accepts same-LAN HTTP clips; the first service start per boot creates a token that survives stop/start.
  */
 #include "read_pico_search.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,7 +57,7 @@ static bool decode_name_type(const char *encoded, char *out, size_t cap, bool fo
     out[n] = 0;
     if (!n || out[0] == '.' || out[0] == ' ' || out[n - 1] == ' ' || strstr(out, "..")) return false;
     const char *ext = strrchr(out, '.');
-    if (!ext || (font ? strcasecmp(ext, ".ttf") : (strcasecmp(ext, ".txt") && strcasecmp(ext, ".epub")))) return false;
+    if (!ext || (font ? strcasecmp(ext, ".ttf") : (strcasecmp(ext, ".txt") && strcasecmp(ext, ".epub") && strcasecmp(ext, ".md") && strcasecmp(ext, ".cbz")))) return false;
     // 拒绝非规范 UTF-8、代理项与越界码点。/ Reject noncanonical UTF-8, surrogates and out-of-range code points.
     for (size_t i = 0; i < n;) {
         uint32_t cp; unsigned more; unsigned char c = (unsigned char)out[i++];
@@ -311,7 +314,7 @@ static file_result_t delete_managed(const char *path, file_changed_cb_t changed)
 }
 
 #define BOOK_LIST_PAGE_SIZE 16
-typedef struct { char name[256]; uint64_t size; } transfer_book_entry_t;
+typedef struct { char name[256]; uint64_t size; bool has_notes; } transfer_book_entry_t;
 typedef struct {
     transfer_book_entry_t items[BOOK_LIST_PAGE_SIZE];
     size_t count, total;
@@ -319,6 +322,34 @@ typedef struct {
 
 static bool name_contains(const char *name, const char *query) {
     return read_pico_search_match(name, query);
+}
+
+static uint32_t notes_hash(const char *path) {
+    uint32_t hash = UINT32_C(2166136261);
+    for (const unsigned char *p = (const unsigned char *)path; *p; ++p) hash = (hash ^ *p) * UINT32_C(16777619);
+    return hash;
+}
+
+static bool has_book_notes(const char *root, const char *name, uint64_t size) {
+    char full[448], sidecar[512];
+    if (snprintf(full, sizeof(full), "%s/%s", root, name) >= (int)sizeof(full) ||
+        snprintf(sidecar, sizeof(sidecar), "%s/.pico_notes/n_%08" PRIx32 ".bin", root, notes_hash(full)) >= (int)sizeof(sidecar)) return false;
+    struct stat st;
+    if (stat(sidecar, &st) != 0 || st.st_size < 0) return false;
+    FILE *file = fopen(sidecar, "rb");
+    if (!file) return false;
+    uint8_t header[12];
+    bool valid = fread(header, 1, sizeof(header), file) == sizeof(header) && !memcmp(header, "RBNF", 4) &&
+                 (header[4] == 1 || header[4] == 2);
+    size_t path_len = valid ? (size_t)header[5] | ((size_t)header[6] << 8) : 0;
+    uint32_t file_size = valid ? (uint32_t)header[8] | ((uint32_t)header[9] << 8) |
+                                 ((uint32_t)header[10] << 16) | ((uint32_t)header[11] << 24) : 0;
+    char owner[448];
+    valid = valid && path_len >= 2 && path_len <= sizeof(owner) && st.st_size > (off_t)(12 + path_len) &&
+            fread(owner, 1, path_len, file) == path_len && owner[path_len - 1] == 0 &&
+            !strcmp(owner, full) && file_size == size;
+    fclose(file);
+    return valid;
 }
 
 static int list_books(const char *root, const char *query, size_t page, transfer_book_page_t *out) {
@@ -339,6 +370,7 @@ static int list_books(const char *root, const char *query, size_t page, transfer
         if (index >= page * BOOK_LIST_PAGE_SIZE && out->count < BOOK_LIST_PAGE_SIZE) {
             transfer_book_entry_t *item = &out->items[out->count++];
             strcpy(item->name, name); item->size = (uint64_t)st.st_size;
+            item->has_notes = has_book_notes(root, name, item->size);
         }
     }
     if (!entry && errno) status = 507;
@@ -350,9 +382,18 @@ static int list_books(const char *root, const char *query, size_t page, transfer
 #include "read_pico_transfer.h"
 #include "transfer_policy.h"
 #include "transfer_credentials_store.h"
+#include "agent_config_store.h"
+#include "clip_text.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
+#include "esp_app_format.h"
+#include "esp_image_format.h"
+#include "esp_ota_ops.h"
+#include "esp_system.h"
+#include "read_pico_pmu.h"
+#include "read_pico_pmu_protocol.h"
+#include "ota_policy.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_mac.h"
@@ -360,8 +401,10 @@ static int list_books(const char *root, const char *query, size_t page, transfer
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "nvs.h"
+#include "mdns.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static read_pico_transfer_status_t s_status;
@@ -372,10 +415,79 @@ static httpd_handle_t s_http;
 static esp_netif_t *s_netif;
 static esp_event_handler_instance_t s_events, s_ip_events;
 static bool s_wifi, s_started, s_loop_owned;
+static bool s_ota_loop_owned, s_ota_wifi;
+static esp_netif_t *s_ota_netif;
+static EventGroupHandle_t s_ota_events;
+static esp_event_handler_instance_t s_ota_wifi_event, s_ota_ip_event;
+#define OTA_WIFI_CONNECTED BIT0
+#define OTA_WIFI_FAILED BIT1
 static char *s_buffer;
 static char s_clip_token[33];
 static bool s_stopping, s_upload_active;
 static bool s_config_busy;
+static bool s_mdns;
+static uint8_t s_connect_index;
+static char s_webopen_url[READ_PICO_WEBOPEN_URL_MAX];
+
+static esp_err_t start_mdns(void) {
+    if (s_mdns) return ESP_OK;
+    esp_err_t err = mdns_init();
+    if (err != ESP_OK) return err;
+    err = mdns_hostname_set("readpico");
+    if (err == ESP_OK) err = mdns_instance_name_set("小纸 Pico");
+    if (err == ESP_OK) err = mdns_service_add("Read Pico", "_http", "_tcp", 80, NULL, 0);
+    if (err != ESP_OK) { mdns_free(); return err; }
+    s_mdns = true;
+    portENTER_CRITICAL(&s_lock);
+    strcpy(s_status.mdns_host, "readpico");
+    portEXIT_CRITICAL(&s_lock);
+    return ESP_OK;
+}
+
+static void stop_mdns(void) {
+    if (!s_mdns) return;
+    mdns_free();
+    s_mdns = false;
+    portENTER_CRITICAL(&s_lock);
+    s_status.mdns_host[0] = 0;
+    portEXIT_CRITICAL(&s_lock);
+}
+
+static uint8_t choose_saved_network(const transfer_credentials_t *saved) {
+    uint8_t best_index = saved->recent;
+    int8_t best_rssi = INT8_MIN;
+    bool loop_owned = false, initialized = false, started = false;
+    if (esp_netif_init() != ESP_OK) return best_index;
+    esp_err_t err = esp_event_loop_create_default();
+    if (err == ESP_OK) loop_owned = true;
+    else if (err != ESP_ERR_INVALID_STATE) return best_index;
+    wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
+    if (esp_wifi_init(&init) != ESP_OK) goto done;
+    initialized = true;
+    if (esp_wifi_set_storage(WIFI_STORAGE_RAM) != ESP_OK || esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK ||
+        esp_wifi_start() != ESP_OK) goto done;
+    started = true;
+    wifi_scan_config_t scan = {.show_hidden = false, .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time.active = {.min = 100, .max = 150}};
+    if (esp_wifi_scan_start(&scan, true) != ESP_OK) goto done;
+    uint16_t found = 0;
+    if (esp_wifi_scan_get_ap_num(&found) != ESP_OK) goto done;
+    for (uint16_t i = 0; i < found; ++i) {
+        wifi_ap_record_t ap;
+        if (esp_wifi_scan_get_ap_record(&ap) != ESP_OK) break;
+        for (uint8_t j = 0; j < saved->count; ++j) {
+            if (!strcmp((const char *)ap.ssid, saved->entries[j].ssid) && ap.rssi > best_rssi) {
+                best_rssi = ap.rssi;
+                best_index = j;
+            }
+        }
+    }
+done:
+    if (started) { esp_wifi_scan_stop(); esp_wifi_clear_ap_list(); (void)esp_wifi_stop(); }
+    if (initialized) (void)esp_wifi_deinit();
+    if (loop_owned) (void)esp_event_loop_delete_default();
+    return best_index;
+}
 static transfer_connection_t s_connection;
 extern const char upload_start[] asm("_binary_upload_html_start");
 extern const char upload_end[] asm("_binary_upload_html_end");
@@ -402,15 +514,29 @@ static bool claim_config(void) {
     return available;
 }
 
+bool read_pico_transfer_take_webopen_url(char url[READ_PICO_WEBOPEN_URL_MAX]) {
+    if (!url) return false;
+    portENTER_CRITICAL(&s_lock);
+    bool ready = s_webopen_url[0] != 0;
+    if (ready) { memcpy(url, s_webopen_url, sizeof(s_webopen_url)); s_webopen_url[0] = 0; }
+    portEXIT_CRITICAL(&s_lock);
+    return ready;
+}
+
 static void release_config(void) {
     portENTER_CRITICAL(&s_lock); s_config_busy = false; portEXIT_CRITICAL(&s_lock);
 }
 
 static void publish_credentials(const transfer_credentials_t *c) {
     portENTER_CRITICAL(&s_lock);
-    s_status.wifi_configured = c && c->version == 1;
+    s_status.wifi_configured = c && c->version == 2 && c->count;
+    s_status.wifi_count = s_status.wifi_configured ? c->count : 0;
+    memset(s_status.wifi_ssids, 0, sizeof(s_status.wifi_ssids));
     memset(s_status.wifi_ssid, 0, sizeof(s_status.wifi_ssid));
-    if (s_status.wifi_configured) memcpy(s_status.wifi_ssid, c->ssid, sizeof(s_status.wifi_ssid));
+    if (s_status.wifi_configured) {
+        for (size_t i = 0; i < c->count; ++i) memcpy(s_status.wifi_ssids[i], c->entries[i].ssid, 33);
+        memcpy(s_status.wifi_ssid, c->entries[c->recent].ssid, 33);
+    }
     portEXIT_CRITICAL(&s_lock);
 }
 
@@ -420,7 +546,21 @@ esp_err_t read_pico_transfer_get_saved_wifi(char ssid[33], bool *configured) {
     if (!claim_config()) return ESP_ERR_INVALID_STATE;
     transfer_credentials_t saved;
     esp_err_t err = load_credentials(&saved);
-    if (err == ESP_OK && saved.version == 1) { memcpy(ssid, saved.ssid, 33); *configured = true; }
+    if (err == ESP_OK && saved.version == 2 && saved.count) { memcpy(ssid, saved.entries[saved.recent].ssid, 33); *configured = true; }
+    clear_secret(&saved, sizeof(saved)); release_config();
+    return err;
+}
+
+esp_err_t read_pico_transfer_get_saved_wifi_list(char ssids[5][33], size_t *count) {
+    if (!ssids || !count) return ESP_ERR_INVALID_ARG;
+    memset(ssids, 0, 5 * 33); *count = 0;
+    if (!claim_config()) return ESP_ERR_INVALID_STATE;
+    transfer_credentials_t saved;
+    esp_err_t err = load_credentials(&saved);
+    if (err == ESP_OK && saved.version == 2) {
+        *count = saved.count;
+        for (size_t i = 0; i < saved.count; ++i) memcpy(ssids[i], saved.entries[i].ssid, 33);
+    }
     clear_secret(&saved, sizeof(saved)); release_config();
     return err;
 }
@@ -428,16 +568,93 @@ esp_err_t read_pico_transfer_get_saved_wifi(char ssid[33], bool *configured) {
 esp_err_t read_pico_transfer_save_wifi(const char *ssid, const char *password) {
     read_pico_transfer_status_t status;
     read_pico_transfer_get_status(&status);
-    if (s_wifi || s_http || s_netif || status.state != READ_PICO_TRANSFER_STOPPED) return ESP_ERR_INVALID_STATE;
+    if (s_wifi || s_ota_wifi || s_http || s_netif || status.state != READ_PICO_TRANSFER_STOPPED) return ESP_ERR_INVALID_STATE;
     transfer_credentials_t next;
     if (!credentials_from_text(ssid, password, &next)) return ESP_ERR_INVALID_ARG;
     if (!claim_config()) { clear_secret(&next, sizeof(next)); return ESP_ERR_INVALID_STATE; }
-    esp_err_t err = store_credentials(&next);
+    transfer_credentials_t current = {0};
+    esp_err_t err = load_credentials(&current);
     if (err == ESP_OK) {
-        publish_credentials(&next);
+        size_t index = 0;
+        while (index < current.count && strcmp(current.entries[index].ssid, next.entries[0].ssid)) ++index;
+        if (index == current.count && current.count == 5) err = ESP_ERR_NO_MEM;
+        else {
+            if (index == current.count) ++current.count;
+            memcpy(&current.entries[index], &next.entries[0], sizeof(next.entries[0]));
+            current.version = 2;
+            if (!current.count) current.count = 1;
+            current.recent = (uint8_t)index;
+            err = store_credentials(&current);
+        }
+    }
+    if (err == ESP_OK) {
+        publish_credentials(&current);
         ESP_LOGI("transfer", "wifi saved configured=1");
     }
-    clear_secret(&next, sizeof(next)); release_config(); return err;
+    clear_secret(&current, sizeof(current)); clear_secret(&next, sizeof(next)); release_config(); return err;
+}
+
+static void ota_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
+    (void)arg; (void)data;
+    if (!s_ota_events) return;
+    if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) xEventGroupSetBits(s_ota_events, OTA_WIFI_CONNECTED);
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) xEventGroupSetBits(s_ota_events, OTA_WIFI_FAILED);
+}
+
+esp_err_t read_pico_transfer_ota_wifi_start(uint32_t timeout_ms) {
+    read_pico_transfer_status_t status;
+    read_pico_transfer_get_status(&status);
+    if (s_wifi || s_netif || s_ota_wifi || status.state != READ_PICO_TRANSFER_STOPPED) return ESP_ERR_INVALID_STATE;
+    transfer_credentials_t saved = {0};
+    wifi_config_t config = {0};
+    esp_err_t err = load_credentials(&saved);
+    if (err != ESP_OK || saved.version != 2 || !saved.count) { clear_secret(&saved, sizeof(saved)); return ESP_ERR_NOT_FOUND; }
+    uint8_t index = saved.recent < saved.count ? saved.recent : 0;
+    transfer_wifi_entry_t *entry = &saved.entries[index];
+    memcpy(config.sta.ssid, entry->ssid, strlen(entry->ssid));
+    memcpy(config.sta.password, entry->password, strlen(entry->password));
+    config.sta.threshold.authmode = entry->password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    config.sta.pmf_cfg.capable = true;
+    config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+    clear_secret(&saved, sizeof(saved));
+    err = esp_netif_init(); if (err != ESP_OK) goto fail;
+    err = esp_event_loop_create_default();
+    if (err == ESP_OK) s_ota_loop_owned = true;
+    else if (err != ESP_ERR_INVALID_STATE) goto fail;
+    s_ota_netif = esp_netif_create_default_wifi_sta();
+    if (!s_ota_netif) { err = ESP_ERR_NO_MEM; goto fail; }
+    wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
+    err = esp_wifi_init(&init); if (err != ESP_OK) goto fail;
+    s_ota_wifi = true;
+    s_ota_events = xEventGroupCreate();
+    if (!s_ota_events) { err = ESP_ERR_NO_MEM; goto fail; }
+    err = esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, ota_wifi_event, NULL, &s_ota_wifi_event);
+    if (err != ESP_OK) goto fail;
+    err = esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, ota_wifi_event, NULL, &s_ota_ip_event);
+    if (err != ESP_OK) goto fail;
+    err = esp_wifi_set_storage(WIFI_STORAGE_RAM); if (err != ESP_OK) goto fail;
+    err = esp_wifi_set_mode(WIFI_MODE_STA); if (err != ESP_OK) goto fail;
+    err = esp_wifi_set_config(WIFI_IF_STA, &config); if (err != ESP_OK) goto fail;
+    clear_secret(&config, sizeof(config));
+    err = esp_wifi_start(); if (err != ESP_OK) goto fail;
+    err = esp_wifi_connect(); if (err != ESP_OK) goto fail;
+    EventBits_t bits = xEventGroupWaitBits(s_ota_events, OTA_WIFI_CONNECTED | OTA_WIFI_FAILED,
+        pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
+    if (!(bits & OTA_WIFI_CONNECTED)) { err = (bits & OTA_WIFI_FAILED) ? ESP_FAIL : ESP_ERR_TIMEOUT; goto fail; }
+    return ESP_OK;
+fail:
+    clear_secret(&config, sizeof(config)); clear_secret(&saved, sizeof(saved));
+    read_pico_transfer_ota_wifi_stop();
+    return err;
+}
+
+void read_pico_transfer_ota_wifi_stop(void) {
+    if (s_ota_ip_event) { esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, s_ota_ip_event); s_ota_ip_event = NULL; }
+    if (s_ota_wifi_event) { esp_event_handler_instance_unregister(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, s_ota_wifi_event); s_ota_wifi_event = NULL; }
+    if (s_ota_events) { vEventGroupDelete(s_ota_events); s_ota_events = NULL; }
+    if (s_ota_wifi) { (void)esp_wifi_disconnect(); (void)esp_wifi_stop(); (void)esp_wifi_deinit(); s_ota_wifi = false; }
+    if (s_ota_netif) { esp_netif_destroy_default_wifi(s_ota_netif); s_ota_netif = NULL; }
+    if (s_ota_loop_owned) { (void)esp_event_loop_delete_default(); s_ota_loop_owned = false; }
 }
 
 esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PICO_TRANSFER_SCAN_MAX], size_t *count) {
@@ -445,7 +662,7 @@ esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PIC
     memset(out, 0, sizeof(*out) * READ_PICO_TRANSFER_SCAN_MAX); *count = 0;
     read_pico_transfer_status_t status;
     read_pico_transfer_get_status(&status);
-    if (s_wifi || s_http || s_netif || status.state != READ_PICO_TRANSFER_STOPPED) return ESP_ERR_INVALID_STATE;
+    if (s_wifi || s_ota_wifi || s_http || s_netif || status.state != READ_PICO_TRANSFER_STOPPED) return ESP_ERR_INVALID_STATE;
     bool loop_owned = false, initialized = false, started = false;
     esp_err_t err = esp_netif_init();
     if (err != ESP_OK) return err;
@@ -509,6 +726,36 @@ esp_err_t read_pico_transfer_forget_wifi(void) {
     release_config(); return err;
 }
 
+esp_err_t read_pico_transfer_forget_wifi_ssid(const char *ssid) {
+    if (!ssid || !ssid[0] || strnlen(ssid, 33) > 32) return ESP_ERR_INVALID_ARG;
+    read_pico_transfer_status_t status;
+    read_pico_transfer_get_status(&status);
+    if (status.state == READ_PICO_TRANSFER_UPLOADING ||
+        (status.state != READ_PICO_TRANSFER_STOPPED && status.mode == READ_PICO_TRANSFER_MODE_STA)) return ESP_ERR_INVALID_STATE;
+    if (!claim_config()) return ESP_ERR_INVALID_STATE;
+    transfer_credentials_t current = {0};
+    esp_err_t err = load_credentials(&current);
+    size_t index = 0;
+    if (err == ESP_OK) {
+        while (index < current.count && strcmp(current.entries[index].ssid, ssid)) ++index;
+        if (index == current.count) err = ESP_ERR_NOT_FOUND;
+        else if (current.count == 1) {
+            err = store_credentials(NULL);
+            if (err == ESP_OK) current.count = 0;
+        }
+        else {
+            for (size_t i = index; i + 1 < current.count; ++i) current.entries[i] = current.entries[i + 1];
+            --current.count;
+            clear_secret(&current.entries[current.count], sizeof(current.entries[current.count]));
+            if (current.recent == index) current.recent = 0;
+            else if (current.recent > index) --current.recent;
+            err = store_credentials(&current);
+        }
+    }
+    if (err == ESP_OK) publish_credentials(current.count ? &current : NULL);
+    clear_secret(&current, sizeof(current)); release_config(); return err;
+}
+
 static void set_error(esp_err_t err) {
     portENTER_CRITICAL(&s_lock);
     if (s_status.mode == READ_PICO_TRANSFER_MODE_STA && s_connection.failed) err = ESP_ERR_TIMEOUT;
@@ -543,6 +790,7 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 static void ip_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
     (void)arg; (void)base;
     if (id == IP_EVENT_STA_LOST_IP) {
+        stop_mdns();
         int64_t now = esp_timer_get_time() / 1000;
         portENTER_CRITICAL(&s_lock);
         bool reconnect = !s_stopping && !s_connection.failed;
@@ -571,11 +819,27 @@ static void ip_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
         if (s_status.state != READ_PICO_TRANSFER_UPLOADING) s_status.state = READ_PICO_TRANSFER_READY;
     }
     portEXIT_CRITICAL(&s_lock);
-    if (accepted) ESP_LOGI("transfer", "sta ready url=%s", url);
+    if (accepted) {
+        if (s_cfg.mode == READ_PICO_TRANSFER_MODE_STA && claim_config()) {
+            transfer_credentials_t saved = {0};
+            if (load_credentials(&saved) == ESP_OK && saved.version == 2 && s_connect_index < saved.count) {
+                saved.recent = s_connect_index;
+                (void)store_credentials(&saved);
+                publish_credentials(&saved);
+            }
+            clear_secret(&saved, sizeof(saved));
+            release_config();
+        }
+        esp_err_t mdns_err = start_mdns();
+        if (mdns_err != ESP_OK) ESP_LOGW("transfer", "mDNS start failed: %s", esp_err_to_name(mdns_err));
+        if (s_cfg.sta_ip_cb) s_cfg.sta_ip_cb();
+        ESP_LOGI("transfer", "sta ready url=%s", url);
+    }
 }
 
 void read_pico_transfer_service_poll(void) {
     if (!s_started || s_cfg.mode != READ_PICO_TRANSFER_MODE_STA) return;
+    if (s_cfg.service_poll_cb) s_cfg.service_poll_cb();
     int64_t now = esp_timer_get_time() / 1000;
     portENTER_CRITICAL(&s_lock);
     int action = s_stopping ? 0 : connection_poll(&s_connection, now);
@@ -611,7 +875,7 @@ static esp_err_t respond_error(httpd_req_t *req, int code) {
                        code == 408 ? "{\"error\":\"连接中断或接收超时，请重试\"}" :
                        code == 409 ? "{\"error\":\"同名文件已存在，请明确选择替换或跳过\",\"conflict\":true}" :
                        code == 404 ? "{\"error\":\"文件不存在\"}" :
-                       code == 500 ? "{\"error\":\"操作失败，请重试\"}" : "{\"error\":\"文件名或请求无效：图书仅 TXT/EPUB，字体仅 TTF\"}";
+                       code == 500 ? "{\"error\":\"操作失败，请重试\"}" : "{\"error\":\"文件名或请求无效：图书支持 TXT/EPUB/MD/CBZ，字体仅 TTF\"}";
     set_error(code == 408 ? ESP_ERR_TIMEOUT : code == 507 ? ESP_FAIL : ESP_ERR_INVALID_ARG);
     httpd_resp_set_status(req, status);
     httpd_resp_set_type(req, "application/json; charset=utf-8");
@@ -654,29 +918,71 @@ static esp_err_t agent_config_path(char path[288]) {
     return n > 0 && n < 288 ? ESP_OK : ESP_ERR_INVALID_SIZE;
 }
 
-esp_err_t read_pico_transfer_get_agent_config(read_pico_agent_config_t *out) {
-    if (!out || !s_root[0]) return ESP_ERR_INVALID_STATE;
-    memset(out, 0, sizeof(*out));
+static uint32_t s_agent_config_version;
+
+static esp_err_t store_agent_config(const read_pico_agent_config_t *config) {
+    if (config && !valid_agent_config(config)) return ESP_ERR_INVALID_ARG;
+    esp_err_t err = agent_config_store_write(config);
+    if (err == ESP_OK) {
+        portENTER_CRITICAL(&s_lock);
+        ++s_agent_config_version;
+        portEXIT_CRITICAL(&s_lock);
+    }
+    return err;
+}
+
+static esp_err_t load_agent_nvs(read_pico_agent_config_t *out) {
+    esp_err_t err = agent_config_store_read(out);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return err;
+    if (err != ESP_OK || !valid_agent_config(out)) {
+        memset(out, 0, sizeof(*out));
+        return err == ESP_OK ? ESP_ERR_INVALID_STATE : err;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t migrate_legacy_agent_config(read_pico_agent_config_t *out) {
+    if (!s_root[0]) return ESP_ERR_NOT_FOUND;
     char path[288];
     esp_err_t err = agent_config_path(path);
     if (err != ESP_OK) return err;
     FILE *file = fopen(path, "rb");
     if (!file) return errno == ENOENT ? ESP_ERR_NOT_FOUND : ESP_FAIL;
-    char body[768];
-    size_t n = fread(body, 1, sizeof(body) - 1, file);
+    char body[1025];
+    size_t len = fread(body, 1, sizeof(body) - 1, file);
     bool too_long = fgetc(file) != EOF;
-    if (fclose(file) || too_long) return ESP_ERR_INVALID_SIZE;
-    body[n] = 0;
-    cJSON *json = cJSON_ParseWithLength(body, n);
-    if (!json) return ESP_ERR_INVALID_RESPONSE;
-    bool valid = copy_json_string(json, "uri", out->broker_uri, sizeof(out->broker_uri), true)
+    bool read_error = ferror(file) != 0;
+    if (fclose(file) != 0) read_error = true;
+    if (too_long || read_error) return ESP_ERR_INVALID_SIZE;
+    body[len] = '\0';
+    cJSON *json = cJSON_ParseWithLength(body, len);
+    memset(out, 0, sizeof(*out));
+    bool valid = json
+        && copy_json_string(json, "uri", out->broker_uri, sizeof(out->broker_uri), true)
         && copy_json_string(json, "username", out->username, sizeof(out->username), false)
         && copy_json_string(json, "password", out->password, sizeof(out->password), false)
         && copy_json_string(json, "topic", out->topic, sizeof(out->topic), true)
         && valid_agent_config(out);
     cJSON_Delete(json);
+    memset(body, 0, sizeof(body));
     if (!valid) { memset(out, 0, sizeof(*out)); return ESP_ERR_INVALID_RESPONSE; }
-    return ESP_OK;
+    err = store_agent_config(out);
+    if (err == ESP_OK) (void)unlink(path);
+    return err;
+}
+
+esp_err_t read_pico_transfer_get_agent_config(read_pico_agent_config_t *out) {
+    if (!out) return ESP_ERR_INVALID_ARG;
+    esp_err_t err = load_agent_nvs(out);
+    if (err != ESP_ERR_NVS_NOT_FOUND) return err;
+    return migrate_legacy_agent_config(out);
+}
+
+uint32_t read_pico_transfer_agent_config_version(void) {
+    portENTER_CRITICAL(&s_lock);
+    uint32_t version = s_agent_config_version;
+    portEXIT_CRITICAL(&s_lock);
+    return version;
 }
 
 static esp_err_t info_handler(httpd_req_t *req) {
@@ -690,8 +996,11 @@ static esp_err_t info_handler(httpd_req_t *req) {
     cJSON_AddStringToObject(json, "mode", status.mode == READ_PICO_TRANSFER_MODE_AP ? "ap" : "sta");
     cJSON_AddBoolToObject(json, "network_ready", status.network_ready);
     cJSON_AddStringToObject(json, "url", status.url);
+    cJSON_AddStringToObject(json, "mdns_host", status.mdns_host[0] ? status.mdns_host : "readpico");
     cJSON_AddBoolToObject(json, "wifi_configured", status.wifi_configured);
     cJSON_AddStringToObject(json, "wifi_ssid", status.wifi_ssid);
+    cJSON *saved = cJSON_AddArrayToObject(json, "wifi_ssids");
+    for (size_t i = 0; saved && i < status.wifi_count; ++i) cJSON_AddItemToArray(saved, cJSON_CreateString(status.wifi_ssids[i]));
     cJSON_AddStringToObject(json, "root", s_root);
     cJSON_AddBoolToObject(json, "fonts_enabled", s_font_root[0] != 0);
     cJSON_AddStringToObject(json, "clip_token", s_clip_token);
@@ -715,18 +1024,20 @@ static esp_err_t wifi_response(httpd_req_t *req, const char *status, const char 
     return ESP_FAIL;
 }
 
+static bool host_matches(const char *host, const char *ip, const char *mdns_host) {
+    return management_host_allowed(host, ip, mdns_host);
+}
+
 static bool management_request(httpd_req_t *req) {
-    char origin[96], host[64], host_port[72], origin_port[72];
+    char origin[96], host[64];
     read_pico_transfer_status_t status;
     read_pico_transfer_get_status(&status);
     if (!status.network_ready || strncmp(status.url, "http://", 7)) return false;
-    snprintf(host_port, sizeof(host_port), "%.56s:80", status.url + 7);
-    snprintf(origin_port, sizeof(origin_port), "%.63s:80", status.url);
     if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK ||
-        (strcmp(host, status.url + 7) && strcmp(host, host_port))) return false;
+        !host_matches(host, status.url + 7, status.mdns_host)) return false;
     if (httpd_req_get_hdr_value_len(req, "Origin")) {
         if (httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof(origin)) != ESP_OK ||
-            (strcmp(origin, status.url) && strcmp(origin, origin_port))) return false;
+            !management_origin_allowed(origin, status.url, status.mdns_host)) return false;
     }
     return true;
 }
@@ -737,6 +1048,34 @@ static bool provisioning_request(httpd_req_t *req) {
     return httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) == ESP_OK &&
         !strncasecmp(content_type, "application/json", 16) &&
         (!content_type[16] || content_type[16] == ';' || content_type[16] == ' ');
+}
+
+static bool receive_stopped(void *ctx);
+static int64_t receive_now(void *ctx);
+static int receive_body(void *ctx, char *buf, size_t n);
+static bool decode_query(const char *src, char out[121]);
+
+static esp_err_t webopen_handler(httpd_req_t *req) {
+    if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
+    char content_type[80];
+    if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) != ESP_OK ||
+        strncasecmp(content_type, "application/json", 16) ||
+        (content_type[16] && content_type[16] != ';' && content_type[16] != ' '))
+        return wifi_response(req, "400 Bad Request", "{\"error\":\"仅接受 application/json\"}");
+    if (!req->content_len || req->content_len > 320)
+        return wifi_response(req, "400 Bad Request", "{\"error\":\"网址请求正文长度无效\"}");
+    char body[321] = {0}, url[READ_PICO_WEBOPEN_URL_MAX] = {0};
+    if (!receive_credentials_body(body, req->content_len, receive_body, receive_stopped, receive_now, req)) {
+        clear_secret(body, sizeof(body));
+        return wifi_response(req, "408 Request Timeout", "{\"error\":\"接收网址超时\"}");
+    }
+    bool valid = parse_webopen(body, req->content_len, url);
+    clear_secret(body, sizeof(body));
+    if (!valid) return wifi_response(req, "400 Bad Request", "{\"error\":\"网址必须是合法的 http(s):// 地址\"}");
+    portENTER_CRITICAL(&s_lock);
+    memcpy(s_webopen_url, url, sizeof(s_webopen_url));
+    portEXIT_CRITICAL(&s_lock);
+    return wifi_response(req, "200 OK", "{\"ok\":true}");
 }
 
 static bool receive_stopped(void *ctx) {
@@ -753,7 +1092,14 @@ static esp_err_t wifi_handler(httpd_req_t *req) {
         return wifi_response(req, "403 Forbidden", "{\"error\":\"请在设备热点页面配置网络\"}");
     if (req->method == HTTP_DELETE) {
         if (req->content_len) return wifi_response(req, "400 Bad Request", "{\"error\":\"遗忘请求不应包含正文\"}");
-        esp_err_t err = read_pico_transfer_forget_wifi();
+        char raw[400], value[360], ssid[121];
+        esp_err_t err;
+        if (httpd_req_get_url_query_len(req)) {
+            if (httpd_req_get_url_query_str(req, raw, sizeof(raw)) != ESP_OK ||
+                httpd_query_key_value(raw, "ssid", value, sizeof(value)) != ESP_OK || !decode_query(value, ssid))
+                return wifi_response(req, "400 Bad Request", "{\"error\":\"SSID 参数无效\"}");
+            err = read_pico_transfer_forget_wifi_ssid(ssid);
+        } else err = read_pico_transfer_forget_wifi();
         return wifi_response(req, err == ESP_OK ? "200 OK" : "500 Internal Server Error",
             err == ESP_OK ? "{\"ok\":true}" : "{\"error\":\"无法遗忘网络，请重试\"}");
     }
@@ -770,11 +1116,25 @@ static esp_err_t wifi_handler(httpd_req_t *req) {
     if (!valid) return wifi_response(req, "400 Bad Request", "{\"error\":\"SSID须为1至32字节；密码留空，或8至63个ASCII字符、64位十六进制密钥\"}");
     esp_err_t err = ESP_ERR_INVALID_STATE;
     if (claim_config()) {
-        err = store_credentials(&next);
+        transfer_credentials_t current = {0};
+        err = load_credentials(&current);
         if (err == ESP_OK) {
-            publish_credentials(&next);
+            size_t index = 0;
+            while (index < current.count && strcmp(current.entries[index].ssid, next.entries[0].ssid)) ++index;
+            if (index == current.count && current.count == 5) err = ESP_ERR_NO_MEM;
+            else {
+                if (index == current.count) ++current.count;
+                current.version = 2;
+                current.recent = (uint8_t)index;
+                memcpy(&current.entries[index], &next.entries[0], sizeof(next.entries[0]));
+                err = store_credentials(&current);
+            }
+        }
+        if (err == ESP_OK) {
+            publish_credentials(&current);
             ESP_LOGI("transfer", "wifi saved configured=1");
         }
+        clear_secret(&current, sizeof(current));
         release_config();
     }
     clear_secret(&next, sizeof(next));
@@ -820,8 +1180,6 @@ static esp_err_t send_json(httpd_req_t *req, cJSON *json) {
 static esp_err_t agent_config_handler(httpd_req_t *req) {
     if (!management_request(req))
         return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的网址打开配置页面\"}");
-    char path[288];
-    if (agent_config_path(path) != ESP_OK) return respond_error(req, 500);
     if (req->method == HTTP_GET) {
         read_pico_agent_config_t config = {0};
         esp_err_t err = read_pico_transfer_get_agent_config(&config);
@@ -847,8 +1205,11 @@ static esp_err_t agent_config_handler(httpd_req_t *req) {
         bool admitted = admission_begin(s_stopping, &s_upload_active);
         portEXIT_CRITICAL(&s_lock);
         if (!admitted) return wifi_response(req, "503 Service Unavailable", "{\"error\":\"设备正在切换网络，请稍后重试\"}");
-        int result = unlink(path);
-        bool ok = result == 0 || errno == ENOENT;
+        esp_err_t err = store_agent_config(NULL);
+        char path[288];
+        if (agent_config_path(path) == ESP_OK && unlink(path) != 0 && errno != ENOENT
+            && err == ESP_OK) err = ESP_FAIL;
+        bool ok = err == ESP_OK;
         portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
         return wifi_response(req, ok ? "200 OK" : "507 Insufficient Storage",
             ok ? "{\"ok\":true}" : "{\"error\":\"无法清除配置\"}");
@@ -891,41 +1252,103 @@ static esp_err_t agent_config_handler(httpd_req_t *req) {
     cJSON_Delete(json);
     memset(body, 0, sizeof(body));
 
-    bool saved = false;
-    if (valid) {
-        cJSON *stored = cJSON_CreateObject();
-        if (stored && cJSON_AddStringToObject(stored, "uri", next.broker_uri) &&
-            cJSON_AddStringToObject(stored, "username", next.username) &&
-            cJSON_AddStringToObject(stored, "password", next.password) &&
-            cJSON_AddStringToObject(stored, "topic", next.topic)) {
-            char *encoded = cJSON_PrintUnformatted(stored);
-            if (encoded) {
-                char part[304];
-                int part_len = snprintf(part, sizeof(part), "%s.part", path);
-                int fd = part_len > 0 && part_len < (int)sizeof(part)
-                    ? open(part, O_WRONLY | O_CREAT | O_TRUNC, 0600) : -1;
-                if (fd >= 0) {
-                    size_t len = strlen(encoded), offset = 0;
-                    while (offset < len) {
-                        ssize_t n = write(fd, encoded + offset, len - offset);
-                        if (n <= 0) break;
-                        offset += (size_t)n;
-                    }
-                    bool ok = offset == len && fsync(fd) == 0;
-                    if (close(fd) != 0) ok = false;
-                    if (ok && commit_file(part, path) >= 0) saved = true;
-                    if (!saved) unlink(part);
-                }
-                cJSON_free(encoded);
-            }
-        }
-        cJSON_Delete(stored);
-    }
+    bool saved = valid && store_agent_config(&next) == ESP_OK;
     memset(&next, 0, sizeof(next));
     portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
     if (!valid) return wifi_response(req, "400 Bad Request", "{\"error\":\"仅支持有效的 mqtts:// 地址、用户名、密码和精确主题\"}");
     return wifi_response(req, saved ? "200 OK" : "507 Insufficient Storage",
         saved ? "{\"ok\":true}" : "{\"error\":\"配置保存失败，原配置已保留\"}");
+}
+
+static esp_err_t ambient_config_handler(httpd_req_t *req) {
+    if (!management_request(req))
+        return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的网址打开配置页面\"}");
+    nvs_handle_t h;
+    if (req->method == HTTP_GET) {
+        uint8_t enabled = 0, quiet_start = 23, quiet_end = 7, source = 2;
+        uint16_t interval = 60;
+        char url[257] = {0};
+        if (nvs_open("rp_ambient", NVS_READONLY, &h) == ESP_OK) {
+            (void)nvs_get_u8(h, "enabled", &enabled);
+            (void)nvs_get_u16(h, "interval_min", &interval);
+            (void)nvs_get_u8(h, "quiet_start_h", &quiet_start);
+            (void)nvs_get_u8(h, "quiet_end_h", &quiet_end);
+            (void)nvs_get_u8(h, "source_type", &source);
+            size_t len = sizeof(url);
+            (void)nvs_get_str(h, "url", url, &len);
+            nvs_close(h);
+        }
+        cJSON *json = cJSON_CreateObject();
+        if (!json) return ESP_ERR_NO_MEM;
+        cJSON_AddBoolToObject(json, "enabled", enabled != 0);
+        cJSON_AddNumberToObject(json, "interval_min", interval);
+        cJSON_AddNumberToObject(json, "quiet_start_h", quiet_start);
+        cJSON_AddNumberToObject(json, "quiet_end_h", quiet_end);
+        cJSON_AddNumberToObject(json, "source_type", source);
+        cJSON_AddStringToObject(json, "url", url);
+        return send_json(req, json);
+    }
+    char content_type[80];
+    if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) != ESP_OK ||
+        strncasecmp(content_type, "application/json", 16) ||
+        (content_type[16] && content_type[16] != ';' && content_type[16] != ' ')) return respond_error(req, 400);
+    if (!req->content_len || req->content_len > 4096) return respond_error(req, req->content_len > 4096 ? 413 : 400);
+    char body[4097] = {0};
+    size_t received = 0;
+    while (received < req->content_len) {
+        int n = receive_http(req, body + received, req->content_len - received);
+        if (n <= 0) return respond_error(req, 400);
+        received += (size_t)n;
+    }
+    cJSON *json = cJSON_ParseWithLength(body, received);
+    cJSON *enabled_item = json ? cJSON_GetObjectItemCaseSensitive(json, "enabled") : NULL;
+    cJSON *interval_item = json ? cJSON_GetObjectItemCaseSensitive(json, "interval_min") : NULL;
+    cJSON *start_item = json ? cJSON_GetObjectItemCaseSensitive(json, "quiet_start_h") : NULL;
+    cJSON *end_item = json ? cJSON_GetObjectItemCaseSensitive(json, "quiet_end_h") : NULL;
+    cJSON *source_item = json ? cJSON_GetObjectItemCaseSensitive(json, "source_type") : NULL;
+    char url[257] = {0}, auth[257] = {0};
+    cJSON *clear_item = json ? cJSON_GetObjectItemCaseSensitive(json, "clear_auth") : NULL;
+    bool clear_auth = cJSON_IsTrue(clear_item);
+    bool valid = cJSON_IsBool(enabled_item) && cJSON_IsNumber(interval_item) &&
+        cJSON_IsNumber(start_item) && cJSON_IsNumber(end_item) && cJSON_IsNumber(source_item) &&
+        copy_json_string(json, "url", url, sizeof(url), true) &&
+        copy_json_string(json, "auth_header", auth, sizeof(auth), true) &&
+        (interval_item->valueint == 15 || interval_item->valueint == 30 || interval_item->valueint == 60 ||
+         interval_item->valueint == 120 || interval_item->valueint == 360 || interval_item->valueint == 720 || interval_item->valueint == 1440) &&
+        start_item->valueint >= 0 && start_item->valueint < 24 && end_item->valueint >= 0 && end_item->valueint < 24 &&
+        source_item->valueint >= 0 && source_item->valueint <= 2;
+    if (valid && cJSON_IsTrue(enabled_item) && source_item->valueint != 2) {
+        size_t prefix = !strncmp(url, "http://", 7) ? 7 : !strncmp(url, "https://", 8) ? 8 : 0;
+        const char *authority_end = prefix ? strpbrk(url + prefix, "/?#") : NULL;
+        valid = prefix != 0 && (authority_end ? authority_end : url + strlen(url)) != url + prefix;
+        for (const unsigned char *p = (const unsigned char *)url; valid && *p; ++p)
+            if (*p <= 32 || *p == 127) valid = false;
+    }
+    for (const unsigned char *p = (const unsigned char *)auth; valid && *p; ++p)
+        if (*p == '\r' || *p == '\n' || *p == 0x7f) valid = false;
+    if (clear_auth) auth[0] = '\0';
+    if (valid && auth[0] == 0 && !clear_auth && nvs_open("rp_ambient", NVS_READONLY, &h) == ESP_OK) {
+        size_t len = sizeof(auth);
+        (void)nvs_get_str(h, "auth_header", auth, &len);
+        nvs_close(h);
+    }
+    esp_err_t err = valid ? nvs_open("rp_ambient", NVS_READWRITE, &h) : ESP_ERR_INVALID_ARG;
+    if (err == ESP_OK) {
+        err = nvs_set_u8(h, "enabled", cJSON_IsTrue(enabled_item));
+        if (err == ESP_OK) err = nvs_set_u16(h, "interval_min", (uint16_t)interval_item->valueint);
+        if (err == ESP_OK) err = nvs_set_u8(h, "quiet_start_h", (uint8_t)start_item->valueint);
+        if (err == ESP_OK) err = nvs_set_u8(h, "quiet_end_h", (uint8_t)end_item->valueint);
+        if (err == ESP_OK) err = nvs_set_u8(h, "source_type", (uint8_t)source_item->valueint);
+        if (err == ESP_OK) err = nvs_set_str(h, "url", url);
+        if (err == ESP_OK) err = nvs_set_str(h, "auth_header", auth);
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+    }
+    cJSON_Delete(json);
+    memset(auth, 0, sizeof(auth));
+    memset(body, 0, sizeof(body));
+    return wifi_response(req, err == ESP_OK ? "200 OK" : valid ? "507 Insufficient Storage" : "400 Bad Request",
+        err == ESP_OK ? "{\"ok\":true}" : valid ? "{\"error\":\"配置保存失败\"}" : "{\"error\":\"定时看板配置无效\"}");
 }
 
 static esp_err_t file_response(httpd_req_t *req, file_result_t result, bool deletion, const char *path) {
@@ -1000,6 +1423,7 @@ static esp_err_t books_handler(httpd_req_t *req) {
             for (size_t i = 0; i < entries->count; ++i) {
                 cJSON *item = cJSON_CreateObject(); cJSON_AddItemToArray(items, item);
                 cJSON_AddStringToObject(item, "name", entries->items[i].name); cJSON_AddNumberToObject(item, "size", (double)entries->items[i].size);
+                cJSON_AddBoolToObject(item, "has_notes", entries->items[i].has_notes);
             }
             free(entries);
         }
@@ -1020,8 +1444,105 @@ static esp_err_t books_handler(httpd_req_t *req) {
     portENTER_CRITICAL(&s_lock);
     record_file_change(&s_status.changed_count, result, retry);
     s_upload_active = false;
+    s_webopen_url[0] = 0;
     portEXIT_CRITICAL(&s_lock);
     return file_response(req, result, true, path);
+}
+
+static bool markdown_write_position(FILE *out, bool excerpt, uint16_t chapter, uint32_t offset,
+                                   uint8_t percent) {
+    if (fprintf(out, "## %s · 第 %u 章 · %u%%\n\n", excerpt ? "摘录" : "书签", (unsigned)chapter + 1, percent) < 0)
+        return false;
+    if (!excerpt) return fprintf(out, "> 位置：%u 字节\n\n", (unsigned)offset) >= 0;
+    return fputs("> ", out) >= 0;
+}
+
+static bool markdown_copy_excerpt(FILE *out, FILE *input, size_t length) {
+    char chunk[512];
+    bool line_start = false;
+    while (length) {
+        size_t want = length < sizeof(chunk) ? length : sizeof(chunk);
+        size_t got = fread(chunk, 1, want, input);
+        if (got != want || memchr(chunk, 0, got)) return false;
+        for (size_t i = 0; i < got; ++i) {
+            unsigned char c = (unsigned char)chunk[i];
+            if (c == '\r') continue;
+            if (line_start && fputs("> ", out) < 0) return false;
+            if (fputc(c, out) == EOF) return false;
+            line_start = c == '\n';
+        }
+        length -= got;
+    }
+    if (fputs("\n\n", out) < 0) return false;
+    return true;
+}
+
+static esp_err_t notes_download_handler(httpd_req_t *req) {
+    if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
+    char query[512], encoded[361], name[121], book_path[448], sidecar[512], export_path[512], directory[160];
+    if (req->method != HTTP_GET || req->content_len || httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, "name", encoded, sizeof(encoded)) != ESP_OK || !decode_name(encoded, name))
+        return respond_error(req, 400);
+    if (snprintf(book_path, sizeof(book_path), "%s/%s", s_root, name) >= (int)sizeof(book_path) ||
+        snprintf(sidecar, sizeof(sidecar), "%s/.pico_notes/n_%08" PRIx32 ".bin", s_root, notes_hash(book_path)) >= (int)sizeof(sidecar))
+        return respond_error(req, 400);
+    struct stat st;
+    if (stat(book_path, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 || (uint64_t)st.st_size > UINT32_MAX)
+        return wifi_response(req, "404 Not Found", "{\"error\":\"图书不存在\"}");
+    FILE *input = fopen(sidecar, "rb");
+    if (!input) return wifi_response(req, "404 Not Found", "{\"error\":\"这本书没有笔记\"}");
+    uint8_t header[12]; char owner[448];
+    bool valid = fread(header, 1, sizeof(header), input) == sizeof(header) && !memcmp(header, "RBNF", 4) &&
+                 (header[4] == 1 || header[4] == 2);
+    size_t path_len = valid ? (size_t)header[5] | ((size_t)header[6] << 8) : 0;
+    uint32_t file_size = valid ? (uint32_t)header[8] | ((uint32_t)header[9] << 8) |
+                                 ((uint32_t)header[10] << 16) | ((uint32_t)header[11] << 24) : 0;
+    valid = valid && path_len >= 2 && path_len <= sizeof(owner) && fread(owner, 1, path_len, input) == path_len &&
+            owner[path_len - 1] == 0 && !strcmp(owner, book_path) && file_size == (uint32_t)st.st_size;
+    if (!valid) { fclose(input); return respond_error(req, 404); }
+    const char *parent = s_cfg.is_flash ? "/flash/notes" : "/sdcard/notes";
+    if (snprintf(directory, sizeof(directory), "%s", parent) >= (int)sizeof(directory) ||
+        (mkdir(directory, 0777) != 0 && errno != EEXIST)) { fclose(input); return respond_error(req, 507); }
+    char safe[256]; size_t n = 0;
+    for (const unsigned char *p = (const unsigned char *)name; *p && n + 8 < sizeof(safe); ++p)
+        safe[n++] = ((*p < 0x20 || strchr("/\\:*?\"<>|", *p)) ? '_' : (char)*p);
+    while (n && (safe[n - 1] == ' ' || safe[n - 1] == '.')) --n;
+    if (!n) { memcpy(safe, "notes", 5); n = 5; }
+    safe[n] = 0;
+    if (snprintf(export_path, sizeof(export_path), "%s/%s.md", parent, safe) >= (int)sizeof(export_path)) { fclose(input); return respond_error(req, 507); }
+    FILE *out = fopen(export_path, "wb");
+    if (!out) { fclose(input); return respond_error(req, 507); }
+    bool ok = fprintf(out, "# %s\n\n", name) >= 0;
+    while (ok) {
+        uint8_t record[8]; size_t got = fread(record, 1, sizeof(record), input);
+        if (got == 0) { if (feof(input)) break; ok = false; break; }
+        if (got != sizeof(record) || record[7] > 100) { ok = false; break; }
+        uint16_t chapter = (uint16_t)record[1] | (uint16_t)((uint16_t)record[2] << 8);
+        uint32_t offset = (uint32_t)record[3] | ((uint32_t)record[4] << 8) | ((uint32_t)record[5] << 16) | ((uint32_t)record[6] << 24);
+        if (record[0] == 1) ok = markdown_write_position(out, false, chapter, offset, record[7]);
+        else if (record[0] == 2) {
+            uint8_t raw_len[4] = {0};
+            size_t length_bytes = header[4] == 1 ? 2 : 4;
+            if (fread(raw_len, 1, length_bytes, input) != length_bytes) { ok = false; break; }
+            size_t len = (size_t)raw_len[0] | ((size_t)raw_len[1] << 8);
+            if (length_bytes == 4) len |= (size_t)raw_len[2] << 16 | (size_t)raw_len[3] << 24;
+            if (!len || !markdown_write_position(out, true, chapter, offset, record[7])) { ok = false; break; }
+            ok = markdown_copy_excerpt(out, input, len);
+        } else ok = false;
+    }
+    if (fflush(out) != 0) ok = false;
+    fclose(out); fclose(input);
+    if (!ok) { unlink(export_path); return respond_error(req, 404); }
+    out = fopen(export_path, "rb");
+    if (!out) return respond_error(req, 507);
+    httpd_resp_set_type(req, "text/markdown; charset=utf-8");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"Read-Pico-notes.md\"");
+    char chunk[1024];
+    while ((n = fread(chunk, 1, sizeof(chunk), out)) > 0) {
+        if (httpd_resp_send_chunk(req, chunk, n) != ESP_OK) { fclose(out); return ESP_FAIL; }
+    }
+    fclose(out);
+    return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 static esp_err_t upload_handler(httpd_req_t *req) {
@@ -1058,6 +1579,69 @@ static esp_err_t upload_handler(httpd_req_t *req) {
     if (result.changed) ESP_LOGI("transfer", "committed name=%s bytes=%u elapsed_ms=%lld", name,
              (unsigned)req->content_len, (esp_timer_get_time() - started) / 1000);
     return file_response(req, result, false, path);
+}
+
+static esp_err_t ota_upload_handler(httpd_req_t *req) {
+    if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
+    (void)read_pico_pmu_refresh();
+    const pmu_snapshot_t *pmu = read_pico_pmu_get();
+    bool charging = pmu && pmu->charge_state == PMU_CHARGE_CHARGING;
+    if (!pmu || !ota_update_battery_allowed(pmu->soc_permille, charging))
+        return wifi_response(req, "409 Conflict", "{\"error\":\"电量低于 20%，请连接充电器后升级\"}");
+    const esp_partition_t *partition = esp_ota_get_next_update_partition(NULL);
+    if (!partition || req->content_len < (int)sizeof(esp_image_header_t) ||
+        req->content_len > (int)partition->size)
+        return wifi_response(req, "413 Payload Too Large", "{\"error\":\"固件大小不适用于备用分区\"}");
+    portENTER_CRITICAL(&s_lock);
+    bool admitted = admission_begin(s_stopping, &s_upload_active);
+    portEXIT_CRITICAL(&s_lock);
+    if (!admitted) return wifi_response(req, "503 Service Unavailable", "{\"error\":\"设备正在处理其他上传\"}");
+
+    esp_ota_handle_t handle = 0;
+    esp_err_t err = esp_ota_begin(partition, (size_t)req->content_len, &handle);
+    bool ota_begun = err == ESP_OK;
+    uint8_t buffer[4096];
+    uint8_t image_header[sizeof(esp_image_header_t)];
+    size_t header_bytes = 0;
+    size_t received = 0;
+    bool header_checked = false;
+    while (err == ESP_OK && received < (size_t)req->content_len) {
+        size_t want = (size_t)req->content_len - received;
+        if (want > sizeof(buffer)) want = sizeof(buffer);
+        int n = httpd_req_recv(req, (char *)buffer, want);
+        if (n <= 0) { err = ESP_FAIL; break; }
+        size_t offset = 0;
+        if (!header_checked) {
+            size_t take = sizeof(image_header) - header_bytes;
+            if (take > (size_t)n) take = (size_t)n;
+            memcpy(image_header + header_bytes, buffer, take);
+            header_bytes += take; offset += take;
+            if (header_bytes == sizeof(image_header)) {
+                esp_image_header_t header;
+                memcpy(&header, image_header, sizeof(header));
+                if (header.magic != ESP_IMAGE_HEADER_MAGIC || header.chip_id != ESP_CHIP_ID_ESP32S3) {
+                    err = ESP_ERR_INVALID_ARG; break;
+                }
+                header_checked = true;
+                err = esp_ota_write(handle, image_header, sizeof(image_header));
+            }
+        }
+        if (err == ESP_OK && header_checked && offset < (size_t)n)
+            err = esp_ota_write(handle, buffer + offset, (size_t)n - offset);
+        received += (size_t)n;
+    }
+    if (err == ESP_OK && !header_checked) err = ESP_ERR_INVALID_SIZE;
+    if (err == ESP_OK) err = esp_ota_end(handle);
+    else if (ota_begun) (void)esp_ota_abort(handle);
+    if (err == ESP_OK) err = esp_ota_set_boot_partition(partition);
+    portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
+    if (err != ESP_OK) return wifi_response(req, "422 Unprocessable Content", "{\"error\":\"固件校验失败，当前系统未更改\"}");
+    httpd_resp_set_type(req, "application/json; charset=utf-8");
+    httpd_resp_set_hdr(req, "Connection", "close");
+    httpd_resp_sendstr(req, "{\"ok\":true,\"message\":\"升级完成，设备即将重启\"}");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+    return ESP_OK;
 }
 
 #define WEBCLIP_TEXT_MAX (64u * 1024u)
@@ -1101,10 +1685,15 @@ static bool clip_host_request(httpd_req_t *req) {
     read_pico_transfer_status_t status;
     read_pico_transfer_get_status(&status);
     if (!status.network_ready || strncmp(status.url, "http://", 7)) return false;
-    char host[64], host_port[72];
-    snprintf(host_port, sizeof(host_port), "%.56s:80", status.url + 7);
-    return httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) == ESP_OK
-        && (!strcmp(host, status.url + 7) || !strcmp(host, host_port));
+    char host[64];
+    if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK ||
+        !host_matches(host, status.url + 7, status.mdns_host)) return false;
+    if (httpd_req_get_hdr_value_len(req, "Origin")) {
+        char origin[96];
+        if (httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof(origin)) != ESP_OK ||
+            !management_origin_allowed(origin, status.url, status.mdns_host)) return false;
+    }
+    return true;
 }
 
 static esp_err_t clip_reject(httpd_req_t *req, const char *status, const char *body) {
@@ -1116,16 +1705,9 @@ static esp_err_t clip_reject(httpd_req_t *req, const char *status, const char *b
     return ESP_FAIL;
 }
 
-static bool clip_safe_text(char *text, bool title) {
-    for (unsigned char *p = (unsigned char *)text; *p; ++p) {
-        if (*p == '\r' || *p == '\n') {
-            if (title) *p = ' ';
-            else if (*p == '\r') *p = '\n';
-        } else if (*p < 32 && *p != '\t') {
-            return false;
-        }
-    }
-    return true;
+static void *transfer_alloc(size_t size) {
+    void *ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return ptr ? ptr : malloc(size);
 }
 
 static esp_err_t webclip_handler(httpd_req_t *req) {
@@ -1160,10 +1742,14 @@ static esp_err_t webclip_handler(httpd_req_t *req) {
     }
     body[received] = 0;
 
-    char token[33] = {0}, title[512] = {0}, source[2049] = {0};
+    char token[33] = {0};
+    char *title = transfer_alloc(512);
+    char *source = transfer_alloc(2049);
     char *text = heap_caps_malloc(WEBCLIP_TEXT_MAX + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!text) text = malloc(WEBCLIP_TEXT_MAX + 1);
-    bool valid = text != NULL
+    bool valid = title && source && text;
+    if (valid) { title[0] = '\0'; source[0] = '\0'; }
+    valid = valid
         && form_value(body, "token", token, sizeof(token))
         && form_value(body, "title", title, sizeof(title))
         && form_value(body, "url", source, sizeof(source))
@@ -1175,7 +1761,7 @@ static esp_err_t webclip_handler(httpd_req_t *req) {
         && clip_safe_text(text, false);
     free(body);
     if (!valid) {
-        free(text);
+        free(text); free(title); free(source);
         portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
         return wifi_response(req, "400 Bad Request", "{\"error\":\"剪藏内容无效、过长或设备口令已失效\"}");
     }
@@ -1189,6 +1775,7 @@ static esp_err_t webclip_handler(httpd_req_t *req) {
     portEXIT_CRITICAL(&s_lock);
 
     char path[288], part[296];
+    char *header = transfer_alloc(2600);
     uint64_t nonce = ((uint64_t)esp_random() << 32) | esp_random();
     int path_len = snprintf(path, sizeof(path), "%s/webclip_%016llx.txt", s_root, (unsigned long long)nonce);
     int part_len = path_len > 0 && path_len < (int)sizeof(path)
@@ -1197,14 +1784,13 @@ static esp_err_t webclip_handler(httpd_req_t *req) {
     size_t total_len = strlen(title) + strlen(source) + text_len + 32;
     uint64_t free_bytes = s_cfg.free_bytes_cb(s_cfg.free_bytes_ctx);
     bool committed = false;
-    if (part_len > 0 && part_len < (int)sizeof(part)
+    if (header && part_len > 0 && part_len < (int)sizeof(part)
         && (!s_cfg.file_limit || total_len <= s_cfg.file_limit) && total_len <= free_bytes) {
         int fd = open(part, O_WRONLY | O_CREAT | O_EXCL, 0644);
         if (fd >= 0) {
-            char header[2600];
-            int header_len = snprintf(header, sizeof(header), "%s\n来源：%s\n\n", title, source);
+            int header_len = snprintf(header, 2600, "%s\n来源：%s\n\n", title, source);
             size_t wrote = 0;
-            bool ok = header_len > 0 && header_len < (int)sizeof(header);
+            bool ok = header_len > 0 && header_len < 2600;
             while (ok && wrote < (size_t)header_len) {
                 ssize_t n = write(fd, header + wrote, (size_t)header_len - wrote);
                 if (n <= 0) ok = false;
@@ -1222,7 +1808,7 @@ static esp_err_t webclip_handler(httpd_req_t *req) {
             if (!committed) unlink(part);
         }
     }
-    free(text);
+    free(text); free(title); free(source); free(header);
     if (committed && s_cfg.file_changed_cb) (void)s_cfg.file_changed_cb(path);
     portENTER_CRITICAL(&s_lock);
     s_upload_active = false;
@@ -1271,10 +1857,15 @@ bool read_pico_transfer_try_stop_if_idle(void) {
 
 void read_pico_transfer_stop(void) {
     portENTER_CRITICAL(&s_lock); s_stopping = true; portEXIT_CRITICAL(&s_lock);
-    if (s_http) { httpd_stop(s_http); s_http = NULL; }
-    if (s_started) { esp_wifi_stop(); s_started = false; }
+    // 先注销事件回调，避免停网回调执行期间再收到 STA 获取 IP 等异步事件。
+    // Unregister event callbacks first so STA IP events cannot race with teardown.
     if (s_events) { esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, s_events); s_events = NULL; }
     if (s_ip_events) { esp_event_handler_instance_unregister(IP_EVENT, ESP_EVENT_ANY_ID, s_ip_events); s_ip_events = NULL; }
+    if (s_cfg.mode == READ_PICO_TRANSFER_MODE_STA && s_cfg.network_stop_cb)
+        s_cfg.network_stop_cb();
+    stop_mdns();
+    if (s_http) { httpd_stop(s_http); s_http = NULL; }
+    if (s_started) { esp_wifi_stop(); s_started = false; }
     if (s_wifi) { esp_wifi_deinit(); s_wifi = false; }
     if (s_netif) { esp_netif_destroy_default_wifi(s_netif); s_netif = NULL; }
     if (s_loop_owned) { esp_event_loop_delete_default(); s_loop_owned = false; }
@@ -1291,7 +1882,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     if (!cfg || !cfg->root_dir || !cfg->free_bytes_cb || strlen(cfg->root_dir) >= sizeof(s_root) ||
         (cfg->font_dir && (cfg->is_flash || !cfg->font_dir[0] || strlen(cfg->font_dir) >= sizeof(s_font_root))) ||
         (cfg->mode != READ_PICO_TRANSFER_MODE_AP && cfg->mode != READ_PICO_TRANSFER_MODE_STA)) return ESP_ERR_INVALID_ARG;
-    if (s_wifi || s_netif || s_http) return ESP_ERR_INVALID_STATE;
+    if (s_wifi || s_netif || s_http || s_ota_wifi) return ESP_ERR_INVALID_STATE;
     s_cfg = *cfg; strcpy(s_root, cfg->root_dir); s_cfg.root_dir = s_root;
     snprintf(s_font_root, sizeof(s_font_root), "%s", cfg->font_dir ? cfg->font_dir : "");
     s_cfg.font_dir = s_font_root[0] ? s_font_root : NULL;
@@ -1306,7 +1897,11 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     esp_err_t err = load_credentials(&saved);
     if (err != ESP_OK && cfg->mode == READ_PICO_TRANSFER_MODE_STA) goto fail;
     publish_credentials(&saved);
-    if (cfg->mode == READ_PICO_TRANSFER_MODE_STA && saved.version != 1) { err = ESP_ERR_NOT_FOUND; goto fail; }
+    if (cfg->mode == READ_PICO_TRANSFER_MODE_STA && (saved.version != 2 || !saved.count)) { err = ESP_ERR_NOT_FOUND; goto fail; }
+    if (cfg->mode == READ_PICO_TRANSFER_MODE_STA) {
+        s_connect_index = choose_saved_network(&saved);
+        saved.recent = s_connect_index;
+    }
     struct stat st;
     if (stat(cfg->root_dir, &st) || !S_ISDIR(st.st_mode)) { err = ESP_ERR_NOT_FOUND; goto fail; }
     unsigned removed = 0, restored = 0;
@@ -1338,9 +1933,10 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         wifi.ap.max_connection = 2; wifi.ap.authmode = WIFI_AUTH_WPA2_PSK;
         portENTER_CRITICAL(&s_lock); strcpy(s_status.ssid, (char *)wifi.ap.ssid); portEXIT_CRITICAL(&s_lock);
     } else {
-        memcpy(wifi.sta.ssid, saved.ssid, strlen(saved.ssid));
-        memcpy(wifi.sta.password, saved.password, strlen(saved.password));
-        wifi.sta.threshold.authmode = saved.password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+        transfer_wifi_entry_t *recent = &saved.entries[s_connect_index];
+        memcpy(wifi.sta.ssid, recent->ssid, strlen(recent->ssid));
+        memcpy(wifi.sta.password, recent->password, strlen(recent->password));
+        wifi.sta.threshold.authmode = recent->password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
         wifi.sta.pmf_cfg.capable = true;
         wifi.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     }
@@ -1359,7 +1955,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     err = esp_wifi_start(); if (err != ESP_OK) goto fail;
     s_started = true;
     httpd_config_t http = HTTPD_DEFAULT_CONFIG();
-    http.stack_size = 12288; http.max_uri_handlers = 16; http.recv_wait_timeout = 5;
+    http.stack_size = 16384; http.max_uri_handlers = 20; http.recv_wait_timeout = 5;
     http.lru_purge_enable = true;
     err = httpd_start(&s_http, &http); if (err != ESP_OK) goto fail;
     const httpd_uri_t routes[] = {
@@ -1368,13 +1964,18 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         { .uri = "/agent", .method = HTTP_GET, .handler = agent_config_handler },
         { .uri = "/agent", .method = HTTP_POST, .handler = agent_config_handler },
         { .uri = "/agent", .method = HTTP_DELETE, .handler = agent_config_handler },
+        { .uri = "/ambient", .method = HTTP_GET, .handler = ambient_config_handler },
+        { .uri = "/ambient", .method = HTTP_POST, .handler = ambient_config_handler },
         { .uri = "/webclip", .method = HTTP_POST, .handler = webclip_handler },
+        { .uri = "/webopen", .method = HTTP_POST, .handler = webopen_handler },
         { .uri = "/upload", .method = HTTP_PUT, .handler = upload_handler },
+        { .uri = "/ota", .method = HTTP_PUT, .handler = ota_upload_handler },
         { .uri = "/fonts", .method = HTTP_PUT, .handler = upload_handler, .user_ctx = (void *)1 },
         { .uri = "/fonts", .method = HTTP_GET, .handler = font_info_handler },
         { .uri = "/books", .method = HTTP_GET, .handler = books_handler },
         { .uri = "/books", .method = HTTP_DELETE, .handler = books_handler },
         { .uri = "/books", .method = HTTP_POST, .handler = books_handler },
+        { .uri = "/notes", .method = HTTP_GET, .handler = notes_download_handler },
         { .uri = "/wifi", .method = HTTP_POST, .handler = wifi_handler },
         { .uri = "/wifi", .method = HTTP_DELETE, .handler = wifi_handler },
     };

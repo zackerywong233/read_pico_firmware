@@ -44,23 +44,25 @@ typedef int esp_err_t;
 typedef unsigned nvs_handle_t;
 enum { ESP_OK, ESP_ERR_NVS_NOT_FOUND, ESP_ERR_INVALID_STATE, ESP_ERR_INVALID_ARG, ESP_FAIL };
 enum { NVS_READONLY, NVS_READWRITE };
-static transfer_credentials_t committed, staged;
+static uint8_t committed[sizeof(transfer_credentials_t)], staged[sizeof(transfer_credentials_t)];
+static size_t committed_size, staged_size;
 static bool present, pending_present;
 static int fail_open, fail_write, fail_commit, handles;
 static esp_err_t nvs_open(const char *name, int mode, nvs_handle_t *handle) {
     assert(!strcmp(name, "rp_wifi")); (void)mode;
     if (fail_open) return ESP_FAIL;
-    ++handles; *handle = 1; staged = committed; pending_present = present; return ESP_OK;
+    ++handles; *handle = 1; memcpy(staged, committed, sizeof(staged)); staged_size = committed_size; pending_present = present; return ESP_OK;
 }
 static esp_err_t nvs_get_blob(nvs_handle_t handle, const char *key, void *out, size_t *size) {
     assert(handle == 1 && !strcmp(key, "credentials"));
     if (!present) return ESP_ERR_NVS_NOT_FOUND;
-    assert(*size >= sizeof(committed)); *size = sizeof(committed); memcpy(out, &committed, *size); return ESP_OK;
+    if (!out) { *size = committed_size; return ESP_OK; }
+    assert(*size >= committed_size); *size = committed_size; memcpy(out, committed, *size); return ESP_OK;
 }
 static esp_err_t nvs_set_blob(nvs_handle_t handle, const char *key, const void *in, size_t size) {
-    assert(handle == 1 && !strcmp(key, "credentials") && size == sizeof(staged));
+    assert(handle == 1 && !strcmp(key, "credentials") && size <= sizeof(staged));
     if (fail_write) return ESP_FAIL;
-    memcpy(&staged, in, size); pending_present = true; return ESP_OK;
+    memcpy(staged, in, size); staged_size = size; pending_present = true; return ESP_OK;
 }
 static esp_err_t nvs_erase_key(nvs_handle_t handle, const char *key) {
     assert(handle == 1 && !strcmp(key, "credentials"));
@@ -70,10 +72,11 @@ static esp_err_t nvs_erase_key(nvs_handle_t handle, const char *key) {
 static esp_err_t nvs_commit(nvs_handle_t handle) {
     assert(handle == 1);
     if (fail_commit) return ESP_FAIL;
-    committed = staged; present = pending_present; return ESP_OK;
+    memcpy(committed, staged, sizeof(committed)); committed_size = staged_size; present = pending_present; return ESP_OK;
 }
-static void nvs_close(nvs_handle_t handle) { assert(handle == 1); --handles; clear_secret(&staged, sizeof(staged)); }
+static void nvs_close(nvs_handle_t handle) { assert(handle == 1); --handles; clear_secret(staged, sizeof(staged)); }
 #include "../components/read_pico_transfer/transfer_credentials_store.h"
+#include "../components/read_pico_transfer/transfer_credentials_store.c"
 
 static bool parse(const char *json, transfer_credentials_t *c) { return parse_credentials(json, strlen(json), c); }
 int main(void) {
@@ -108,17 +111,17 @@ int main(void) {
     scan_offer(networks, &count, &ap);
     assert(count == READ_PICO_TRANSFER_SCAN_MAX && networks[0].rssi == -20 && !networks[0].requires_password);
     assert(parse("{\"ssid\":\"家庭 WiFi\",\"password\":\"12345678\"}", &c));
-    assert(!strcmp(c.ssid, "家庭 WiFi"));
+    assert(!strcmp(c.entries[0].ssid, "家庭 WiFi"));
     assert(parse("{\"ssid\":\"open\",\"password\":\"\"}", &c));
     assert(store_credentials(&c) == ESP_OK && present && !handles);
     transfer_credentials_t old;
-    assert(load_credentials(&old) == ESP_OK && !strcmp(old.ssid, "open"));
-    strcpy(c.ssid, "replacement"); fail_write = 1;
+    assert(load_credentials(&old) == ESP_OK && !strcmp(old.entries[0].ssid, "open"));
+    strcpy(c.entries[0].ssid, "replacement"); fail_write = 1;
     assert(store_credentials(&c) == ESP_FAIL && !handles);
-    assert(load_credentials(&old) == ESP_OK && !strcmp(old.ssid, "open"));
+    assert(load_credentials(&old) == ESP_OK && !strcmp(old.entries[0].ssid, "open"));
     fail_write = 0; fail_commit = 1;
     assert(store_credentials(&c) == ESP_FAIL && !handles);
-    assert(load_credentials(&old) == ESP_OK && !strcmp(old.ssid, "open"));
+    assert(load_credentials(&old) == ESP_OK && !strcmp(old.entries[0].ssid, "open"));
     assert(store_credentials(NULL) == ESP_FAIL && present && !handles);
     fail_commit = 0; fail_open = 1;
     assert(store_credentials(&c) == ESP_FAIL && !handles);
@@ -127,6 +130,34 @@ int main(void) {
     assert(store_credentials(NULL) == ESP_OK && !present && !handles);
     assert(load_credentials(&old) == ESP_OK && old.version == 0);
     assert(store_credentials(NULL) == ESP_OK && !handles);
+    transfer_credentials_v1_t legacy = {.version = 1};
+    strcpy(legacy.ssid, "legacy-home"); strcpy(legacy.password, "12345678");
+    memcpy(committed, &legacy, sizeof(legacy)); committed_size = sizeof(legacy); present = true;
+    assert(load_credentials(&old) == ESP_OK && old.version == 2 && old.count == 1);
+    assert(!strcmp(old.entries[0].ssid, "legacy-home") && committed_size == sizeof(old));
+    transfer_credentials_t choices = {0}; choices.version = 2; choices.count = 2; choices.recent = 0;
+    strcpy(choices.entries[0].ssid, "first"); strcpy(choices.entries[0].password, "12345678");
+    strcpy(choices.entries[1].ssid, "second"); strcpy(choices.entries[1].password, "12345678");
+    read_pico_transfer_network_t candidates[] = {{.ssid="first",.rssi=-70},{.ssid="second",.rssi=-42}};
+    assert(saved_network_best_index(&choices, candidates, 2) == 1);
+    assert(saved_network_best_index(&choices, candidates, 0) == choices.recent);
+    char pushed[256] = {0};
+    const char *open_ok = "{\"url\":\"https://example.com/a\"}";
+    assert(parse_webopen(open_ok, strlen(open_ok), pushed));
+    assert(!strcmp(pushed, "https://example.com/a"));
+    const char *open_file = "{\"url\":\"file:///etc/passwd\"}";
+    const char *open_space = "{\"url\":\"http://bad host\"}";
+    assert(!parse_webopen(open_file, strlen(open_file), pushed));
+    assert(!parse_webopen(open_space, strlen(open_space), pushed));
+    assert(management_host_allowed("readpico.local", "192.168.1.50", "readpico"));
+    assert(management_host_allowed("readpico.local:80", "192.168.1.50", "readpico"));
+    assert(management_host_allowed("readpico-2.local", "192.168.1.50", "readpico-2"));
+    assert(management_host_allowed("192.168.1.50:80", "192.168.1.50", "readpico"));
+    assert(!management_host_allowed("evil.local", "192.168.1.50", "readpico"));
+    assert(management_origin_allowed("http://readpico.local", "http://192.168.1.50", "readpico"));
+    assert(management_origin_allowed("http://readpico-2.local:80", "http://192.168.1.50", "readpico-2"));
+    assert(management_origin_allowed("http://192.168.1.50:80", "http://192.168.1.50", "readpico"));
+    assert(!management_origin_allowed("http://evil.local", "http://192.168.1.50", "readpico"));
     const char *bad[] = {"{}", "[]", "null", "{\"ssid\":\"\",\"password\":\"12345678\"}",
         "{\"ssid\":\"home\",\"password\":12345678}", "{\"ssid\":\"home\",\"password\":\"short\"}",
         "{\"ssid\":\"home\",\"password\":\"12345678\"}x", "{\"ssid\":\"home\\u0000x\",\"password\":\"12345678\"}",
@@ -137,9 +168,9 @@ int main(void) {
     assert(parse("{\"ssid\":\"home[{}]\",\"password\":\"12345678\"}", &c));
     const char embedded[] = "{\"ssid\":\"home\",\"password\":\"12345678\"}\0junk";
     assert(!parse_credentials(embedded, sizeof(embedded) - 1, &c));
-    memset(&c, 0, sizeof(c)); c.version = 1; memset(c.ssid, 'a', 32); memset(c.password, 'a', 64);
-    assert(credentials_valid(&c)); c.password[0] = 'g'; assert(!credentials_valid(&c));
-    c.password[0] = 'a'; c.ssid[32] = 'b'; assert(!credentials_valid(&c));
+    memset(&c, 0, sizeof(c)); c.version = 2; c.count = 1; strcpy(c.entries[0].ssid, "test"); strcpy(c.entries[0].password, "12345678");
+    assert(credentials_valid(&c)); c.entries[0].password[0] = 'g'; assert(credentials_valid(&c));
+    c.entries[0].ssid[32] = 'b'; assert(!credentials_valid(&c));
     clear_secret(&c, sizeof(c)); for (size_t i = 0; i < sizeof(c); ++i) assert(((unsigned char *)&c)[i] == 0);
     transfer_connection_t net;
     connection_begin(&net, 100);

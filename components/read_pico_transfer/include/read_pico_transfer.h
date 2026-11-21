@@ -4,10 +4,11 @@
  *
  * 双模式传书生命周期和跨任务状态；存储策略由调用方注入。
  * AP/STA transfer lifecycle and cross-task status; caller supplies storage policy.
- * 冻结：图书 TXT/EPUB；完整字体部署使用独立 TF 目录的 TTF；不依赖页面或图书实现。
- * Frozen: TXT/EPUB books and complete TTF fonts in a separate TF directory; no page or book implementation dependency.
- * 冻结：热点网页或停服后的设备触屏可配网；已有WiFi模式不接受远程修改凭据。
- * Frozen: AP webpage or stopped-service device UI may provision; STA rejects remote credential changes.
+ * 决策变更：书籍文件支持 TXT、EPUB、Markdown 与 CBZ；完整字体部署使用独立 TF 目录的 TTF。
+ * Decision change: support TXT, EPUB, Markdown and CBZ books; complete TTF fonts use a separate TF directory.
+ * 冻结：不依赖页面或图书实现。/ Frozen: No page or book implementation dependency.
+ * 冻结：热点网页或停服后的设备触屏可管理最多五组网络；已有WiFi模式不接受远程凭据修改。
+ * Frozen: AP webpage or stopped-service device UI manages up to five networks; STA rejects remote credential changes.
  */
 #pragma once
 #include <stdbool.h>
@@ -18,6 +19,7 @@
 
 #define READ_PICO_TRANSFER_PASSWORD "readpico"
 #define READ_PICO_TRANSFER_URL "http://192.168.4.1"
+#define READ_PICO_WEBOPEN_URL_MAX 256
 
 typedef enum {
     READ_PICO_TRANSFER_MODE_AP = 0, ///< 设备热点 / Device hotspot
@@ -41,13 +43,19 @@ typedef struct {
     uint64_t (*free_bytes_cb)(void *ctx); ///< 查询可用字节 / Query available bytes
     void *free_bytes_ctx; ///< 回调上下文，stop 前有效 / Callback context valid until stop
     esp_err_t (*file_changed_cb)(const char *path); ///< 文件提交或删除后清除进度；失败不回滚文件 / Clear progress after commit or deletion; failure never rolls back the file
+    void (*sta_ip_cb)(void); ///< STA 首次取得 IP 后调用 / Called after STA receives an IP address
+    void (*service_poll_cb)(void); ///< 传输服务轮询时调用 / Called during transfer service polling
+    void (*network_stop_cb)(void); ///< 停止网络前调用 / Called before stopping networking
 } read_pico_transfer_cfg_t;
 
 typedef struct {
     read_pico_transfer_state_t state; ///< 当前状态 / Current state
     read_pico_transfer_mode_t mode; ///< 网络模式 / Network mode
     char url[64]; ///< 可访问地址，未联网为空 / Reachable address, empty when offline
+    char mdns_host[64]; ///< mDNS 主机名，不含 .local / mDNS hostname without .local
     char wifi_ssid[33]; ///< 已保存网络名称，不含密码 / Saved network name, never a password
+    char wifi_ssids[5][33]; ///< 已保存网络名，不含密码 / Saved network names, never passwords
+    uint8_t wifi_count; ///< 已保存网络数 / Number of saved networks
     bool wifi_configured; ///< 存在有效凭据 / Valid credentials saved
     bool network_ready; ///< 已取得可用网络地址 / Usable network address acquired
     unsigned sta_count; ///< 连接数 / Station count
@@ -82,13 +90,25 @@ bool read_pico_transfer_try_stop_if_idle(void);
 void read_pico_transfer_get_status(read_pico_transfer_status_t *out);
 /// 控制任务每500ms驱动有界连接重试与15秒超时。/ Owner task polls every 500 ms for bounded retries and a 15 s timeout.
 void read_pico_transfer_service_poll(void);
-/// 只读已保存SSID；未配置仍返回ESP_OK。/ Read only the saved SSID; unconfigured still returns ESP_OK.
+/// 只读最近优先的已保存SSID；未配置仍返回ESP_OK。/ Read the most recent saved SSID; unconfigured still returns ESP_OK.
 esp_err_t read_pico_transfer_get_saved_wifi(char ssid[33], bool *configured);
-/// 传书服务运行期间读取当前存储根里的 Agent 配置；缺失返回 ESP_ERR_NOT_FOUND。/ Read Agent config from the active storage root while service runs; missing file returns ESP_ERR_NOT_FOUND.
+/// 只读最多五个已保存SSID；不含密码。/ Read up to five saved SSIDs without passwords.
+esp_err_t read_pico_transfer_get_saved_wifi_list(char ssids[5][33], size_t *count);
+/// 读取独立 NVS 中的 Agent 配置；首次读取时兼容迁移旧文件。/ Read Agent configuration from dedicated NVS, migrating the legacy file on first access.
 esp_err_t read_pico_transfer_get_agent_config(read_pico_agent_config_t *out);
+/// 配置变更计数，用于运行中的 Agent 页面发现网页更新。/ Configuration revision for live Agent pages to detect browser updates.
+uint32_t read_pico_transfer_agent_config_version(void);
 /// 仅热点或停止状态可遗忘；上传中拒绝。/ Forget only while AP or stopped; rejected during upload.
 esp_err_t read_pico_transfer_forget_wifi(void);
+/// 单独遗忘SSID；仅热点或停止状态可调用。/ Forget one SSID while AP or stopped.
+esp_err_t read_pico_transfer_forget_wifi_ssid(const char *ssid);
 /// 停服后同步扫描2.4GHz网络；最多16个去重SSID，按信号降序，所有临时资源均释放。/ Scan synchronously while stopped; up to 16 unique SSIDs by descending RSSI; release all temporary resources.
 esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PICO_TRANSFER_SCAN_MAX], size_t *count);
 /// 停服后保存设备输入的凭据，不自动连接；密码校验与网页相同。/ Save device-entered credentials while stopped without connecting; validation matches the webpage.
 esp_err_t read_pico_transfer_save_wifi(const char *ssid, const char *password);
+/// OTA 专用 STA 临时联网；返回前等待取得 IP，必须配对调用 stop。/ Temporarily connect STA for OTA and wait for an IP; pair with stop.
+esp_err_t read_pico_transfer_ota_wifi_start(uint32_t timeout_ms);
+/// 释放 OTA 专用 Wi-Fi 资源。/ Release the OTA-only Wi-Fi resources.
+void read_pico_transfer_ota_wifi_stop(void);
+/// 原子取出最近一次手机推送网址；没有新网址时返回 false。/ Take the latest phone-pushed URL; false means none is pending.
+bool read_pico_transfer_take_webopen_url(char url[READ_PICO_WEBOPEN_URL_MAX]);

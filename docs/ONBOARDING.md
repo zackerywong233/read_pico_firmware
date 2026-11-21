@@ -126,10 +126,10 @@ python -m serial.tools.miniterm COMx 115200     # Ctrl+] 退出，看开机日�
 --flash-mode dio --flash-freq 80m --flash-size 16MB
 0x0 bootloader/bootloader.bin
 0x8000 partition_table/partition-table.bin
-0x10000 Read_Pico.bin
+0x20000 Read_Pico.bin
 ```
 
-`Read_Pico.bin` 只是 app，**必须落在 0x10000**。把它写到 `0x0` 会覆盖 bootloader、分区表、NVS、phy_init，设备不再启动——而墨水屏会保留上一帧画面，看起来"没坏"。这个错误已经在实测中发生过一次，用上面的命令全量重写后恢复（§13.2）。想要单文件烧写，先 `idf.py merge-bin` 生成合并镜像再写 0x0。
+`Read_Pico.bin` 只是 app，初始槽地址为 `0x20000`，运行时备用槽为 `0x420000`。本地开发刷写使用 IDF 生成的 `@flash_args`，不要手写偏移。把 app 写到 `0x0` 会覆盖 bootloader 和分区表，设备不再启动。首次从旧分区迁移要用 Web Flasher 的合并镜像并擦除 Flash。
 
 实测踩坑：
 - 端口写 `COMx`，**不要写 `\\.\COMx`**。后者在 esptool 5.x 下报 `Failed to get VID/PID` + `Write timeout`，很容易被误判成"没进下载模式"。
@@ -137,7 +137,7 @@ python -m serial.tools.miniterm COMx 115200     # Ctrl+] 退出，看开机日�
 - 只读握手检查：`python -m esptool --chip esp32s3 -p COMx --after no-reset chip-id`。能连上并打印 MAC（S3 没有 chip id，esptool 会改读 MAC，这是正常的）才继续 `write-flash`。
 - esptool 报 `Hash of data verified` 只说明字节写对了，**不等于设备能启动**。烧完必须看串口。"真机已验证"的最低证据是下面三行都出现：
   ```
-  I (...) boot: Loaded app from partition at offset 0x10000
+  I (...) boot: Loaded app from partition at offset 0x20000（或 OTA 槽 0x420000）
   I (...) app_init: ESP-IDF:          v6.1
   I (...) app_loop: UI ready on 概览 Overview
   ```
@@ -176,7 +176,7 @@ idf.py size                       # CI 也跑这一步
 
 `idf.py flash` 内部就是 `esptool write_flash @flash_args`，三段镜像各归其位。没有 idf.py 的宿主走 §3.4。
 
-烧写会**覆盖**设备出厂应用固件，但按当前 `flash_args` 不会写入 NVS；睡眠模式 / 字体选择 / 自检结果会保留。VCOM 在 PMU 里，不受影响。分区表 [partitions_16M.csv](../partitions_16M.csv)：nvs 0x9000/0x5000、phy_init 0xE000/0x1000、factory app 0x10000/2 MB、spiffs 0x500000/5 MB（当前代码未挂载 spiffs，仅预留）。
+烧写会**覆盖**设备出厂应用固件。Milestone 5 将分区表改为双 4 MB OTA 槽与 7 MB 内置存储：`ota_0` 0x20000、`ota_1` 0x420000、`storage` 0x820000–0xF20000。首次从旧分区表迁移必须通过 Web Flasher 整机刷写并擦除 Flash；之后可用设置中的 Wi-Fi OTA。擦除会清除 ESP 内置存储和设置，TF 卡文件与 PMU 中的 VCOM 不受影响。
 
 ### 4.2 CI 等价编译（只验证能不能编过）
 
@@ -296,7 +296,12 @@ flowchart TD
 ### 6.4 刷新策略（[main/app/app_config.h](../main/app/app_config.h) + [main/display.c](../main/display.c)）
 
 - 档位 `APP_REFRESH_PROFILE`：`BALANCED`（默认：页 GL16、定稿 GC16、动态 DU、每 14 次软刷强制一次 GC16 压灰底）或 `ALL_DU`（实验，只看速度）。
-- 图书阅读每次翻页、应用页切换以及菜单打开/关闭/返回都会整屏 GC16，避免旧页内容留在背景；底部进度条始终可点按跳转，章节会补排至目标正文偏移。
+- 图书阅读档位由 NVS `bk_ref` 控制：纯净每页整屏 GC16；均衡（默认）每页 GL16 并每 8 页 GC16；极速每页 DU 并每 6 页 GC16。切章、离开阅读弹窗、应用页切换以及菜单打开/关闭/返回仍整屏 GC16。底部进度条始终可点按跳转，章节会补排至目标正文偏移。
+  Book refresh uses NVS `bk_ref`: clean runs full-screen GC16 on every page; balanced (default) uses GL16 and GC16 every 8 pages; fast uses DU and GC16 every 6 pages. Chapter changes, leaving reader dialogs, app switches and menu transitions still use full-screen GC16. The progress track remains tappable, and chapter seeking paginates through the target offset.
+- 行距、左右边距、可变字重、方向和翻页手势分别由 `bk_lh`、`bk_mg`、`bk_wght`、`bk_rot`、`bk_gest` 保存；传感器只在阅读态需要自动旋转或手势时运行，退出阅读时恢复原配置并休眠。
+  Persist line spacing, side margins, variable weight, orientation and page gesture as `bk_lh`, `bk_mg`, `bk_wght`, `bk_rot` and `bk_gest`. The accelerometer runs only while reader rotation or gestures need it and restores its prior configuration before sleeping on reader exit.
+- 书签与摘录可从笔记页导出 UTF-8 Markdown；传书网页对含笔记的图书提供 Markdown 下载；阅读工具栏搜索仅查当前已加载章节。
+  Export bookmarks and excerpts as UTF-8 Markdown from note pages; the transfer page offers Markdown downloads for books with notes; reader search covers the currently loaded chapter.
 - 书签与整页摘录保存在图书根目录的隐藏 `.pico_notes/n_<路径哈希>.bin` sidecar 中，文件内校验完整路径和图书大小；数量与摘录长度均不设软件上限，由可用空间和内存决定。旧 `rp_notes` NVS 记录首次读取时迁移，sidecar 写入成功后才清旧记录。清进度保留笔记，`book_store_delete` 与文件变更回调同步清笔记；最近摘录仍更新看板屏保。
 - 内置 FAT 存储首次按需挂载；只有 `storage` 分区全部字节均为 `0xFF` 才允许格式化初始化。非空分区挂载失败时保留内容并将该来源标记为不可用，不自动重建文件系统。
 - 波形（[components/e0470_epaper_waveform](../components/e0470_epaper_waveform/)）：`E0470_WAVEFORM`（裁剪 GC16 36 相 / GL16 37 相 + 阈值 DU）、`E0470_FULL_WAVEFORM`（48/48/DU 20）、`E0470_GRAY8_WAVEFORM`（30 相，约 360 ms）、`E0470_FOLLOW_WAVEFORM`（开机生成 8 帧，跟手数字用）。帧周期 11090 µs（约 90 Hz）。
@@ -580,7 +585,7 @@ Read AGENTS.md, then docs/ONBOARDING.md, then docs/HANDOFF.md. Do not duplicate 
 | 开机图之后不进菜单，日志 `No touch controller, UI cannot run` | 触摸未就绪，`app_main` 直接返回（明确设计）。查 I2C 普查日志、TP_RST（FCA9555 P0.7）、INT GPIO43 |
 | 开机停在一个三位数字页 | 这是 `vcom_setup` 出厂标定拦截，PMU 里没有 VCOM。不要在产品页加旁路 |
 | 中文显示成缺字方块 | 新字串没进 `builtin.ttf`，跑 `tools/gen_builtin_font.py` |
-| 页面切换后有残影 | 确认切页/返回/开菜单路径走 `APP_REDRAW_FULL`；图书翻页走整屏 GC16 |
+| 页面切换后有残影 | 图书可改用“纯净”档或长按 KEY2 手动 GC16；其他页面仍检查切页/返回/菜单路径是否走 `APP_REDRAW_FULL` |
 | 刷新出现横条、随后自动变白 | `EPD_DRAW_EMPTY_LINE_QUEUE` 保护触发，pclk 已降 12 MHz；检查是否有别的核在抢 PSRAM 带宽 |
 | 电源键短按不锁屏 | 当前页 `holds_pmu = true`（key / selftest），设计如此 |
 

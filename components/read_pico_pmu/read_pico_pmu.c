@@ -327,6 +327,24 @@ esp_err_t read_pico_pmu_cmd(uint16_t code, const uint8_t* payload, uint8_t plen)
         ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
 }
 
+esp_err_t read_pico_pmu_time_sync(uint32_t unix_seconds) {
+    uint8_t payload[4];
+    wr32(payload, unix_seconds);
+    return read_pico_pmu_cmd(PMU_CMD_TIME_SYNC, payload, sizeof(payload));
+}
+
+esp_err_t read_pico_pmu_alarm_set(uint8_t mode, uint32_t seconds) {
+    if (mode > 2 || seconds < 10U || seconds > 2678400U)
+        return ESP_ERR_INVALID_ARG;
+    uint8_t payload[5] = {mode, 0, 0, 0, 0};
+    wr32(&payload[1], seconds);
+    return read_pico_pmu_cmd(PMU_CMD_ALARM_SET, payload, sizeof(payload));
+}
+
+esp_err_t read_pico_pmu_alarm_get(void) {
+    return read_pico_pmu_cmd(PMU_CMD_ALARM_GET, NULL, 0);
+}
+
 esp_err_t read_pico_pmu_vcom_get(int* out_mv) {
     if (out_mv != NULL) *out_mv = 0;
     if (!s_ready) return ESP_ERR_NOT_FOUND;
@@ -693,11 +711,11 @@ esp_err_t read_pico_pmu_init(i2c_master_bus_handle_t bus_handle, const read_pico
         (unsigned long)s_snap.boot_id,
         pmu_power_name(s_snap.power_state)
     );
-    if (s_snap.fw_major != PMU_FW_MAJOR ||
-        s_snap.fw_minor != PMU_FW_MINOR ||
-        s_snap.fw_patch < PMU_FW_PATCH) {
+    const uint32_t fw_ver = ((uint32_t)s_snap.fw_minor << 8) | s_snap.fw_patch;
+    const uint32_t min_ver = ((uint32_t)PMU_FW_MINOR << 8) | PMU_FW_PATCH;
+    if (s_snap.fw_major != PMU_FW_MAJOR || fw_ver < min_ver) {
         ESP_LOGW(
-            TAG, "CW32 fw %u.%u.%u older than host expect %u.%u.%u",
+            TAG, "CW32 fw %u.%u.%u incompatible with host minimum %u.%u.%u",
             s_snap.fw_major, s_snap.fw_minor, s_snap.fw_patch,
             PMU_FW_MAJOR, PMU_FW_MINOR, PMU_FW_PATCH
         );

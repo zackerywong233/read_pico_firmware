@@ -45,10 +45,9 @@ void *book_test_realloc(void *p, size_t n) {
     }
     return next;
 }
-void __real_free(void *p);
-void __wrap_free(void *p) {
+void book_test_free(void *p) {
     if (p) { size_t i = slot(p); if (slots[i].ptr) remove_slot(i); }
-    __real_free(p);
+    free(p);
 }
 void book_heap_reset(void) {
     assert(!live);

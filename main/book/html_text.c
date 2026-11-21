@@ -225,7 +225,7 @@ static char* image_source(const char* attrs, size_t len) {
     return NULL;
 }
 
-esp_err_t html_to_blocks(const char* html, size_t len, html_text_t* out) {
+static esp_err_t html_parse(const char* html, size_t len, html_text_t* out, bool web_mode) {
     if (!out) return ESP_ERR_INVALID_ARG;
     *out = (html_text_t){0};
     if (!html && len) return ESP_ERR_INVALID_ARG;
@@ -267,7 +267,11 @@ esp_err_t html_to_blocks(const char* html, size_t len, html_text_t* out) {
                     else if (c == '\'' || c == '"') quote = c;
                     else if (c == '>') break;
                 }
-                if (end == len) { err = ESP_ERR_INVALID_RESPONSE; goto fail; }
+                if (end == len) {
+                    if (web_mode) { err = emit(&w, '<'); if (err != ESP_OK) goto fail; ++pos; continue; }
+                    err = ESP_ERR_INVALID_RESPONSE;
+                    goto fail;
+                }
                 bool self_closing = end > at && html[end - 1] == '/';
                 pos = end + 1;
                 if (skip[0]) {
@@ -279,7 +283,8 @@ esp_err_t html_to_blocks(const char* html, size_t len, html_text_t* out) {
                     } else skip[0] = 0;
                     continue;
                 }
-                if (!closing && !self_closing && (name_equal(name, "head") || name_equal(name, "style") || name_equal(name, "script"))) {
+                if (!closing && !self_closing && (name_equal(name, "head") || name_equal(name, "style")
+                    || name_equal(name, "script") || (web_mode && (name_equal(name, "noscript") || name_equal(name, "svg"))))) {
                     memcpy(skip, name, sizeof(skip));
                 } else if (!closing && image_tag(name)) {
                     // 图片独立成块；后端可替换占位，原文字节位置保持稳定。
@@ -298,7 +303,7 @@ esp_err_t html_to_blocks(const char* html, size_t len, html_text_t* out) {
                     }
                     err = finish_block(&w);
                     if (err != ESP_OK) goto fail;
-                    w.text.blocks[w.text.count - 1].image_src = image_source(html + at, end - at);
+                    if (!web_mode) w.text.blocks[w.text.count - 1].image_src = image_source(html + at, end - at);
                     w.heading = heading;
                 } else if (block_tag(name)) {
                     err = finish_block(&w);
@@ -312,7 +317,11 @@ esp_err_t html_to_blocks(const char* html, size_t len, html_text_t* out) {
         uint32_t cp;
         size_t n = html[pos] == '&' ? entity(html + pos, len - pos, &cp) : 0;
         if (!n) n = utf8(html + pos, len - pos, &cp);
-        if (!n) { err = ESP_ERR_INVALID_RESPONSE; goto fail; }
+        if (!n) {
+            if (!web_mode) { err = ESP_ERR_INVALID_RESPONSE; goto fail; }
+            cp = 0xfffd;
+            n = 1;
+        }
         err = emit(&w, cp);
         if (err != ESP_OK) goto fail;
         pos += n;
@@ -326,4 +335,12 @@ esp_err_t html_to_blocks(const char* html, size_t len, html_text_t* out) {
 fail:
     html_text_free(&w.text);
     return err;
+}
+
+esp_err_t html_to_blocks(const char* html, size_t len, html_text_t* out) {
+    return html_parse(html, len, out, false);
+}
+
+esp_err_t html_to_web_blocks(const char* html, size_t len, html_text_t* out) {
+    return html_parse(html, len, out, true);
 }

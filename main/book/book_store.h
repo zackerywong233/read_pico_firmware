@@ -41,8 +41,8 @@ size_t book_store_file_limit(const book_store_root_t* root);
 uint64_t book_store_free_bytes(const book_store_root_t* root);
 /// 仅查询内置分区是否已挂载，不触发挂载。/ Inspect flash mount state without mounting.
 bool book_store_flash_ready(void);
-/// 仅删除已挂载书根内的直接 TXT/EPUB 普通文件，然后清对应进度、last、书签和摘录。
-/// Delete only a direct regular TXT/EPUB file in a mounted book root, then forget its progress, last path, bookmarks and excerpts.
+/// 仅删除已挂载书根内的直接 TXT/EPUB/MD/CBZ 普通文件，然后清对应进度、last、书签和摘录。
+/// Delete only a direct regular TXT/EPUB/MD/CBZ file in a mounted book root, then forget its progress, last path, bookmarks and excerpts.
 /// 先清同名普通覆盖备份；仅有备份时先恢复再删除，失败不声称文件已删。
 /// Clear matching regular replacement backups first; restore backup-only files before deletion and report failures as not removed.
 /// removed 为文件已删或已不存在；此时 NVS 仍可能失败，可再次调用清理。调用方负责关闭句柄及通知版本。

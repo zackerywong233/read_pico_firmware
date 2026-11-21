@@ -1,5 +1,66 @@
 # 版本变更 / Changelog
 
+## v0.1.18 · 2026-11-21
+
+- 设置与个人看板：修复“设置”页选项点击后仅高亮无法进入或调整的问题（改用抬手手势提交），修正三等分触控区间与计划唤醒时区显示；修复个人看板与定时看板按钮越界/重叠。
+  Settings & Dashboard: fix Settings rows highlighting without activating by migrating to release-to-commit gestures, fix 3-way row split and timezone display, and fix Dashboard / Scheduled Dashboard button bounds and overlap.
+- 设备自检与 PMU：改为同主版本下限语义版本校验，兼容 `1.1.0` 及以上同主版本 PMU 固件。
+  Self-test & PMU: use same-major lower-bound semver checks so PMU firmware `1.1.0` and newer `1.x` versions are accepted.
+- 联网、OTA 与底层修复：补齐网页阅读与 GitHub OTA 的 3xx 重定向跟随与超时重试，迁移 OTA SHA-256 至 ESP-IDF v6.1 PSA Crypto API；修复锁屏图重复解码、专注/便签/订阅页清屏与菜单把手、定时看板时区与 SNTP 停网并发竞态。
+  Networking, OTA & Core fixes: follow 3xx redirects and retry `EAGAIN` in Web Reader and GitHub OTA, migrate OTA SHA-256 to ESP-IDF v6.1 PSA Crypto API, remove double decoding for saver images, restore page clear/menu handle on Focus/Sketch/Feeds, fix scheduled dashboard timezone, and guard SNTP teardown.
+
+## v0.1.17 · 2026-11-21
+
+- 图书：书架、传书网页与删除接口支持 `.md` 和 `.cbz`。Markdown 标题可按章节导航，清理常见行内标记；CBZ 图片按自然文件名排序，并以每 20 页分组。
+  Books: add `.md` and `.cbz` to the shelf, transfer page and deletion API. Markdown headings provide chapter navigation with common inline markers cleaned; CBZ images sort naturally and group into chapters of twenty pages.
+- 新增随手便签，可用三档笔粗和橡皮绘制、撤销、清空，导出灰度 PNG 或设为图片锁屏。
+  Add Sketch with three brush sizes, eraser, undo, clear, grayscale PNG export and image lock-screen selection.
+- 新增桌面时钟与番茄钟，支持 15/25/45 分钟专注、5 分钟休息、静音提示与 NVS 完成计数。
+  Add a desk clock and pomodoro timer with 15/25/45-minute focus sessions, 5-minute breaks, mute-aware alerts and an NVS completion count.
+- 定时看板：新增独立 `rp_ambient` NVS 配置，可选 15/30/60/120/360/720/1440 分钟刷新周期、小时级免打扰时段，以及 HTTP JSON、HTTP 图片或本地看板来源。深睡前按配置设置 PMU 单次闹钟；`wake_reason == 6` 时在自检续跑与 VCOM 标定之外执行刷新、GC16 推屏并重新设置下一次闹钟。局域网传书页新增配置表单，鉴权头不回显。
+  Scheduled dashboard: add separate `rp_ambient` NVS settings for 15/30/60/120/360/720/1440-minute intervals, hourly quiet periods, and HTTP JSON, HTTP image or local dashboard sources. Deep sleep arms a one-shot PMU alarm; `wake_reason == 6` refreshes and presents with GC16 outside self-test resume and VCOM setup, then arms the next alarm. The local transfer page configures it without echoing the authorization header.
+- HTTP 看板规范：JSON 卡片接受可选字符串 `title`、`subtitle`、`body`、`footer`（单字段最多 512 字节）；图片为 HTTP(S) PNG/JPEG，下载上限 2 MiB。可设置请求 `Authorization` 头；仅接收 2xx 响应，联网和读取共用 25 秒超时预算。
+  HTTP dashboard format: JSON cards accept optional string fields `title`, `subtitle`, `body` and `footer` (up to 512 bytes each); images are HTTP(S) PNG/JPEG with a 2 MiB download cap. An `Authorization` request header can be configured; only 2xx responses are accepted, within a shared 25-second network and fetch budget.
+- PMU：新增 `read_pico_pmu_time_sync()`、`read_pico_pmu_alarm_set()` 与 `read_pico_pmu_alarm_get()`，封装小端载荷，并按协议检查闹钟模式与秒数范围。
+  PMU: add `read_pico_pmu_time_sync()`, `read_pico_pmu_alarm_set()` and `read_pico_pmu_alarm_get()` helpers for little-endian payloads and protocol-defined alarm mode and seconds bounds.
+- Agent：消息格式为 `{"type":"text","title":"标题","text":"正文","id":"msg_123","actions":["已读","批准"],"sound":true}`，或 `{"type":"image","url":"https://…","id":"msg_124","actions":["已读"],"sound":true}`。`id` 最多 64 字节，最多 4 个动作标签、每项最多 24 字节。设备保留最近 20 条消息；动作回执发到 `<topic>/reply`，QoS 1，JSON 字段为 `id`、`action`、`ts`。提示音最长 175 ms，遵循全局静音并延后到页面推屏后播放。
+  Agent: messages use `{"type":"text","title":"title","text":"body","id":"msg_123","actions":["Read","Approve"],"sound":true}` or `{"type":"image","url":"https://…","id":"msg_124","actions":["Read"],"sound":true}`. `id` is limited to 64 bytes, with up to four action labels of 24 bytes each. The device retains its latest 20 messages. Replies publish QoS 1 JSON fields `id`, `action` and `ts` to `<topic>/reply`. The soft cue lasts at most 175 ms, follows global mute and runs after page presentation.
+
+## v0.1.16 · 2026-11-21
+
+- 网络：Wi-Fi 凭据迁移到 v2，兼容旧版单网络并支持最多五组；STA 扫描已保存网络并优先连接信号最强者。传书网页和设备页可查看、添加、覆盖或遗忘网络；STA 服务提供 `http://readpico.local` 与 HTTP mDNS 广播。
+  Networking: migrate Wi-Fi credentials to v2 with v1 single-network compatibility and up to five saved networks; scan and prefer the strongest saved AP. Manage networks from the transfer webpage or device, and advertise the STA service at `http://readpico.local` over mDNS.
+- 设置与电源：新增一级“设置 Settings”入口，集中提供网络与时区、阅读显示、睡眠屏保、充电指示灯、低电提醒和全局静音设置；启动时同步 PMU 电源配置，阅读中低电时保存进度并提示。
+  Settings and power: add a root Settings page for network/timezone, reader display, sleep/saver, charge LED, low-battery alerts and global mute; sync PMU settings at boot and save progress with a low-battery prompt while reading.
+- 网页阅读：支持最多 20 条 NVS 收藏、直接存到书架，以及手机通过 `/webopen` 推送 HTTP(S) 地址后在设备自动打开。
+  Web reading: add up to 20 NVS bookmarks, save extracted pages to the shelf, and open HTTP(S) URLs pushed from a phone through `/webopen`.
+
+## v0.1.15 · 2026-11-21
+
+- 阅读刷新：新增纯净/均衡/极速三档，支持每页 GC16、GL16 定稿和 DU 及周期性 GC16 清残影；工具栏保留强刷和长按 KEY2 手动清残影。
+  Reader refresh: add clean, balanced and fast profiles with per-page GC16, GL16 or DU and periodic GC16 cleanup; keep toolbar full refresh and long KEY2 ghost clearing.
+- 排版：英文整词优先折行、中文标点避头尾；新增可持久化行距、边距和可变字体字重调节。
+  Typography: keep English words together when possible and apply Chinese kinsoku; add persistent line spacing, margins and variable-font weight controls.
+- 阅读方向与手势：支持竖屏、横屏和稳定 1.5 秒的自动旋转，以及关闭、晃动和轻敲翻页；阅读页退出时恢复屏幕和传感器默认状态。
+  Reading orientation and gestures: support portrait, landscape and auto-rotation after 1.5 seconds of stability, plus off, shake and tap page turning; restore display and sensor defaults when leaving the reader.
+- 笔记与搜索：书签和摘录可导出 UTF-8 Markdown；传书网页可下载有笔记图书的 Markdown；支持当前章节搜索并跳转到匹配位置。
+  Notes and search: export bookmarks and excerpts as UTF-8 Markdown, download note files for books with notes on the transfer page, and search the loaded chapter with direct result navigation.
+
+## v0.1.14 · 2026-11-21
+
+- 看板：增加“继续阅读”直达书架和 PMU 设备时间同步操作；概览页明确标注当前固件版本。
+  Dashboard: add a direct Continue Reading entry to the shelf and a PMU clock-sync action; label the current firmware version clearly on Overview.
+- 字体：把字体管理加入一级应用菜单，方便查找和切换 TF 卡字体。
+  Fonts: add Font Management to the root app menu so SD-card fonts are easier to find and switch.
+- 自检：身份检查失败时显示 PMU 读取错误、设备 ID、协议版本或固件版本原因；后续依赖步骤仍显示跳过。
+  Self-test: report PMU read, device ID, protocol version or firmware version details for identity failures; dependent checks remain skipped.
+- 书架、看板与桌面：恢复开机六格桌面，修正阅读页字体入口；看板可继续阅读、显示 UTC+8，并在 STA 联网后校准 PMU 时钟。
+  Shelf, dashboard and launcher: restore the six-tile default home, fix the font page route, add Continue Reading, show UTC+8 and sync the PMU clock after STA connects.
+- 网络阅读与网页剪藏：下载可取消并在退出前完成回收；网页解析容忍常见不规范标记，剪藏折叠 CRLF 并清理控制字符。
+  Web reading and clipping: downloads cancel and join before network teardown; parsing tolerates malformed markup, and clipping folds CRLF and cleans control characters.
+- Agent 与笔记：Agent 配置存入独立 NVS 并支持运行中热更新；图书笔记列表、系统工具导航与安装弹窗翻译修正。
+  Agent and notes: store Agent configuration in dedicated NVS with live updates; fix note list layout, system-tool navigation and installer-dialog localization.
+
 ## 2026-11-20
 
 - 本地内容可靠性：内置存储仅在检测到分区全擦除时自动初始化；已有内容遇到挂载错误时保留数据并报告不可用。TF 卡和内置存储同时可用时，可在传书页点按容量行切换图书上传目标，切换仅在上传空闲时重启服务；字体仍只上传至 TF 卡。Wi-Fi 覆盖遇到已提交文件留下的过期备份时可继续替换；字体配置仅在字体成功加载后更新。
@@ -36,6 +97,11 @@
 
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
+
+## 2026-11-21
+
+- 固件：16 MB Flash 改为双 4 MB OTA 槽，内置图书存储扩至 7 MB；启用启动回滚保护。首次迁移需通过 Web Flasher 擦除并整机刷写，之后可在设置中使用 Wi-Fi OTA，也支持传书网页上传固件。
+  Firmware: use dual 4 MB OTA slots and expand internal book storage to 7 MB, with boot rollback protection. The first migration requires an erase and full Web Flasher install; later updates support Wi-Fi OTA in Settings or firmware upload from the transfer page.
 
 ## 2026-10-09
 

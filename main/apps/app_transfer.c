@@ -34,6 +34,7 @@
 #include <string.h>
 
 #include "app.h"
+#include "time_sync.h"
 #include "book_store.h"
 #include "book_progress.h"
 #include "display.h"
@@ -79,7 +80,7 @@ static void prepare_qr(void) {
         : ui_wifi_qr_prepare(s_status.ssid, READ_PICO_TRANSFER_PASSWORD);
 }
 
-typedef enum { TRANSFER_HOME, TRANSFER_NETWORKS, TRANSFER_PASSWORD } transfer_view_t;
+typedef enum { TRANSFER_HOME, TRANSFER_NETWORKS, TRANSFER_PASSWORD, TRANSFER_SAVED } transfer_view_t;
 #define NETWORK_ROWS 6
 #define PASSWORD_MAX 64
 static transfer_view_t s_view;
@@ -87,6 +88,8 @@ static read_pico_transfer_network_t s_networks[READ_PICO_TRANSFER_SCAN_MAX], s_s
 static size_t s_network_count, s_network_page;
 static bool s_scan_pending, s_saved_configured, s_password_visible, s_forget_confirm;
 static char s_saved_ssid[33], s_password[PASSWORD_MAX + 1], s_network_message[96];
+static char s_saved_ssids[5][33];
+static size_t s_saved_count;
 static int s_keyboard_mode;
 
 static void render(app_ctx_t* ctx, uint8_t* fb);
@@ -126,6 +129,12 @@ static EpdRect password_control_rect(int id) {
     return ui_bar_rect(id - 44, 3);
 }
 
+static EpdRect saved_control_rect(int id) {
+    if (id < 5) return (EpdRect){UI_MARGIN, 240 + id * 112, ui_content_width(), 96};
+    if (id == 5) return ui_row_rect(0, 2, 840, 84);
+    return ui_bar_rect(0, 1);
+}
+
 static const char* keyboard_chars(void) {
     static const char* const keys[] = {
         "1234567890" "qwertyuiop" "asdfghjkl-" "zxcvbnm,./",
@@ -142,6 +151,18 @@ static void provisioning_button(uint8_t* fb, EpdRect rect, const char* text, int
 
 static void draw_networks(uint8_t* fb) {
     ui_clear_page(fb);
+    if (s_view == TRANSFER_SAVED) {
+        ui_draw_header(fb, "已保存 WiFi", "点按单个网络可遗忘，最多保存 5 组");
+        for (size_t i = 0; i < s_saved_count; ++i) {
+            EpdRect rect = saved_control_rect((int)i);
+            ui_draw_button(fb, rect, s_saved_ssids[i], s_pressed == (int)i);
+        }
+        if (!s_saved_count) ui_text(fb, UI_MARGIN, 320, UI_PX_BODY, "尚未保存网络", EPD_DRAW_ALIGN_LEFT, false);
+        provisioning_button(fb, saved_control_rect(5), "遗忘全部", 5);
+        provisioning_button(fb, saved_control_rect(6), "返回选网", 6);
+        ui_draw_menu_handle(fb, false);
+        return;
+    }
     if (s_forget_confirm) {
         ui_draw_header(fb, "遗忘已保存网络？", "仅清除 WiFi 连接信息，不影响图书");
         char name[33];
@@ -167,9 +188,11 @@ static void draw_networks(uint8_t* fb) {
     char count[64];
     snprintf(count, sizeof(count), "%u 个网络 · 第 %u/%u 页", (unsigned)s_network_count,
              (unsigned)s_network_page + 1, (unsigned)(s_network_count ? (s_network_count + NETWORK_ROWS - 1) / NETWORK_ROWS : 1));
-    ui_text(fb, UI_MARGIN, s_saved_configured ? 310 : 280, UI_PX_CAPTION,
+    ui_text(fb, UI_MARGIN, 308, UI_PX_CAPTION,
             s_scan_pending ? "正在扫描，请稍候…" : s_network_message[0] ? s_network_message : count,
             EPD_DRAW_ALIGN_LEFT, false);
+    EpdRect manage = {UI_MARGIN + ui_content_width() / 2, 292, ui_content_width() / 2, 48};
+    provisioning_button(fb, manage, "管理已保存网络", 13);
     for (int row = 0; row < NETWORK_ROWS; ++row) {
         size_t index = s_network_page * NETWORK_ROWS + row;
         if (index >= s_network_count) break;
@@ -255,6 +278,7 @@ static bool enter_networks(void) {
     s_saved_ssid[0] = 0;
     s_saved_configured = false;
     read_pico_transfer_get_saved_wifi(s_saved_ssid, &s_saved_configured);
+    (void)read_pico_transfer_get_saved_wifi_list(s_saved_ssids, &s_saved_count);
     clear_password();
     return true;
 }
@@ -283,7 +307,13 @@ static int provisioning_hit(uint16_t x, uint16_t y) {
     }
     if (s_view == TRANSFER_PASSWORD) {
         for (int i = 0; i < 47; ++i) if (ui_rect_hit(password_control_rect(i), x, y)) return i;
+    } else if (s_view == TRANSFER_SAVED) {
+        for (int i = 0; i < (int)s_saved_count; ++i) if (ui_rect_hit(saved_control_rect(i), x, y)) return i;
+        if (ui_rect_hit(saved_control_rect(5), x, y)) return 5;
+        if (ui_rect_hit(saved_control_rect(6), x, y)) return 6;
     } else {
+        EpdRect manage = {UI_MARGIN + ui_content_width() / 2, 292, ui_content_width() / 2, 48};
+        if (ui_rect_hit(manage, x, y)) return 13;
         for (int i = 0; i < 12; ++i) {
             if (i < NETWORK_ROWS && (s_scan_pending || s_network_page * NETWORK_ROWS + i >= s_network_count)) continue;
             if ((i == 6 || i == 11) && !s_saved_configured) continue;
@@ -307,6 +337,23 @@ static app_redraw_t provisioning_action(int id) {
         }
         return APP_REDRAW_PAGE;
     }
+    if (s_view == TRANSFER_SAVED) {
+        if (id < 5 && (size_t)id < s_saved_count) {
+            esp_err_t err = read_pico_transfer_forget_wifi_ssid(s_saved_ssids[id]);
+            if (err == ESP_OK) {
+                snprintf(s_network_message, sizeof(s_network_message), "已遗忘：%.64s", s_saved_ssids[id]);
+                (void)read_pico_transfer_get_saved_wifi_list(s_saved_ssids, &s_saved_count);
+                (void)read_pico_transfer_get_saved_wifi(s_saved_ssid, &s_saved_configured);
+            } else snprintf(s_network_message, sizeof(s_network_message), "遗忘失败，请重试");
+        } else if (id == 5) {
+            if (read_pico_transfer_forget_wifi() == ESP_OK) {
+                s_saved_count = 0; s_saved_configured = false; s_saved_ssid[0] = 0;
+                memset(s_saved_ssids, 0, sizeof(s_saved_ssids));
+                snprintf(s_network_message, sizeof(s_network_message), "已遗忘全部网络");
+            }
+        } else if (id == 6) { s_view = TRANSFER_NETWORKS; s_scan_pending = true; }
+        return APP_REDRAW_PAGE;
+    }
     if (s_view == TRANSFER_NETWORKS) {
         if (id < NETWORK_ROWS) {
             s_selected = s_networks[s_network_page * NETWORK_ROWS + id];
@@ -324,6 +371,7 @@ static app_redraw_t provisioning_action(int id) {
         else if (id == 9 && (s_network_page + 1) * NETWORK_ROWS < s_network_count) ++s_network_page;
         else if (id == 10) queue_network_start(s_mode);
         else if (id == 11) { s_forget_confirm = true; s_network_message[0] = 0; }
+        else if (id == 13) { (void)read_pico_transfer_get_saved_wifi_list(s_saved_ssids, &s_saved_count); s_view = TRANSFER_SAVED; }
         return APP_REDRAW_PAGE;
     }
     size_t len = strlen(s_password);
@@ -346,7 +394,7 @@ static app_redraw_t provisioning_action(int id) {
                 s_selected.requires_password ? s_password : "");
             if (err == ESP_OK) { queue_network_start(READ_PICO_TRANSFER_MODE_STA); return APP_REDRAW_PAGE; }
             snprintf(s_network_message, sizeof(s_network_message), "%s", err == ESP_ERR_INVALID_ARG ?
-                     "密码须 8–63 字符或 64 位十六进制" : "保存失败，输入已保留，请重试");
+                     "密码须 8-63 字符或 64 位十六进制" : "保存失败，输入已保留，请重试");
         }
     }
     return APP_REDRAW_AREA;
@@ -358,7 +406,8 @@ static app_redraw_t provisioning_gesture(app_ctx_t* ctx, const ui_gesture_event_
     s_pressed = ev->type == UI_GESTURE_PRESS ? origin : -1;
     bool action = ev->type == UI_GESTURE_TAP && old >= 0 && old == origin && provisioning_hit(ev->x, ev->y) == origin;
     EpdRect old_rect = s_view == TRANSFER_PASSWORD ? password_control_rect(old >= 0 ? old : origin >= 0 ? origin : 0)
-                                                  : network_control_rect(old >= 0 ? old : origin >= 0 ? origin : 0);
+        : s_view == TRANSFER_SAVED ? saved_control_rect(old >= 0 ? old : origin >= 0 ? origin : 0)
+        : network_control_rect(old >= 0 ? old : origin >= 0 ? origin : 0);
     if (action) {
         app_redraw_t redraw = provisioning_action(origin);
         if (redraw == APP_REDRAW_PAGE) return redraw;
@@ -460,6 +509,11 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     while (url_px > 12 && ttf_text_width_px(url_px, s_status.url) > 350) --url_px;
     ui_text(fb, UI_MARGIN, 370, url_px,
             s_status.network_ready ? s_status.url : "等待网络地址…", EPD_DRAW_ALIGN_LEFT, false);
+    if (s_status.network_ready && s_mode == READ_PICO_TRANSFER_MODE_STA) {
+        char local_url[96];
+        snprintf(local_url, sizeof(local_url), "http://%s.local", s_status.mdns_host[0] ? s_status.mdns_host : "readpico");
+        ui_text(fb, UI_MARGIN, 396, UI_PX_CAPTION, local_url, EPD_DRAW_ALIGN_LEFT, false);
+    }
     ui_text(fb, UI_MARGIN, 412, 24,
             !s_status.network_ready ? "等待网络连接…" : !s_qr_ready ? "二维码失败，请手输网址" :
             s_qr_url || s_mode == READ_PICO_TRANSFER_MODE_STA ? "扫码打开网页" : "扫码连接 WiFi",
@@ -566,7 +620,9 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
             }
             read_pico_transfer_cfg_t cfg = {.mode = s_mode, .root_dir = s_root.path, .is_flash = s_root.is_flash,
                 .font_dir = s_root.is_flash ? NULL : "/sdcard/fonts",
-                .file_limit = book_store_file_limit(&s_root), .free_bytes_cb = free_bytes, .free_bytes_ctx = &s_root, .file_changed_cb = book_store_forget_changed_path};
+                .file_limit = book_store_file_limit(&s_root), .free_bytes_cb = free_bytes, .free_bytes_ctx = &s_root, .file_changed_cb = book_store_forget_changed_path,
+                .sta_ip_cb = app_time_sync_sta_ip, .service_poll_cb = app_time_sync_poll,
+                .network_stop_cb = app_time_sync_stop};
             err = read_pico_transfer_start(&cfg);
             s_session_started = err == ESP_OK;
             read_pico_transfer_get_status(&s_status);

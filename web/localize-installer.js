@@ -167,3 +167,5 @@ customElements.whenDefined("esp-web-install-button").then(() => {
     attachRoot(button.shadowRoot);
   }
 });
+
+observer.observe(document.body, { childList: true });

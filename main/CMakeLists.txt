@@ -4,6 +4,7 @@ set(main_requires
     read_pico_search
     espressif__qrcode
     espressif__mqtt
+    espressif__mdns
     espressif__cjson
     esp_event
     continuous_du
@@ -12,6 +13,7 @@ set(main_requires
     fatfs
     wear_levelling
     bootloader_support
+    app_update
     spi_flash
     heap
     nvs_flash
@@ -27,10 +29,14 @@ set(main_requires
 idf_component_register(
     SRCS
         "app_main.c"
+        "ota_update.c"
+        "ambient_sync.c"
+        "ambient_sync_runtime.c"
         "display.c"
         "sleep.c"
         "settings.c"
         "reading_stats.c"
+        "time_sync.c"
         "app/app_loop.c"
         "app/app_registry.c"
         "ui/ui_kit.c"
@@ -42,17 +48,23 @@ idf_component_register(
         "apps/app_personal.c"
         "apps/app_pico_home.c"
         "apps/app_system_tools.c"
+        "apps/app_settings.c"
         "apps/app_refresh.c"
         "apps/app_reading.c"
         "apps/app_book.c"
         "apps/app_transfer.c"
         "apps/app_web.c"
         "apps/app_agent.c"
+        "apps/app_feeds.c"
+        "apps/app_sketch.c"
+        "apps/app_focus.c"
         "book/book_store.c"
         "book/book_progress.c"
         "book/book_notes.c"
         "book/book_source.c"
         "book/book_txt.c"
+        "book/book_md.c"
+        "book/book_cbz.c"
         "book/book_epub.c"
         "book/book_image.c"
         "book/vendor/tjpgd.c"

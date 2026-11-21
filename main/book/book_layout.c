@@ -29,12 +29,33 @@ static size_t s_capacity;
 static char* s_line;
 static EpdRect s_rect;
 static int s_px;
+static unsigned s_line_height_percent;
 static size_t s_scan;
 static int64_t s_used;
 static bool s_complete;
 
 static const blk_t* s_blocks;
 static size_t s_block_count;
+
+static bool ascii_word_char(unsigned char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '-';
+}
+
+static bool utf8_in_set(const char* glyph, size_t len, const char* const* set, size_t count) {
+    for (size_t i = 0; i < count; ++i) if (strlen(set[i]) == len && !memcmp(glyph, set[i], len)) return true;
+    return false;
+}
+
+static bool line_closer(const char* glyph, size_t len) {
+    static const char* const values[] = {"，", "。", "！", "？", "、", "；", "：", "》", "”", "’", "】", "」", "』", "…", "—", "·"};
+    return utf8_in_set(glyph, len, values, sizeof(values) / sizeof(values[0]));
+}
+
+static bool line_opener(const char* glyph, size_t len) {
+    static const char* const values[] = {"（", "《", "“", "‘", "【", "「", "『"};
+    return utf8_in_set(glyph, len, values, sizeof(values) / sizeof(values[0]));
+}
 
 // 块表是有序字节区间，二分查找当前行样式。/ Blocks are ordered byte ranges; binary-search the line style.
 static const blk_t* block_at(size_t off) {
@@ -59,7 +80,7 @@ static void image_size(const blk_t* block, int* width, int* height) {
 static int row_height(const blk_t* block, int px) {
     if (block && block->image) { int width, height; image_size(block, &width, &height); return height; }
     if (block && block->image_src) return 2 * s_px < s_rect.height ? 2 * s_px : s_rect.height;
-    return px + px / 2;
+    return (int)(((int64_t)px * s_line_height_percent) / 100);
 }
 static EpdRect placeholder_rect(EpdRect body, int top, int height) {
     int pad = body.width > 24 && height > 16 ? 8 : 0;
@@ -111,6 +132,7 @@ void book_layout_free(void) {
     s_text = NULL;
     s_count = s_capacity = s_len = 0;
     s_px = 0;
+    s_line_height_percent = 150;
     s_scan = 0;
     s_used = 0;
     s_complete = false;
@@ -156,8 +178,46 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
         glyph[n] = 0;
         int64_t candidate = width + ttf_text_width_px(*px, glyph);
         if (candidate < 0) return false;
+        if (width > 0 && ascii_word_char((unsigned char)glyph[0]) &&
+            !ascii_word_char((unsigned char)s_text[end - 1])) {
+            size_t word_end = end;
+            int64_t word_width = 0;
+            while (word_end < limit && ascii_word_char((unsigned char)s_text[word_end])) {
+                char word_glyph[2] = {s_text[word_end], 0};
+                int advance = ttf_text_width_px(*px, word_glyph);
+                if (advance < 0 || word_width > INT64_MAX - advance) return false;
+                word_width += advance;
+                ++word_end;
+            }
+            if (word_width <= s_rect.width && width > 0 && width + word_width > s_rect.width) break;
+        }
+        if (line_opener(glyph, n)) {
+            size_t following = end + n;
+            if (following < limit && s_text[following] != '\r' && s_text[following] != '\n') {
+                size_t following_size = codepoint_size(s_text + following, s_len - following);
+                if (!following_size) return false;
+                char following_glyph[5];
+                memcpy(following_glyph, s_text + following, following_size);
+                following_glyph[following_size] = 0;
+                int next_width = ttf_text_width_px(*px, following_glyph);
+                if (next_width < 0) return false;
+                if (candidate <= s_rect.width && candidate + next_width > s_rect.width && end > off) break;
+            }
+        }
         if (candidate > s_rect.width) {
             if (end == off) return false;
+            if (line_closer(glyph, n)) {
+                size_t previous = end - off;
+                do { --previous; } while (previous > 0 && (((unsigned char)s_line[previous] & 0xc0) == 0x80));
+                if (previous > 0) {
+                    end = off + previous;
+                    s_line[previous] = 0;
+                } else {
+                    memcpy(s_line + end - off, glyph, n);
+                    s_line[end - off + n] = 0;
+                    end += n;
+                }
+            }
             break;
         }
         width = candidate;
@@ -179,15 +239,27 @@ bool book_layout_build(const char* utf8, size_t len, EpdRect rect, int px) {
 }
 
 bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks, size_t count, EpdRect rect, int px) {
-    return book_layout_begin_blocks(utf8, len, blocks, count, rect, px) && book_layout_extend(PAGE_MAX);
+    return book_layout_build_blocks_metrics(utf8, len, blocks, count, rect, px, 150);
+}
+
+bool book_layout_build_blocks_metrics(const char* utf8, size_t len, const blk_t* blocks, size_t count,
+                                     EpdRect rect, int px, unsigned line_height_percent) {
+    return book_layout_begin_blocks_metrics(utf8, len, blocks, count, rect, px, line_height_percent) && book_layout_extend(PAGE_MAX);
 }
 
 bool book_layout_begin_blocks(const char* utf8, size_t len, const blk_t* blocks, size_t count, EpdRect rect, int px) {
+    return book_layout_begin_blocks_metrics(utf8, len, blocks, count, rect, px, 150);
+}
+
+bool book_layout_begin_blocks_metrics(const char* utf8, size_t len, const blk_t* blocks, size_t count,
+                                     EpdRect rect, int px, unsigned line_height_percent) {
     book_layout_free();
     if ((!utf8 && len) || len == SIZE_MAX || px <= 0 || px > INT_MAX / 3 ||
         rect.width <= 0 || rect.height <= 0 || rect.x < 0 || rect.y < 0 ||
-        rect.x > INT_MAX - rect.width || rect.y > INT_MAX - rect.height) return false;
-    int line_height = px + px / 2;
+        rect.x > INT_MAX - rect.width || rect.y > INT_MAX - rect.height ||
+        (line_height_percent != 135 && line_height_percent != 150 && line_height_percent != 175)) return false;
+    s_line_height_percent = line_height_percent;
+    int line_height = (int)(((int64_t)px * line_height_percent) / 100);
     if (line_height > rect.height) return false;
     for (size_t off = 0; off < len;) {
         size_t n = codepoint_size(utf8 + off, len - off);
@@ -221,6 +293,43 @@ bool book_layout_begin_blocks(const char* utf8, size_t len, const blk_t* blocks,
 fail:
     book_layout_free();
     return false;
+}
+
+EpdRect book_layout_side_margins(EpdRect rect, unsigned margin) {
+    if (rect.width <= 0 || margin > (unsigned)(rect.width / 2)) return (EpdRect){0};
+    rect.x += (int)margin;
+    rect.width -= (int)(2 * margin);
+    return rect;
+}
+
+size_t book_text_search(const char* utf8, size_t len, const char* query,
+                        size_t from, size_t* offsets, size_t capacity) {
+    if ((!utf8 && len) || !query || !query[0]) return 0;
+    size_t query_len = strlen(query);
+    if (!query_len || query_len > len || from > len) return 0;
+    for (size_t q = 0; q < query_len;) {
+        size_t size = codepoint_size(query + q, query_len - q);
+        if (!size) return 0;
+        q += size;
+    }
+    size_t found = 0;
+    for (size_t i = from; i + query_len <= len; ++i) {
+        if (i && (((unsigned char)utf8[i] & 0xc0) == 0x80)) continue;
+        if (i + query_len < len && (((unsigned char)utf8[i + query_len] & 0xc0) == 0x80)) continue;
+        bool match = true;
+        for (size_t j = 0; j < query_len; ++j) {
+            unsigned char a = (unsigned char)utf8[i + j];
+            unsigned char b = (unsigned char)query[j];
+            if (a < 0x80 && b < 0x80 && a >= 'A' && a <= 'Z') a = (unsigned char)(a + ('a' - 'A'));
+            if (a < 0x80 && b < 0x80 && b >= 'A' && b <= 'Z') b = (unsigned char)(b + ('a' - 'A'));
+            if (a != b) { match = false; break; }
+        }
+        if (match) {
+            if (offsets && found < capacity) offsets[found] = i;
+            ++found;
+        }
+    }
+    return found < capacity ? found : capacity;
 }
 
 bool book_layout_extend(size_t pages) {

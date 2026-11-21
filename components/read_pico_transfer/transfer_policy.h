@@ -2,11 +2,13 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  * 凭据校验和有界连接状态机；不含平台资源。/ Credential validation and bounded connection policy without platform resources.
- * 冻结：密码不进入公开状态；每轮连接最多三次、15秒。/ Frozen: passwords never enter public status; three attempts within 15 seconds.
+ * 冻结：最多保存五组 Wi-Fi 凭据；密码不进入公开状态；每轮连接最多三次、15秒。
+ * Frozen: Store up to five Wi-Fi credentials; passwords never enter public status; three attempts within 15 seconds.
  */
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include "cJSON.h"
 #include "include/read_pico_transfer_network.h"
@@ -38,27 +40,54 @@ static bool receive_credentials_body(char *body, size_t total,
 }
 
 typedef struct {
-    uint8_t version; ///< 格式版本 / Format version
     char ssid[33]; ///< 网络名，最多32字节 / Network name, at most 32 bytes
     char password[65]; ///< 私有凭据，用毕擦除 / Private secret, erased after use
+} transfer_wifi_entry_t;
+
+typedef struct {
+    uint8_t version; ///< 格式版本 / Format version
+    uint8_t count; ///< 有效网络数 / Number of networks
+    uint8_t recent; ///< 最近成功的索引 / Index of most recently connected network
+    uint8_t reserved;
+    transfer_wifi_entry_t entries[5]; ///< 私有凭据，用毕擦除 / Private credentials, erased after use
 } transfer_credentials_t;
+
+typedef struct {
+    uint8_t version; ///< 旧版格式 / Legacy format
+    char ssid[33];
+    char password[65];
+} transfer_credentials_v1_t;
 
 static void clear_secret(void *ptr, size_t n) {
     volatile unsigned char *p = ptr;
     while (n--) *p++ = 0;
 }
 
-static bool credentials_valid(const transfer_credentials_t *c) {
-    if (c->version != 1 || !memchr(c->ssid, 0, sizeof(c->ssid)) ||
-        !memchr(c->password, 0, sizeof(c->password))) return false;
-    size_t ssid_len = strlen(c->ssid), pass_len = strlen(c->password);
+static bool wifi_entry_valid(const transfer_wifi_entry_t *entry) {
+    if (!memchr(entry->ssid, 0, sizeof(entry->ssid)) ||
+        !memchr(entry->password, 0, sizeof(entry->password))) return false;
+    size_t ssid_len = strlen(entry->ssid), pass_len = strlen(entry->password);
     if (!ssid_len || ssid_len > 32 || (pass_len && (pass_len < 8 || pass_len > 64))) return false;
     for (size_t i = 0; i < ssid_len; ++i)
-        if ((unsigned char)c->ssid[i] < 32 || (unsigned char)c->ssid[i] == 127) return false;
+        if ((unsigned char)entry->ssid[i] < 32 || (unsigned char)entry->ssid[i] == 127) return false;
     for (size_t i = 0; i < pass_len; ++i) {
-        unsigned char p = (unsigned char)c->password[i];
+        unsigned char p = (unsigned char)entry->password[i];
         if (p < 32 || p > 126) return false;
         if (pass_len == 64 && !((p >= '0' && p <= '9') || (p >= 'a' && p <= 'f') || (p >= 'A' && p <= 'F'))) return false;
+    }
+    return true;
+}
+
+static bool credentials_valid(const transfer_credentials_t *c) {
+    if (c->version != 2 || !c->count || c->count > 5 || c->recent >= c->count || c->reserved) return false;
+    for (size_t i = 0; i < c->count; ++i) {
+        if (!wifi_entry_valid(&c->entries[i])) return false;
+        for (size_t j = 0; j < i; ++j)
+            if (!strcmp(c->entries[i].ssid, c->entries[j].ssid)) return false;
+    }
+    for (size_t i = c->count; i < 5; ++i) {
+        const unsigned char *bytes = (const unsigned char *)&c->entries[i];
+        for (size_t j = 0; j < sizeof(c->entries[i]); ++j) if (bytes[j]) return false;
     }
     return true;
 }
@@ -66,7 +95,8 @@ static bool credentials_valid(const transfer_credentials_t *c) {
 static bool credentials_from_text(const char *ssid, const char *password, transfer_credentials_t *out) {
     memset(out, 0, sizeof(*out));
     if (!ssid || !password || strnlen(ssid, 33) > 32 || strnlen(password, 65) > 64) return false;
-    out->version = 1; strcpy(out->ssid, ssid); strcpy(out->password, password);
+    out->version = 2; out->count = 1;
+    strcpy(out->entries[0].ssid, ssid); strcpy(out->entries[0].password, password);
     if (credentials_valid(out)) return true;
     clear_secret(out, sizeof(*out)); return false;
 }
@@ -89,6 +119,21 @@ static void scan_offer(read_pico_transfer_network_t out[READ_PICO_TRANSFER_SCAN_
         read_pico_transfer_network_t swap = out[index - 1];
         out[index - 1] = out[index]; out[index] = swap; --index;
     }
+}
+
+static uint8_t saved_network_best_index(const transfer_credentials_t *saved,
+        const read_pico_transfer_network_t *scanned, size_t scanned_count) {
+    uint8_t best = saved->recent;
+    int8_t best_rssi = INT8_MIN;
+    for (size_t i = 0; i < scanned_count; ++i) {
+        for (uint8_t j = 0; j < saved->count; ++j) {
+            if (!strcmp(scanned[i].ssid, saved->entries[j].ssid) && scanned[i].rssi > best_rssi) {
+                best_rssi = scanned[i].rssi;
+                best = j;
+            }
+        }
+    }
+    return best;
 }
 
 static bool parse_credentials(const char *body, size_t length, transfer_credentials_t *out) {
@@ -117,8 +162,9 @@ static bool parse_credentials(const char *body, size_t length, transfer_credenti
     bool valid = cJSON_IsObject(json) && cJSON_GetArraySize(json) == 2 && cJSON_IsString(ssid) && cJSON_IsString(password);
     if (valid) valid = strlen(ssid->valuestring) <= 32 && strlen(password->valuestring) <= 64;
     if (valid) {
-        out->version = 1;
-        strcpy(out->ssid, ssid->valuestring); strcpy(out->password, password->valuestring);
+        out->version = 2; out->count = 1; out->recent = 0;
+        strcpy(out->entries[0].ssid, ssid->valuestring);
+        strcpy(out->entries[0].password, password->valuestring);
         valid = credentials_valid(out);
     }
     // 解析树退出前擦除密码，包括验证失败的重复字段。/ Erase parsed passwords, including duplicate fields on invalid requests.
@@ -126,6 +172,60 @@ static bool parse_credentials(const char *body, size_t length, transfer_credenti
         if (item->valuestring) clear_secret(item->valuestring, strlen(item->valuestring));
     cJSON_Delete(json);
     if (!valid) clear_secret(out, sizeof(*out));
+    return valid;
+}
+
+static bool webopen_url_valid(const char *url) {
+    if (!url || (strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) || strlen(url) > 255) return false;
+    const char *host = url + (url[4] == 's' ? 8 : 7);
+    const char *end = strpbrk(host, "/?#");
+    const char *authority_end = end ? end : host + strlen(host);
+    if (authority_end == host || host[0] == ':' || memchr(host, '@', (size_t)(authority_end - host))) return false;
+    if (host[0] == '[') {
+        const char *close = memchr(host, ']', (size_t)(authority_end - host));
+        if (!close || close == host + 1 || (close + 1 < authority_end && close[1] != ':')) return false;
+    }
+    for (const unsigned char *p = (const unsigned char *)url; *p; ++p)
+        if (*p <= 32 || *p == 127) return false;
+    return true;
+}
+
+static bool mdns_host_matches(const char *host, const char *name) {
+    if (!host || !name || !name[0]) return false;
+    char plain[70], port[80];
+    snprintf(plain, sizeof(plain), "%s.local", name);
+    snprintf(port, sizeof(port), "%s:80", plain);
+    return !strcmp(host, plain) || !strcmp(host, port);
+}
+
+static bool management_host_allowed(const char *host, const char *ip, const char *mdns_host) {
+    if (!host || !ip) return false;
+    char port[72];
+    snprintf(port, sizeof(port), "%.56s:80", ip);
+    const char *name = mdns_host && mdns_host[0] ? mdns_host : "readpico";
+    return !strcmp(host, ip) || !strcmp(host, port) || mdns_host_matches(host, name);
+}
+
+static bool management_origin_allowed(const char *origin, const char *ip_url, const char *mdns_host) {
+    if (!origin || !ip_url) return false;
+    char port[80];
+    snprintf(port, sizeof(port), "%.63s:80", ip_url);
+    char mdns_origin[96], mdns_port[112];
+    snprintf(mdns_origin, sizeof(mdns_origin), "http://%s.local", mdns_host && mdns_host[0] ? mdns_host : "readpico");
+    snprintf(mdns_port, sizeof(mdns_port), "%s:80", mdns_origin);
+    return !strcmp(origin, ip_url) || !strcmp(origin, port) || !strcmp(origin, mdns_origin) || !strcmp(origin, mdns_port);
+}
+
+static bool parse_webopen(const char *body, size_t length, char url[256]) {
+    if (!body || !length || length > 320 || memchr(body, 0, length) || body[length] != 0) return false;
+    cJSON *json = cJSON_ParseWithLengthOpts(body, length + 1, NULL, true);
+    if (!json) return false;
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(json, "url");
+    bool valid = cJSON_IsObject(json) && cJSON_GetArraySize(json) == 1 && cJSON_IsString(item) &&
+        webopen_url_valid(item->valuestring);
+    if (valid) strcpy(url, item->valuestring);
+    cJSON_Delete(json);
+    if (!valid && url) url[0] = 0;
     return valid;
 }
 

@@ -315,13 +315,6 @@ static const char* alarm_text(uint8_t mode) {
     }
 }
 
-static void pmu_wr_u32le(uint8_t* p, uint32_t v) {
-    p[0] = (uint8_t)v;
-    p[1] = (uint8_t)(v >> 8);
-    p[2] = (uint8_t)(v >> 16);
-    p[3] = (uint8_t)(v >> 24);
-}
-
 static void draw_pmu_tabs(uint8_t* framebuffer, int view) {
     for (int i = 0; i < UI_PMU_VIEW_COUNT; i++) {
         EpdRect rect = ui_bar_rect(i, UI_PMU_VIEW_COUNT);
@@ -627,10 +620,9 @@ static void pmu_cfg_set(uint16_t cmd, const uint8_t* p, size_t n, const char* no
 }
 
 static void pmu_alarm_set(uint8_t mode, uint32_t secs, const char* note) {
-    uint8_t buf[5] = { mode };
-    pmu_wr_u32le(&buf[1], secs);
-    read_pico_pmu_cmd(PMU_CMD_ALARM_SET, buf, 5);
-    read_pico_pmu_cmd(PMU_CMD_ALARM_GET, NULL, 0);
+    if (mode == 0 && secs < 10) secs = 10;
+    (void)read_pico_pmu_alarm_set(mode, secs);
+    (void)read_pico_pmu_alarm_get();
     pmu_note(note);
 }
 
@@ -746,14 +738,13 @@ static void pmu_handle_hit(int hit) {
             pmu_note("读时间 Time");
             break;
         case UI_PMU_HIT_TIME_SYNC: {
-            pmu_wr_u32le(buf, pmu_unix_now());
-            read_pico_pmu_cmd(PMU_CMD_TIME_SYNC, buf, 4);
+            (void)read_pico_pmu_time_sync(pmu_unix_now());
             read_pico_pmu_cmd(PMU_CMD_TIME_GET, NULL, 0);
             pmu_note("对时 Sync");
             break;
         }
         case UI_PMU_HIT_ALARM_GET:
-            read_pico_pmu_cmd(PMU_CMD_ALARM_GET, NULL, 0);
+            (void)read_pico_pmu_alarm_get();
             pmu_note("读闹钟 Alarm");
             break;
         case UI_PMU_HIT_ALARM_OFF:
