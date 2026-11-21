@@ -587,6 +587,8 @@ static void handle_command(app_ctx_t *ctx, const app_desc_t *current,
         return;
     }
 
+    const int64_t now_ms = ctx ? ctx->now_ms : (esp_timer_get_time() / 1000LL);
+
     switch (cmd) {
         case BLE_CMD_PING: {
             cJSON *res = ble_make_response_base(has_id, id, cmd_name, true);
@@ -622,7 +624,6 @@ static void handle_command(app_ctx_t *ctx, const app_desc_t *current,
                     has_id, id, cmd_name, "invalid_arg", "请提供 6 位数字配对码"));
                 break;
             }
-            int64_t now_ms = ctx ? ctx->now_ms : (esp_timer_get_time() / 1000LL);
             if (now_ms < s_pin_lock_until_ms) {
                 send_json_and_free(ble_make_error_response(
                     has_id, id, cmd_name, "rate_limited", "配对码尝试过于频繁，请 3 秒后重试"));

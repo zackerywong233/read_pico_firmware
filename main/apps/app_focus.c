@@ -36,7 +36,6 @@ static int s_minutes = 25;
 static int64_t s_end;
 static int s_done;
 static bool s_done_loaded;
-static int64_t s_last_draw;
 static int64_t s_last_check_ms;
 static int s_last_shown_min = -1;
 static int s_last_shown_left_min = -1;
@@ -155,11 +154,11 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
 }
 
 static app_redraw_t touch(app_ctx_t *ctx, const cst836u_touch_t *t) {
+    (void)ctx;
     if (s_time_edit) {
         ui_time_edit_result_t res = ui_time_edit_tap(&s_time_editor, t->x, t->y);
         if (res == UI_TIME_EDIT_SAVED || res == UI_TIME_EDIT_CANCELLED) {
             s_time_edit = false;
-            s_last_draw = ctx->now_ms;
             return APP_REDRAW_FULL;
         }
         return res == UI_TIME_EDIT_CHANGED ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
@@ -171,7 +170,6 @@ static app_redraw_t touch(app_ctx_t *ctx, const cst836u_touch_t *t) {
             s_timer = true;
             s_break = false;
             s_end = esp_timer_get_time() / 1000000 + s_minutes * 60;
-            s_last_draw = ctx->now_ms;
             return APP_REDRAW_FULL;
         }
         if (bar == 1) {
@@ -190,7 +188,6 @@ static app_redraw_t touch(app_ctx_t *ctx, const cst836u_touch_t *t) {
     if (bar == 0) {
         s_timer = false;
         s_break = false;
-        s_last_draw = ctx->now_ms;
         return APP_REDRAW_FULL;
     }
     if (bar == 1) {
@@ -198,7 +195,6 @@ static app_redraw_t touch(app_ctx_t *ctx, const cst836u_touch_t *t) {
         s_break = false;
         s_done++;
         done_save();
-        s_last_draw = ctx->now_ms;
         return APP_REDRAW_FULL;
     }
     return APP_REDRAW_NONE;
@@ -222,7 +218,6 @@ static app_redraw_t tick(app_ctx_t *ctx) {
         struct tm tmv;
         int cur_min = app_time_now_local(&tmv, NULL) ? minute_stamp(&tmv) : -1;
         if (cur_min != s_last_shown_min) {
-            s_last_draw = ctx->now_ms;
             render(ctx, ctx->fb);
             return APP_REDRAW_AREA;
         }
@@ -243,13 +238,11 @@ static app_redraw_t tick(app_ctx_t *ctx) {
             if (!app_settings_muted()) (void)read_pico_buzzer_tone(660, 120);
         }
         s_last_shown_left_min = -1;
-        s_last_draw = ctx->now_ms;
         return APP_REDRAW_FULL;
     }
     int64_t left = s_end - now;
     int left_min = (int)((left + 59) / 60);
     if (left_min != s_last_shown_left_min) {
-        s_last_draw = ctx->now_ms;
         render(ctx, ctx->fb);
         return APP_REDRAW_AREA;
     }
@@ -264,10 +257,8 @@ static EpdRect area(app_ctx_t *ctx) {
 }
 
 static void enter(app_ctx_t *ctx) {
-    (void)ctx;
     done_load();
     s_time_edit = false;
-    s_last_draw = ctx->now_ms;
     s_last_check_ms = ctx->now_ms;
     s_last_shown_min = -1;
     s_last_shown_left_min = -1;
@@ -298,7 +289,6 @@ bool app_focus_remote_start(int minutes) {
     s_break = false;
     s_time_edit = false;
     s_end = esp_timer_get_time() / 1000000 + (int64_t)minutes * 60;
-    s_last_draw = esp_timer_get_time() / 1000;
     return true;
 }
 
