@@ -1,5 +1,10 @@
 # 版本变更 / Changelog
 
+## v0.1.29 · 2026-11-22
+
+- 修复自定义锁屏壁纸不满屏与四周留边问题：新增 `book_image_decode_cover()`，在 PNG、基线 JPEG 与回退解码路径统一按屏幕全尺寸（`684 × 1216`）执行等比铺满并居中裁切，替代原先受限于电子书插图上限（`648 × 1000`）的解码与仅缩不放绘制逻辑，使任意比例与分辨率的锁屏图片都能无白边铺满整屏并保留清晰度。
+  Fix borders around custom lock-screen wallpapers: add `book_image_decode_cover()` across PNG, baseline JPEG and fallback decoders to aspect-fill and center-crop directly to full screen size (`684 × 1216`) instead of decoding inside the `648 × 1000` book-illustration cap without upscaling, eliminating top/bottom/left/right margins while preserving sharpness.
+
 ## v0.1.28 · 2026-11-22
 
 - 统一全系统屏下三键（KEY1 / KEY2 / KEY3）交互规范：重构主循环按键状态机为“短按抬起提交、长按 500 ms 触发且不重复触发短按”；普通页面与子页统一短按 `KEY1` 返回 / `KEY2` 整屏 GC16 强刷 / `KEY3` 开关应用菜单，正文阅读态（图书阅读、网页正文、Agent 正文、内置阅读）统一短按 `KEY1` 上一页 / `KEY2` 整屏 GC16 强刷 / `KEY3` 下一页；任意页面及菜单内长按 500 ms 统一为 `KEY1` 直达桌面 / `KEY2` 整屏强刷 / `KEY3` 开关菜单。

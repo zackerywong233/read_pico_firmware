@@ -322,7 +322,8 @@ esp_err_t app_enter_host_sleep(app_sleep_mode_t mode) {
     return err;
 }
 
-static bool load_saver_image(uint8_t** pixels_out, uint16_t* width_out, uint16_t* height_out) {
+static bool load_saver_image(uint16_t target_w, uint16_t target_h,
+                             uint8_t** pixels_out, uint16_t* width_out, uint16_t* height_out) {
     read_pico_sd_info_t sd = {0};
     esp_err_t sd_err = read_pico_sd_get_info(&sd);
     if (!sd.mounted) {
@@ -360,8 +361,8 @@ static bool load_saver_image(uint8_t** pixels_out, uint16_t* width_out, uint16_t
         if (got == (size_t)size) {
             uint8_t* pixels = NULL;
             uint16_t width = 0, height = 0;
-            bool valid = book_image_decode(data, got, 2 * 1024 * 1024,
-                                           &pixels, &width, &height);
+            bool valid = book_image_decode_cover(data, got, target_w, target_h,
+                                                 2 * 1024 * 1024, &pixels, &width, &height);
             heap_caps_free(data);
             if (valid && pixels && width && height) {
                 *pixels_out = pixels;
@@ -378,23 +379,22 @@ static bool load_saver_image(uint8_t** pixels_out, uint16_t* width_out, uint16_t
 }
 
 static bool draw_saver_image(uint8_t* framebuffer) {
-    uint8_t* pixels = NULL;
-    uint16_t image_w = 0, image_h = 0;
-    if (!load_saver_image(&pixels, &image_w, &image_h)) return false;
-    ui_clear_page(framebuffer);
     const int screen_w = epd_rotated_display_width();
     const int screen_h = epd_rotated_display_height();
-    int draw_w = image_w, draw_h = image_h;
-    if (draw_w > screen_w) { draw_h = draw_h * screen_w / draw_w; draw_w = screen_w; }
-    if (draw_h > screen_h) { draw_w = draw_w * screen_h / draw_h; draw_h = screen_h; }
-    if (draw_w < 1) draw_w = 1;
-    if (draw_h < 1) draw_h = 1;
-    int left = (screen_w - draw_w) / 2;
-    int top = (screen_h - draw_h) / 2;
-    for (int y = 0; y < draw_h; ++y) for (int x = 0; x < draw_w; ++x) {
-        size_t src = (size_t)((int64_t)y * image_h / draw_h) * image_w +
-                     (size_t)((int64_t)x * image_w / draw_w);
-        epd_draw_pixel(left + x, top + y, pixels[src], framebuffer);
+    if (screen_w < 1 || screen_h < 1) return false;
+    uint8_t* pixels = NULL;
+    uint16_t image_w = 0, image_h = 0;
+    if (!load_saver_image((uint16_t)screen_w, (uint16_t)screen_h,
+                          &pixels, &image_w, &image_h)) return false;
+    ui_clear_page(framebuffer);
+    // 锁屏壁纸已按屏幕尺寸等比居中铺满解码，整屏逐像素铺写无留边。
+    // The wallpaper is decoded with aspect-fill center crop to screen size; paint edge-to-edge without borders.
+    for (int y = 0; y < screen_h; ++y) {
+        size_t sy = (size_t)((int64_t)y * image_h / screen_h);
+        for (int x = 0; x < screen_w; ++x) {
+            size_t sx = (size_t)((int64_t)x * image_w / screen_w);
+            epd_draw_pixel(x, y, pixels[sy * image_w + sx], framebuffer);
+        }
     }
     free(pixels);
     return true;

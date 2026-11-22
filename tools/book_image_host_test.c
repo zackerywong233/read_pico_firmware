@@ -51,6 +51,25 @@ int main(int argc,char** argv) {
         assert((size_t)w*h==n && !memcmp(pixels,expected,n));
         free(data);free(expected);free(pixels);return 0;
     }
+    if(argc==6 && !strcmp(argv[1],"--cover")) {
+        size_t len;uint8_t* data=read_file(argv[2],&len),*pixels=NULL;uint16_t w=0,h=0;
+        uint16_t tw=(uint16_t)strtoul(argv[3],NULL,10), th=(uint16_t)strtoul(argv[4],NULL,10);
+        unsigned expected_val=(unsigned)strtoul(argv[5],NULL,10);
+        assert(!book_image_decode_cover(data,len,0,th,2u*1024u*1024u,&pixels,&w,&h) && !pixels && !w && !h);
+        assert(!book_image_decode_cover(data,len,tw,0,2u*1024u*1024u,&pixels,&w,&h) && !pixels && !w && !h);
+        assert(!book_image_decode_cover(data,len,tw,th,(size_t)tw*th-1,&pixels,&w,&h) && !pixels && !w && !h);
+        assert(book_image_decode_cover(data,len,tw,th,(size_t)tw*th,&pixels,&w,&h));
+        assert(pixels && w==tw && h==th);
+        for(size_t p=0;p<(size_t)w*h;++p) assert(pixels[p]==expected_val);
+        free(pixels);free(data);return 0;
+    }
+    if(argc==6 && !strcmp(argv[1],"--cover-expect")) {
+        size_t len,n;uint8_t* data=read_file(argv[2],&len),*expected=read_file(argv[5],&n),*pixels=NULL;uint16_t w=0,h=0;
+        uint16_t tw=(uint16_t)strtoul(argv[3],NULL,10), th=(uint16_t)strtoul(argv[4],NULL,10);
+        assert(book_image_decode_cover(data,len,tw,th,2u*1024u*1024u,&pixels,&w,&h));
+        assert(pixels && w==tw && h==th && (size_t)w*h==n && !memcmp(pixels,expected,n));
+        free(pixels);free(expected);free(data);return 0;
+    }
     if (argc==3 && !strcmp(argv[1],"--inspect")) {
         size_t len; uint8_t* data=read_file(argv[2],&len), *pixels=NULL; uint16_t w,h;
         bool ok=book_image_decode(data,len,2u*1024u*1024u,&pixels,&w,&h);

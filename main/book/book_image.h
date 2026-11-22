@@ -15,3 +15,9 @@
 /// Decode at most 648x1000 grayscale pixels; input <=2MiB; baseline JPEG <=16M pixels, others <=1M pixels with a <=4MiB decoder heap.
 bool book_image_decode(const uint8_t* data, size_t len, size_t budget,
                        uint8_t** pixels, uint16_t* width, uint16_t* height);
+
+/// 按目标尺寸等比铺满并居中裁切解码灰度图（无留边）；输入与解码上限同 book_image_decode。
+/// Decode grayscale with aspect-fill center crop to exact target dimensions (no borders); same input and decoder limits as book_image_decode.
+bool book_image_decode_cover(const uint8_t* data, size_t len,
+                             uint16_t target_w, uint16_t target_h, size_t budget,
+                             uint8_t** pixels, uint16_t* width, uint16_t* height);
