@@ -388,7 +388,7 @@ static void on_enter(app_ctx_t *ctx) {
     reload_dir(ctx);
 }
 
-static void on_exit(app_ctx_t *ctx) {
+static void files_on_exit(app_ctx_t *ctx) {
     (void)ctx;
     free_previews();
     free_entries();
@@ -724,7 +724,7 @@ const app_desc_t app_files = {
     .title = "文件管理",
     .detail = "浏览与整理 TF 卡文件",
     .on_enter = on_enter,
-    .on_exit = on_exit,
+    .on_exit = files_on_exit,
     .on_media_lost = on_media_lost,
     .render = render,
     .on_gesture = on_gesture,
