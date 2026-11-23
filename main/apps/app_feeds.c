@@ -650,7 +650,7 @@ static void render_sources(uint8_t *fb) {
     if (pages <= 0) pages = 1;
     ui_draw_button(fb, ui_bar_rect(0, 3), "去传书配置", false);
     ui_draw_button(fb, ui_bar_rect(1, 3), s_delete_mode ? "取消删除" : "删除源", s_delete_mode);
-    char pg[24];
+    char pg[36];
     snprintf(pg, sizeof(pg), "%d / %d 页", s_source_page + 1, pages);
     ui_draw_button(fb, ui_bar_rect(2, 3), pg, false);
 }
@@ -961,7 +961,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         }
         if (ui_rect_hit(ui_bar_rect(1, 3), x, y)) {
             s_delete_mode = !s_delete_mode;
-            snprintf(s_notice, sizeof(s_notice), s_delete_mode ? "点按任意源将其删除" : "");
+            snprintf(s_notice, sizeof(s_notice), "%s", s_delete_mode ? "点按任意源将其删除" : "");
             return APP_REDRAW_PAGE;
         }
         if (ui_rect_hit(ui_bar_rect(2, 3), x, y)) {
@@ -979,7 +979,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
                 (void)feeds_store_delete(s_sources[idx].url, &found);
                 s_delete_mode = false;
                 reload_sources();
-                snprintf(s_notice, sizeof(s_notice), found ? "已删除订阅源" : "删除失败");
+                snprintf(s_notice, sizeof(s_notice), "%s", found ? "已删除订阅源" : "删除失败");
                 return APP_REDRAW_PAGE;
             }
             s_active_source = (int)idx;
