@@ -296,8 +296,8 @@ flowchart TD
 ### 6.4 刷新策略（[main/app/app_config.h](../main/app/app_config.h) + [main/display.c](../main/display.c)）
 
 - 档位 `APP_REFRESH_PROFILE`：`BALANCED`（默认：页 GL16、定稿 GC16、动态 DU、每 14 次软刷强制一次 GC16 压灰底）或 `ALL_DU`（实验，只看速度）。
-- 图书阅读档位由 NVS `bk_ref` 控制：纯净每页整屏 GC16；均衡（默认）每页 GL16 并每 8 页 GC16；极速每页 DU 并每 6 页 GC16。切章、离开阅读弹窗、应用页切换以及菜单打开/关闭/返回仍整屏 GC16。底部进度条始终可点按跳转，章节会补排至目标正文偏移。
-  Book refresh uses NVS `bk_ref`: clean runs full-screen GC16 on every page; balanced (default) uses GL16 and GC16 every 8 pages; fast uses DU and GC16 every 6 pages. Chapter changes, leaving reader dialogs, app switches and menu transitions still use full-screen GC16. The progress track remains tappable, and chapter seeking paginates through the target offset.
+- 图书阅读档位由 NVS `bk_ref` 控制：纯净每页整屏 GC16；均衡（默认）每页 GL16 并每 8 页 GC16；极速每页 DU 并每 6 页 GC16。切章、离开阅读弹窗、应用页切换以及菜单打开/关闭/返回仍整屏 GC16。底部进度条仅在打开阅读工具栏时可点按跳转（正文阅读态下底部栏区域不响应点按以防误触），章节会补排至目标正文偏移。
+  Book refresh uses NVS `bk_ref`: clean runs full-screen GC16 on every page; balanced (default) uses GL16 and GC16 every 8 pages; fast uses DU and GC16 every 6 pages. Chapter changes, leaving reader dialogs, app switches and menu transitions still use full-screen GC16. The progress track is tappable only while the reader toolbar is open (taps on the bottom bar are ignored during clean reading to prevent accidental seeks), and chapter seeking paginates through the target offset.
 - 行距、左右边距、可变字重、方向和翻页手势分别由 `bk_lh`、`bk_mg`、`bk_wght`、`bk_rot`、`bk_gest` 保存；传感器只在阅读态需要自动旋转或手势时运行，退出阅读时恢复原配置并休眠。
   Persist line spacing, side margins, variable weight, orientation and page gesture as `bk_lh`, `bk_mg`, `bk_wght`, `bk_rot` and `bk_gest`. The accelerometer runs only while reader rotation or gestures need it and restores its prior configuration before sleeping on reader exit.
 - 书签与摘录可从笔记页导出 UTF-8 Markdown；传书网页对含笔记的图书提供 Markdown 下载；阅读工具栏搜索仅查当前已加载章节。

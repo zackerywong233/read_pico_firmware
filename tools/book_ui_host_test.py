@@ -665,3 +665,183 @@ int main(void) {
     assert abs(gc16_dc(15, 15)) <= 1, f"full GC16 15->15 DC imbalance: {gc16_dc(15, 15)}"
     assert gc16_dc(15, 0) + gc16_dc(0, 15) == 0, "full GC16 15->0->15 DC imbalance"
     print("book_gc16_full_waveform_test: PASS")
+
+    # 验证阅读页底部进度条防误触：正文态底部栏不响应点按，仅打开工具栏后可点按进度条跳转。
+    # Verify reader bottom progress bar guard: ignored during clean reading, tappable only when toolbar is open.
+    action_fn = function("action_at")
+    rm = re.search(r"if \(s_view == READING\) \{", action_fn)
+    assert rm, "READING branch in action_at"
+    at, depth = rm.end(), 1
+    while depth:
+        if action_fn[at] == "{": depth += 1
+        elif action_fn[at] == "}": depth -= 1
+        at += 1
+    reading_action_branch = action_fn[rm.start():at]
+    reader_bar_unit = r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#define UI_GAP 12
+#define UI_MARGIN 40
+#define UI_BTN_H 84
+#define UI_BAR_TOP 1072
+#define BOOK_TOOL_COUNT 12
+#define BOOK_TOOL_ROWS 4
+#define BOOK_TOC_ROWS 10
+#define MODE_DU 1
+#define MODE_GL16 2
+typedef struct { int x, y, width, height; } EpdRect;
+typedef struct { int leaf; bool request_menu; bool key_handled; int64_t now_ms; } app_ctx_t;
+typedef enum { APP_REDRAW_PAGE, APP_REDRAW_AREA, APP_REDRAW_NONE, APP_REDRAW_FULL } app_redraw_t;
+typedef enum { SHELF, READING, TOC, MANAGE, BULK, SEARCH, BOOKMARKS, EXCERPTS, TYPOGRAPHY, CHAPTER_RESULTS } book_view_t;
+static int epd_width(void) { return 1216; }
+static int epd_height(void) { return 684; }
+static int ui_content_width(void) { return 684 - 2 * UI_MARGIN; }
+static EpdRect ui_grid_rect(int col, int cols, int row, int y0, int h) {
+    int w = (ui_content_width() - (cols - 1) * UI_GAP) / cols;
+    return (EpdRect){ UI_MARGIN + col * (w + UI_GAP), y0 + row * (h + UI_GAP), w, h };
+}
+static bool ui_rect_hit(EpdRect r, uint16_t x, uint16_t y) {
+    return (int)x >= r.x && (int)x < r.x + r.width && (int)y >= r.y && (int)y < r.y + r.height;
+}
+static EpdRect book_layout_side_margins(EpdRect r, unsigned m) {
+    return (EpdRect){ r.x + (int)m, r.y, r.width - 2 * (int)m, r.height };
+}
+static book_view_t s_view = READING, s_search_parent;
+static bool s_image_open, s_cbz_mode, s_selecting, s_toolbar, s_reader_landscape, s_shake_enabled, s_full, s_chapter_search;
+static size_t s_page, s_cbz_page, s_text_len = 100, s_sel_start, s_sel_end, s_chapter, s_block_count;
+static int s_px = 48, s_sel_line_y;
+static unsigned s_pages_since_clean;
+static char *s_text = "abc";
+static void *s_blocks;
+static char s_note_message[128], s_search_draft[65];
+static bool test_top_bar = true, test_bottom_bar = true;
+static uint8_t test_margin = 1;
+static unsigned test_seek_calls, test_turn_calls;
+static int test_turn_dir;
+static uint16_t test_seek_x;
+static bool app_settings_book_top_bar(void) { return test_top_bar; }
+static bool app_settings_book_bottom_bar(void) { return test_bottom_bar; }
+static unsigned app_settings_book_margin(void) { return test_margin; }
+static uint8_t app_settings_book_cbz_dir(void) { return 0; }
+static void app_settings_set_book_cbz_dir(uint8_t v) { (void)v; }
+static bool app_settings_book_cbz_dither(void) { return false; }
+static void app_settings_set_book_cbz_dither(bool v) { (void)v; }
+static uint8_t app_settings_book_gesture(void) { return 0; }
+static void app_settings_set_book_gesture(uint8_t v) { (void)v; }
+static uint8_t app_settings_book_refresh(void) { return 1; }
+static void app_settings_set_book_refresh(uint8_t v) { (void)v; }
+static uint8_t app_settings_book_rotation(void) { return 0; }
+static void app_settings_set_book_rotation(uint8_t v) { (void)v; }
+static unsigned side_margin(void);
+static void lock_draw(void) {}
+static void unlock_draw(void) {}
+static void invalidate_prep(void) {}
+static void save_progress(void) {}
+static void sensor_set(app_ctx_t *ctx, bool on) { (void)ctx; (void)on; }
+static void free_book(void) {}
+static void scan_shelf(app_ctx_t *ctx) { (void)ctx; }
+static void apply_layout_opts(void) {}
+static unsigned line_height_percent(void) { return 150; }
+static bool cbz_load_page_locked(size_t p) { (void)p; return true; }
+static app_redraw_t close_image(app_ctx_t *ctx) { (void)ctx; return APP_REDRAW_PAGE; }
+static app_redraw_t resize_text(app_ctx_t *ctx, int d) { (void)ctx; (void)d; return APP_REDRAW_PAGE; }
+static void open_note_list(app_ctx_t *ctx, book_view_t v) { (void)ctx; (void)v; }
+static app_redraw_t paint_reading(app_ctx_t *ctx, int m) { (void)ctx; (void)m; return APP_REDRAW_AREA; }
+static app_redraw_t open_image(app_ctx_t *ctx, size_t b) { (void)ctx; (void)b; return APP_REDRAW_PAGE; }
+static EpdRect sel_btn_rect(int i) { (void)i; return (EpdRect){0}; }
+static size_t book_layout_page_start_offset(size_t p) { (void)p; return 0; }
+static size_t book_layout_page_count(void) { return 2; }
+static bool book_layout_expand_prev_sentence(const char *t, size_t l, size_t s, size_t ps, size_t *out) { (void)t;(void)l;(void)s;(void)ps;(void)out; return false; }
+static bool book_layout_expand_next_sentence(const char *t, size_t l, size_t e, size_t pe, size_t *out) { (void)t;(void)l;(void)e;(void)pe;(void)out; return false; }
+static bool book_layout_paragraph_bounds(const char *t, size_t l, size_t s, size_t *o0, size_t *o1) { (void)t;(void)l;(void)s;(void)o0;(void)o1; return false; }
+static bool save_selected_excerpt(size_t a, size_t b) { (void)a; (void)b; return true; }
+static bool book_layout_hit_text(size_t p, EpdRect r, uint16_t x, uint16_t y, size_t *o, int *ly) { (void)p;(void)r;(void)x;(void)y;(void)o;(void)ly; return false; }
+static bool book_layout_sentence_bounds(const char *t, size_t l, size_t o, size_t a, size_t b, size_t *o0, size_t *o1) { (void)t;(void)l;(void)o;(void)a;(void)b;(void)o0;(void)o1; return false; }
+static bool book_layout_build_blocks_metrics(const char *t, size_t l, void *b, size_t c, EpdRect r, int px, unsigned lh) { (void)t;(void)l;(void)b;(void)c;(void)r;(void)px;(void)lh; return true; }
+static size_t book_layout_page_for_offset(size_t o) { (void)o; return 0; }
+static size_t book_layout_image_at(size_t p, EpdRect r, uint16_t x, uint16_t y, EpdRect *out) { (void)p;(void)r;(void)x;(void)y;(void)out; return SIZE_MAX; }
+static void copy_text(char *dst, size_t cap, const char *src) { snprintf(dst, cap, "%s", src); }
+static app_redraw_t seek_progress(app_ctx_t *ctx, uint16_t x) {
+    (void)ctx;
+    ++test_seek_calls;
+    test_seek_x = x;
+    s_toolbar = false;
+    return APP_REDRAW_FULL;
+}
+static app_redraw_t turn_page(app_ctx_t *ctx, int dir) {
+    (void)ctx;
+    ++test_turn_calls;
+    test_turn_dir = dir;
+    return APP_REDRAW_PAGE;
+}
+'''
+    for name in ("reader_width", "reader_height", "body_rect", "bottom_bar_rect", "progress_rect", "tool_rect", "side_margin"):
+        reader_bar_unit += function(name) + "\n"
+    reader_bar_unit += (
+        "static app_redraw_t reading_action(app_ctx_t *ctx, uint16_t x, uint16_t y) {\n"
+        + reading_action_branch
+        + "\n    return APP_REDRAW_NONE;\n}\n"
+        + r'''
+int main(void) {
+    app_ctx_t ctx = {0};
+    for (int landscape = 0; landscape <= 1; ++landscape) {
+        s_reader_landscape = landscape != 0;
+        test_bottom_bar = true;
+        EpdRect body = body_rect();
+        EpdRect bot = bottom_bar_rect();
+        EpdRect track = progress_rect();
+        assert(body.y + body.height == bot.y);
+        assert(track.y >= bot.y && track.y + track.height <= bot.y + bot.height);
+
+        // 1. 正文阅读态 + 底部栏显示：点按进度条左/中/右及底部栏边距均无动作，不触发跳转/翻页/工具栏。
+        // Clean reading with bottom bar visible: taps across progress track and bottom margins do nothing.
+        test_bottom_bar = true;
+        s_toolbar = false;
+        test_seek_calls = test_turn_calls = 0;
+        uint16_t xs[5] = {
+            (uint16_t)(bot.x + 4),
+            (uint16_t)(track.x + 4),
+            (uint16_t)(track.x + track.width / 2),
+            (uint16_t)(track.x + track.width - 5),
+            (uint16_t)(bot.x + bot.width - 4),
+        };
+        for (int i = 0; i < 5; ++i) {
+            assert(reading_action(&ctx, xs[i], (uint16_t)(track.y + 12)) == APP_REDRAW_NONE);
+            assert(reading_action(&ctx, xs[i], (uint16_t)(bot.y + bot.height - 1)) == APP_REDRAW_NONE);
+        }
+        assert(test_seek_calls == 0 && test_turn_calls == 0 && !s_toolbar);
+
+        // 正文区仍正常翻页与呼出工具栏。/ Body taps still turn pages and toggle the toolbar.
+        assert(reading_action(&ctx, (uint16_t)(reader_width() / 2), (uint16_t)(body.y + body.height / 2)) == APP_REDRAW_PAGE);
+        assert(s_toolbar && test_seek_calls == 0 && test_turn_calls == 0);
+
+        // 2. 工具栏打开时：点按进度条可跳转并收起工具栏；点按底部栏边距不误翻页。
+        // With toolbar open: tapping progress track seeks; tapping bottom-bar margin does not turn pages.
+        assert(reading_action(&ctx, (uint16_t)(bot.x + 2), (uint16_t)(track.y + 12)) == APP_REDRAW_NONE);
+        assert(s_toolbar && test_seek_calls == 0 && test_turn_calls == 0);
+        uint16_t seek_target = (uint16_t)(track.x + track.width / 2);
+        assert(reading_action(&ctx, seek_target, (uint16_t)(track.y + 12)) == APP_REDRAW_FULL);
+        assert(test_seek_calls == 1 && test_seek_x == seek_target && !s_toolbar && test_turn_calls == 0);
+
+        // 3. 底部栏关闭时：正文态点按底部区走常规正文翻页，不跳转进度；打开工具栏后进度条仍可点按跳转。
+        // With bottom bar hidden: clean reading bottom taps act as normal body taps; toolbar still allows seeking.
+        test_bottom_bar = false;
+        s_toolbar = false;
+        test_seek_calls = test_turn_calls = 0;
+        assert(reading_action(&ctx, (uint16_t)(reader_width() - 20), (uint16_t)(track.y + 12)) == APP_REDRAW_PAGE);
+        assert(test_seek_calls == 0 && test_turn_calls == 1 && test_turn_dir == 1);
+        s_toolbar = true;
+        assert(reading_action(&ctx, seek_target, (uint16_t)(track.y + 12)) == APP_REDRAW_FULL);
+        assert(test_seek_calls == 1 && !s_toolbar);
+    }
+    puts("book_reader_bottom_progress_guard_test: PASS");
+}
+'''
+    )
+    bar_c = Path(tmp) / "reader_bar_guard.c"
+    bar_exe = Path(tmp) / "reader_bar_guard"
+    bar_c.write_text(reader_bar_unit, encoding="utf-8")
+    subprocess.run(["gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", "-fsanitize=address,undefined", str(bar_c), "-o", str(bar_exe)], check=True)
+    subprocess.run([str(bar_exe)], check=True)

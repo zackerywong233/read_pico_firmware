@@ -1,5 +1,10 @@
 # 版本变更 / Changelog
 
+## v1.0.5 · 2026-11-24
+
+- 阅读页底部进度条防误触优化：正文阅读态下（工具栏关闭且底部信息栏开启时）点按底部栏区域不再直接触控跳转进度或触发翻页/工具栏，避免阅读过程中误触；打开阅读工具栏后仍可点按底部进度条跳转进度，并补充宿主回归测试与文档说明。
+  Prevent accidental touches on the reader bottom progress bar: during clean reading (toolbar closed with bottom bar enabled), taps on the bottom bar are ignored instead of seeking progress, turning pages, or toggling the toolbar; tapping the progress track to seek remains available while the reader toolbar is open, with host regression tests and updated documentation.
+
 ## v1.0.4 · 2026-11-23
 
 - 修复局域网与设备热点无法连接及联网应用进页缓慢问题：

@@ -14,7 +14,7 @@
  * 刷新档位变化：纯净每页 GC16；均衡 GL16/8 页；极速 DU/6 页，切章与工具弹窗退出时 GC16。
  * Refresh policy changed by product request: clean GC16 per page, balanced GL16/8 pages, fast DU/6 pages, with GC16 at chapter and modal exits.
  * 点按正文中央区域开关工具条；KEY2 随时触发整屏 GC16 清残影并重置周期计数。
- * 底部进度条始终可点按跳转；章节跳转须补排至目标正文偏移后再呈现，不能落在未完成分页的末页。
+ * 用户修订（防阅读误触）：底部进度条仅在打开阅读工具栏时可点按跳转；正文阅读态下底部栏区域不响应点按；章节跳转须补排至目标正文偏移后再呈现，不能落在未完成分页的末页。
  * 用户授权基础管理：长按书架先看完整详情，清进度与删文件分别确认；失败保留待重试记录，不自动回收其他书进度。
  * 用户修订：单本管理为书架弹窗；管理页用于批量操作。分页和排序保留勾选，筛选/应用搜索及重扫清除勾选。
  * 失败进度仅按变更路径失效；删除后的清理重试保留到本次开机结束，不随切页释放。
@@ -27,7 +27,7 @@
  * Join preparation before returning callbacks so menus/lock cannot race the page-local TTF lock.
  * Refresh profiles: clean uses GC16 every turn, balanced GL16 every turn with GC16 every eight pages, and fast DU every turn with GC16 every six pages; chapter changes and modal exits GC16.
  * Tapping the center body band toggles tools; KEY2 performs a full GC16 ghost-clearing refresh anywhere.
- * The bottom progress track is always tappable; chapter seeking paginates through the target text offset before presenting.
+ * User revision (prevent accidental reading taps): the bottom progress track is tappable only while the reader toolbar is open; during clean reading, taps on the bottom bar are ignored; chapter seeking paginates through the target text offset before presenting.
  * User-authorized management shows full details before separate clear/delete confirmations; retain failed saves for retry without pruning other books.
  * User revision: single-book actions use a shelf dialog; full management is for batches. Paging/sorting preserve selection; filtering/applied search and rescanning clear it.
  * Invalidate failed progress only for changed paths; retain deletion cleanup retries across page exits for this boot.
@@ -257,6 +257,10 @@ static EpdRect body_rect(void) {
     const int bot = show_bot ? (s_reader_landscape ? 72 : 76) : 28;
     EpdRect rect = {0, top, reader_width(), reader_height() - top - bot};
     return book_layout_side_margins(rect, side_margin());
+}
+static EpdRect bottom_bar_rect(void) {
+    int h = s_reader_landscape ? 72 : 76;
+    return (EpdRect){0, reader_height() - h, reader_width(), h};
 }
 static EpdRect progress_rect(void) {
     int margin = (int)side_margin();
@@ -2519,10 +2523,13 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
             invalidate_prep();
             return paint_reading(ctx, MODE_GL16);
         }
-        if ((app_settings_book_bottom_bar() || s_toolbar) && ui_rect_hit(progress_rect(), x, y)) {
-            return seek_progress(ctx, x);
-        }
         if (s_toolbar) {
+            if (ui_rect_hit(progress_rect(), x, y)) {
+                return seek_progress(ctx, x);
+            }
+            if (ui_rect_hit(bottom_bar_rect(), x, y)) {
+                return APP_REDRAW_NONE;
+            }
             for (int i = 0; i < BOOK_TOOL_COUNT; ++i) if (ui_rect_hit(tool_rect(i), x, y)) {
                 invalidate_prep();
                 if (i == 0) { save_progress(); sensor_set(ctx, false); s_view = TOC; ctx->leaf = s_chapter / BOOK_TOC_ROWS; }
@@ -2558,8 +2565,10 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
                 else if (i == 11) { sensor_set(ctx, false); s_search_parent = READING; s_search_draft[0] = 0; s_chapter_search = true; s_view = SEARCH; return APP_REDRAW_PAGE; }
                 return APP_REDRAW_PAGE;
             }
-        }
-        if (!s_toolbar) {
+        } else {
+            if (app_settings_book_bottom_bar() && ui_rect_hit(bottom_bar_rect(), x, y)) {
+                return APP_REDRAW_NONE;
+            }
             lock_draw();
             size_t block = book_layout_image_at(s_page, body_rect(), x, y, NULL);
             unlock_draw();
