@@ -497,7 +497,7 @@ static bool start_book_download(const feed_item_t *item, bool open_after) {
     req->file_limit = book_store_file_limit(&s_root);
     snprintf(req->url, sizeof(req->url), "%s", item->acq_url);
     snprintf(req->save_dir, sizeof(req->save_dir), "%s", s_root.path);
-    snprintf(req->file_title, sizeof(req->file_title), "%s", item->title);
+    snprintf(req->file_title, sizeof(req->file_title), "%.*s", (int)(sizeof(req->file_title) - 1), item->title);
     snprintf(req->file_ext, sizeof(req->file_ext), "%s", item->acq_ext);
     if (s_active_source >= 0 && (size_t)s_active_source < s_source_count) {
         const feed_source_t *src = &s_sources[s_active_source];
@@ -683,7 +683,8 @@ static void render_entries(uint8_t *fb) {
         } else if (it->is_nav) {
             snprintf(meta, sizeof(meta), "子目录 · 点按进入");
         } else {
-            snprintf(meta, sizeof(meta), "%s", it->author[0] ? it->author : (it->summary[0] ? it->summary : "点按阅读"));
+            snprintf(meta, sizeof(meta), "%.*s", (int)(sizeof(meta) - 1),
+                     it->author[0] ? it->author : (it->summary[0] ? it->summary : "点按阅读"));
         }
         draw_ellipsis(fb, r.x + 18, r.y + 66, UI_PX_CAPTION, r.width - 36, meta);
     }

@@ -193,7 +193,7 @@ static void render_browse(app_ctx_t *ctx, uint8_t *fb) {
     bool mounted = (read_pico_sd_get_info(&info) == ESP_OK && info.mounted);
     char sub[128];
     if (mounted) {
-        snprintf(sub, sizeof(sub), "%s · 余 %.1f/%.1f GB",
+        snprintf(sub, sizeof(sub), "%.80s · 余 %.1f/%.1f GB",
                  s_cur_dir,
                  (double)info.free_bytes / (1024.0 * 1024.0 * 1024.0),
                  (double)info.capacity_bytes / (1024.0 * 1024.0 * 1024.0));
@@ -292,7 +292,7 @@ static void render_confirm_del(uint8_t *fb) {
         snprintf(msg, sizeof(msg), "确认删除已勾选的 %u 项（共含 %u 个条目）？",
                  (unsigned)selected_batch_count(), (unsigned)s_confirm_tree_count);
     } else if (s_selected_idx >= 0 && (size_t)s_selected_idx < s_count) {
-        snprintf(msg, sizeof(msg), "确认删除“%s”（共含 %u 个条目）？",
+        snprintf(msg, sizeof(msg), "确认删除“%.96s”（共含 %u 个条目）？",
                  s_entries[s_selected_idx].name, (unsigned)s_confirm_tree_count);
     } else {
         snprintf(msg, sizeof(msg), "确认删除所选项目？");

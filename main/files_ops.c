@@ -185,7 +185,7 @@ bool files_list_dir(const char *dir_path, bool show_hidden, bool sort_by_size,
         if (stat(full, &st) != 0) continue;
         files_entry_t *item = &out_items[count++];
         memset(item, 0, sizeof(*item));
-        snprintf(item->name, sizeof(item->name), "%s", name);
+        snprintf(item->name, sizeof(item->name), "%.*s", (int)(sizeof(item->name) - 1), name);
         item->is_dir = S_ISDIR(st.st_mode);
         item->size = item->is_dir ? 0 : (st.st_size > 0 ? (uint32_t)st.st_size : 0);
         item->kind = item->is_dir ? FILES_KIND_DIR : files_kind_for_name(name);
