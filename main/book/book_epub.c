@@ -645,6 +645,19 @@ static bool has_cover_word(const char *s) {
     return false;
 }
 
+typedef struct {
+    char opf_path[EPUB_PATH_CAP];
+    char cover_href[EPUB_PATH_CAP];
+    char fallback_href[EPUB_PATH_CAP];
+    char path_tmp[EPUB_PATH_CAP];
+    char meta_cover_id[96];
+    char id[96];
+    char mt[64];
+    char props[96];
+    xml_t xml;
+    token_t t;
+} epub_cover_scratch_t;
+
 esp_err_t book_epub_extract_cover(const char *path,
                                   char *title_out, size_t title_cap,
                                   char *author_out, size_t author_cap,
@@ -655,120 +668,130 @@ esp_err_t book_epub_extract_cover(const char *path,
     if (encoded_len_out) *encoded_len_out = 0;
     if (!path) return ESP_ERR_INVALID_ARG;
 
-    book_epub_t tmp = {0};
-    esp_err_t err = zip_open(path, &tmp.zip);
-    if (err != ESP_OK) return err;
+    // 路径与 XML 解析缓冲放 PSRAM，避免书架封面提取在主任务栈叠加数 KB 局部数组。
+    // Place path and XML parser buffers in PSRAM so shelf cover extraction stays light on stack.
+    epub_cover_scratch_t *sc = psram(sizeof(*sc));
+    if (!sc) return ESP_ERR_NO_MEM;
+    memset(sc, 0, sizeof(*sc));
 
-    char opf_path[EPUB_PATH_CAP] = {0};
+    book_epub_t tmp = {0};
     char *container_xml = NULL;
+    char *opf_xml = NULL;
+    esp_err_t err = zip_open(path, &tmp.zip);
+    if (err != ESP_OK) goto done;
+
     size_t container_len = 0;
     err = load_entry_limit(&tmp, zip_find(tmp.zip, "META-INF/container.xml"),
                            &container_xml, &container_len, EPUB_ENTRY_MAX);
-    if (err != ESP_OK) { zip_close(tmp.zip); return err; }
-    {
-        xml_t xml; token_t t;
-        xml_reader(&xml, container_xml, container_len);
-        while (xml_next(&xml, &t)) {
-            if (t.kind == XML_OPEN && local_name(t.name, "rootfile")) {
-                char full[EPUB_PATH_CAP] = {0};
-                if (attribute(t, "full-path", full, sizeof(full)) && full[0]) {
-                    if (resolve_path("", full, opf_path)) break;
-                }
+    if (err != ESP_OK) goto done;
+
+    xml_reader(&sc->xml, container_xml, container_len);
+    while (xml_next(&sc->xml, &sc->t)) {
+        if (sc->t.kind == XML_OPEN && local_name(sc->t.name, "rootfile")) {
+            sc->path_tmp[0] = 0;
+            if (attribute(sc->t, "full-path", sc->path_tmp, sizeof(sc->path_tmp)) && sc->path_tmp[0]) {
+                if (resolve_path("", sc->path_tmp, sc->opf_path)) break;
             }
         }
-        free(container_xml);
     }
-    if (!opf_path[0]) { zip_close(tmp.zip); return ESP_ERR_NOT_FOUND; }
+    free(container_xml);
+    container_xml = NULL;
+    if (!sc->opf_path[0]) { err = ESP_ERR_NOT_FOUND; goto done; }
 
-    char *opf_xml = NULL;
     size_t opf_len = 0;
-    err = load_entry_limit(&tmp, zip_find(tmp.zip, opf_path), &opf_xml, &opf_len, EPUB_ENTRY_MAX);
-    if (err != ESP_OK) { zip_close(tmp.zip); return err; }
+    err = load_entry_limit(&tmp, zip_find(tmp.zip, sc->opf_path), &opf_xml, &opf_len, EPUB_ENTRY_MAX);
+    if (err != ESP_OK) goto done;
 
     // 扫描 OPF 提取 dc:title、dc:creator 以及封面项 id/href。
     // Scan OPF for dc:title, dc:creator, and cover image id/href.
-    char meta_cover_id[96] = {0};
-    char cover_href[EPUB_PATH_CAP] = {0};
-    char fallback_href[EPUB_PATH_CAP] = {0};
     bool in_title = false, in_creator = false;
-    {
-        xml_t xml; token_t t;
-        xml_reader(&xml, opf_xml, opf_len);
-        while (xml_next(&xml, &t)) {
-            if (t.kind == XML_OPEN) {
-                if (local_name(t.name, "title") && !t.empty) in_title = true;
-                else if (local_name(t.name, "creator") && !t.empty) in_creator = true;
-                else if (local_name(t.name, "meta")) {
-                    char mname[64] = {0}, mcontent[96] = {0};
-                    if (attribute(t, "name", mname, sizeof(mname)) && !strcmp(mname, "cover") &&
-                        attribute(t, "content", mcontent, sizeof(mcontent)) && mcontent[0]) {
-                        snprintf(meta_cover_id, sizeof(meta_cover_id), "%s", mcontent);
-                    }
-                } else if (local_name(t.name, "item")) {
-                    char id[96] = {0}, href[EPUB_PATH_CAP] = {0}, mt[64] = {0}, props[96] = {0};
-                    (void)attribute(t, "id", id, sizeof(id));
-                    (void)attribute(t, "href", href, sizeof(href));
-                    (void)attribute(t, "media-type", mt, sizeof(mt));
-                    (void)attribute(t, "properties", props, sizeof(props));
-                    if (href[0] && is_image_media_type(mt)) {
-                        if (strstr(props, "cover-image")) {
-                            snprintf(cover_href, sizeof(cover_href), "%s", href);
-                        } else if (!cover_href[0] && meta_cover_id[0] && !strcmp(id, meta_cover_id)) {
-                            snprintf(cover_href, sizeof(cover_href), "%s", href);
-                        } else if (!fallback_href[0] && (has_cover_word(id) || has_cover_word(href))) {
-                            snprintf(fallback_href, sizeof(fallback_href), "%s", href);
-                        }
+    xml_reader(&sc->xml, opf_xml, opf_len);
+    while (xml_next(&sc->xml, &sc->t)) {
+        if (sc->t.kind == XML_OPEN) {
+            if (local_name(sc->t.name, "title") && !sc->t.empty) in_title = true;
+            else if (local_name(sc->t.name, "creator") && !sc->t.empty) in_creator = true;
+            else if (local_name(sc->t.name, "meta")) {
+                sc->mt[0] = 0;
+                sc->id[0] = 0;
+                if (attribute(sc->t, "name", sc->mt, sizeof(sc->mt)) && !strcmp(sc->mt, "cover") &&
+                    attribute(sc->t, "content", sc->id, sizeof(sc->id)) && sc->id[0]) {
+                    snprintf(sc->meta_cover_id, sizeof(sc->meta_cover_id), "%s", sc->id);
+                }
+            } else if (local_name(sc->t.name, "item")) {
+                sc->id[0] = 0;
+                sc->path_tmp[0] = 0;
+                sc->mt[0] = 0;
+                sc->props[0] = 0;
+                (void)attribute(sc->t, "id", sc->id, sizeof(sc->id));
+                (void)attribute(sc->t, "href", sc->path_tmp, sizeof(sc->path_tmp));
+                (void)attribute(sc->t, "media-type", sc->mt, sizeof(sc->mt));
+                (void)attribute(sc->t, "properties", sc->props, sizeof(sc->props));
+                if (sc->path_tmp[0] && is_image_media_type(sc->mt)) {
+                    if (strstr(sc->props, "cover-image")) {
+                        snprintf(sc->cover_href, sizeof(sc->cover_href), "%s", sc->path_tmp);
+                    } else if (!sc->cover_href[0] && sc->meta_cover_id[0] && !strcmp(sc->id, sc->meta_cover_id)) {
+                        snprintf(sc->cover_href, sizeof(sc->cover_href), "%s", sc->path_tmp);
+                    } else if (!sc->fallback_href[0] && (has_cover_word(sc->id) || has_cover_word(sc->path_tmp))) {
+                        snprintf(sc->fallback_href, sizeof(sc->fallback_href), "%s", sc->path_tmp);
                     }
                 }
-            } else if (t.kind == XML_CLOSE) {
-                if (local_name(t.name, "title")) in_title = false;
-                else if (local_name(t.name, "creator")) in_creator = false;
-            } else if (t.kind == XML_TEXT) {
-                if (in_title && title_out && title_cap > 1 && !title_out[0]) {
-                    (void)decode(t.text, title_out, title_cap, true, false);
-                } else if (in_creator && author_out && author_cap > 1 && !author_out[0]) {
-                    (void)decode(t.text, author_out, author_cap, true, false);
-                }
+            }
+        } else if (sc->t.kind == XML_CLOSE) {
+            if (local_name(sc->t.name, "title")) in_title = false;
+            else if (local_name(sc->t.name, "creator")) in_creator = false;
+        } else if (sc->t.kind == XML_TEXT) {
+            if (in_title && title_out && title_cap > 1 && !title_out[0]) {
+                (void)decode(sc->t.text, title_out, title_cap, true, false);
+            } else if (in_creator && author_out && author_cap > 1 && !author_out[0]) {
+                (void)decode(sc->t.text, author_out, author_cap, true, false);
             }
         }
     }
     // 若 <meta name="cover"> 出现在 <manifest> 之后，再做一次轻量 id 匹配。
     // If <meta name="cover"> appeared after <manifest>, resolve the id in a second quick pass.
-    if (!cover_href[0] && meta_cover_id[0]) {
-        xml_t xml; token_t t;
-        xml_reader(&xml, opf_xml, opf_len);
-        while (xml_next(&xml, &t)) {
-            if (t.kind == XML_OPEN && local_name(t.name, "item")) {
-                char id[96] = {0}, href[EPUB_PATH_CAP] = {0}, mt[64] = {0};
-                (void)attribute(t, "id", id, sizeof(id));
-                (void)attribute(t, "href", href, sizeof(href));
-                (void)attribute(t, "media-type", mt, sizeof(mt));
-                if (href[0] && is_image_media_type(mt) && !strcmp(id, meta_cover_id)) {
-                    snprintf(cover_href, sizeof(cover_href), "%s", href);
+    if (!sc->cover_href[0] && sc->meta_cover_id[0]) {
+        xml_reader(&sc->xml, opf_xml, opf_len);
+        while (xml_next(&sc->xml, &sc->t)) {
+            if (sc->t.kind == XML_OPEN && local_name(sc->t.name, "item")) {
+                sc->id[0] = 0;
+                sc->path_tmp[0] = 0;
+                sc->mt[0] = 0;
+                (void)attribute(sc->t, "id", sc->id, sizeof(sc->id));
+                (void)attribute(sc->t, "href", sc->path_tmp, sizeof(sc->path_tmp));
+                (void)attribute(sc->t, "media-type", sc->mt, sizeof(sc->mt));
+                if (sc->path_tmp[0] && is_image_media_type(sc->mt) && !strcmp(sc->id, sc->meta_cover_id)) {
+                    snprintf(sc->cover_href, sizeof(sc->cover_href), "%s", sc->path_tmp);
                     break;
                 }
             }
         }
     }
     free(opf_xml);
+    opf_xml = NULL;
 
-    const char *chosen = cover_href[0] ? cover_href : fallback_href;
+    const char *chosen = sc->cover_href[0] ? sc->cover_href : sc->fallback_href;
     if (!chosen[0] || !encoded_out || !encoded_len_out) {
-        zip_close(tmp.zip);
-        return chosen[0] ? ESP_OK : ESP_ERR_NOT_FOUND;
+        err = chosen[0] ? ESP_OK : ESP_ERR_NOT_FOUND;
+        goto done;
     }
 
-    char img_path[EPUB_PATH_CAP] = {0};
-    if (!resolve_path(opf_path, chosen, img_path)) {
-        zip_close(tmp.zip);
-        return ESP_ERR_NOT_FOUND;
+    sc->path_tmp[0] = 0;
+    if (!resolve_path(sc->opf_path, chosen, sc->path_tmp)) {
+        err = ESP_ERR_NOT_FOUND;
+        goto done;
     }
     char *raw = NULL;
     size_t raw_len = 0;
-    err = load_entry_limit(&tmp, zip_find(tmp.zip, img_path), &raw, &raw_len, 2u * 1024u * 1024u);
-    zip_close(tmp.zip);
-    if (err != ESP_OK) return err;
-    *encoded_out = (uint8_t*)raw;
-    *encoded_len_out = raw_len;
-    return ESP_OK;
+    err = load_entry_limit(&tmp, zip_find(tmp.zip, sc->path_tmp), &raw, &raw_len, 2u * 1024u * 1024u);
+    if (err == ESP_OK) {
+        *encoded_out = (uint8_t*)raw;
+        *encoded_len_out = raw_len;
+    }
+
+done:
+    free(container_xml);
+    free(opf_xml);
+    if (tmp.zip) zip_close(tmp.zip);
+    free(sc);
+    return err;
 }

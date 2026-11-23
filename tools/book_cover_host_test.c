@@ -35,6 +35,66 @@ static void write_file(const char *path, const void *data, size_t len) {
     fclose(f);
 }
 
+static uint32_t test_crc32(const uint8_t *data, size_t len) {
+    uint32_t crc = 0xFFFFFFFFu;
+    for (size_t i = 0; i < len; ++i) {
+        crc ^= data[i];
+        for (int b = 0; b < 8; ++b) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+    return ~crc;
+}
+
+static void put_u16(FILE *f, uint16_t v) { uint8_t b[2] = {(uint8_t)v, (uint8_t)(v >> 8)}; assert(fwrite(b, 1, 2, f) == 2); }
+static void put_u32(FILE *f, uint32_t v) { uint8_t b[4] = {(uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24)}; assert(fwrite(b, 1, 4, f) == 4); }
+
+static uint32_t write_stored_epub(const char *path) {
+    static const char container_xml[] =
+        "<?xml version=\"1.0\"?>"
+        "<container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">"
+        "<rootfiles><rootfile full-path=\"OEBPS/content.opf\"/></rootfiles></container>";
+    static const char opf_xml[] =
+        "<?xml version=\"1.0\"?>"
+        "<package xmlns=\"http://www.idpf.org/2007/opf\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\">"
+        "<metadata><dc:title>Cover Test</dc:title><dc:creator>Pico Author</dc:creator>"
+        "<meta name=\"cover\" content=\"cov-id\"/></metadata>"
+        "<manifest><item id=\"cov-id\" href=\"cover.png\" media-type=\"image/png\"/></manifest>"
+        "</package>";
+    struct { const char *name; const uint8_t *data; size_t len; uint32_t off; uint32_t crc; } ents[3] = {
+        { "META-INF/container.xml", (const uint8_t *)container_xml, sizeof(container_xml) - 1, 0, 0 },
+        { "OEBPS/content.opf", (const uint8_t *)opf_xml, sizeof(opf_xml) - 1, 0, 0 },
+        { "OEBPS/cover.png", k_test_png, sizeof(k_test_png), 0, 0 },
+    };
+    FILE *f = fopen(path, "wb");
+    assert(f != NULL);
+    for (int i = 0; i < 3; ++i) {
+        ents[i].off = (uint32_t)ftell(f);
+        ents[i].crc = test_crc32(ents[i].data, ents[i].len);
+        uint16_t nlen = (uint16_t)strlen(ents[i].name);
+        put_u32(f, 0x04034B50u); put_u16(f, 20); put_u16(f, 0); put_u16(f, 0);
+        put_u16(f, 0); put_u16(f, 0); put_u32(f, ents[i].crc);
+        put_u32(f, (uint32_t)ents[i].len); put_u32(f, (uint32_t)ents[i].len);
+        put_u16(f, nlen); put_u16(f, 0);
+        assert(fwrite(ents[i].name, 1, nlen, f) == nlen);
+        assert(fwrite(ents[i].data, 1, ents[i].len, f) == ents[i].len);
+    }
+    uint32_t cd_off = (uint32_t)ftell(f);
+    for (int i = 0; i < 3; ++i) {
+        uint16_t nlen = (uint16_t)strlen(ents[i].name);
+        put_u32(f, 0x02014B50u); put_u16(f, 20); put_u16(f, 20); put_u16(f, 0); put_u16(f, 0);
+        put_u16(f, 0); put_u16(f, 0); put_u32(f, ents[i].crc);
+        put_u32(f, (uint32_t)ents[i].len); put_u32(f, (uint32_t)ents[i].len);
+        put_u16(f, nlen); put_u16(f, 0); put_u16(f, 0); put_u16(f, 0); put_u16(f, 0);
+        put_u32(f, 0); put_u32(f, ents[i].off);
+        assert(fwrite(ents[i].name, 1, nlen, f) == nlen);
+    }
+    uint32_t cd_size = (uint32_t)ftell(f) - cd_off;
+    put_u32(f, 0x06054B50u); put_u16(f, 0); put_u16(f, 0); put_u16(f, 3); put_u16(f, 3);
+    put_u32(f, cd_size); put_u32(f, cd_off); put_u16(f, 0);
+    uint32_t total = (uint32_t)ftell(f);
+    fclose(f);
+    return total;
+}
+
 int main(void) {
     char root[128], cache_dir[160], txt_path[192], png_path[192], plain_txt[192];
     snprintf(root, sizeof(root), "/tmp/book-cover-test-%d", (int)getpid());
@@ -96,6 +156,26 @@ int main(void) {
     assert(fit_pix != NULL && fw == 4 && fh == 4);
     for (size_t i = 0; i < (size_t)fw * fh; ++i) assert(fit_pix[i] % 17 == 0);
     free(fit_pix);
+
+    book_cover_clear_lru();
+    // EPUB OPF 封面提取与书架缩略图缓存往返。/ EPUB OPF cover extraction and thumbnail round-trip.
+    char epub_path[192];
+    snprintf(epub_path, sizeof(epub_path), "%s/sample.epub", root);
+    uint32_t epub_size = write_stored_epub(epub_path);
+    char epub_title[64] = {0}, epub_author[64] = {0};
+    uint8_t *epub_raw = NULL;
+    size_t epub_raw_len = 0;
+    assert(book_epub_extract_cover(epub_path, epub_title, sizeof(epub_title),
+                                   epub_author, sizeof(epub_author),
+                                   &epub_raw, &epub_raw_len) == ESP_OK);
+    assert(strcmp(epub_title, "Cover Test") == 0);
+    assert(strcmp(epub_author, "Pico Author") == 0);
+    assert(epub_raw != NULL && epub_raw_len == sizeof(k_test_png));
+    assert(memcmp(epub_raw, k_test_png, sizeof(k_test_png)) == 0);
+    free(epub_raw);
+    assert(book_cover_load_thumb(epub_path, epub_size, thumb));
+    book_cover_forget(epub_path);
+    unlink(epub_path);
 
     book_cover_clear_lru();
     book_cover_set_cache_dir(NULL);

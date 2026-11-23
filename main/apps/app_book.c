@@ -199,6 +199,7 @@ static EpdRect s_du_area;
 static SemaphoreHandle_t s_draw_lock, s_prep_done;
 static TaskHandle_t s_prep_task;
 static uint8_t* s_next_fb;
+static uint8_t* s_cover_thumb;
 static int s_next_page = -1, s_prep_page = -1;
 
 static void render(app_ctx_t* ctx, uint8_t* fb);
@@ -1173,13 +1174,19 @@ static void draw_paperback_cover(uint8_t* fb, EpdRect box, const char* name) {
     ui_text_vc(fb, box.x + 12 + (box.width - 12) / 2, box.y + box.height - 22,
                18, badge, EPD_DRAW_ALIGN_CENTER, false);
 }
+// 缩略图缓冲放 PSRAM，避免 14 KB 局部数组压爆主任务栈。
+// Keep the 14 KB thumbnail scratch buffer in PSRAM instead of the main task stack.
 static void draw_book_cover_box(uint8_t* fb, EpdRect box, const shelf_entry_t* item) {
-    uint8_t thumb[BOOK_COVER_THUMB_BYTES];
-    if (item && !item->removed && book_cover_load_thumb(item->path, item->size, thumb)) {
-        blit_cover_4bpp_scaled(fb, thumb, box);
-    } else {
-        draw_paperback_cover(fb, box, item ? item->name : "");
+    if (item && !item->removed) {
+        if (!s_cover_thumb) {
+            s_cover_thumb = heap_caps_malloc(BOOK_COVER_THUMB_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        }
+        if (s_cover_thumb && book_cover_load_thumb(item->path, item->size, s_cover_thumb)) {
+            blit_cover_4bpp_scaled(fb, s_cover_thumb, box);
+            return;
+        }
     }
+    draw_paperback_cover(fb, box, item ? item->name : "");
 }
 static void draw_recent_card(uint8_t* fb, const shelf_entry_t* item) {
     EpdRect card = recent_card_rect();
@@ -2679,6 +2686,8 @@ static void book_on_exit(app_ctx_t* ctx) {
     if (s_prep_task) { vTaskDelete(s_prep_task); s_prep_task = NULL; }
     free(s_next_fb);
     s_next_fb = NULL;
+    free(s_cover_thumb);
+    s_cover_thumb = NULL;
     if (s_prep_done) { vSemaphoreDelete(s_prep_done); s_prep_done = NULL; }
     if (s_draw_lock) { vSemaphoreDelete(s_draw_lock); s_draw_lock = NULL; }
 }

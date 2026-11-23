@@ -1,5 +1,10 @@
 # 版本变更 / Changelog
 
+## v1.0.1 · 2026-11-23
+
+- 修复点击「图书」在提示“初始化内置存储…”后闪退回桌面（主任务栈溢出重启）：将书架封面绘制 `draw_book_cover_box()` 中 14 KB 缩略图缓冲及 EPUB 封面提取 `book_epub_extract_cover()` 的路径与 XML 缓冲从主任务栈移至 PSRAM 复用/分配，并将 `CONFIG_ESP_MAIN_TASK_STACK_SIZE` 提升至 `24576`，同时补充主机栈帧门禁与 EPUB 封面提取回归测试。
+  Fix Books crashing back to Home after “Initializing internal storage…”: move the 14 KB cover thumbnail buffer in `draw_book_cover_box()` and the path/XML buffers in `book_epub_extract_cover()` off the main task stack into PSRAM, raise `CONFIG_ESP_MAIN_TASK_STACK_SIZE` to `24576`, and add stack-frame and EPUB cover extraction regression tests.
+
 ## v1.0.0 · 2026-11-23
 
 - 屏下三键导航、8 层返回栈与 24 格三页九宫格桌面重构：彻底移除旧全屏应用列表（`ui_menu`）与二级「系统工具」聚合页，将全部 24 个应用与工具配齐极简线框图标平铺为 3 页 3×3 宫格（9 + 9 + 6）并统一顶部状态栏（时间 · 小纸 Pico · 电量）；取消右下角方框菜单把手，底栏触控区恢复全宽 604 px，最底部新增三等分屏下按键说明带；多页列表短按 `KEY1` 在第 2+ 页翻上一页、第 1 页返回，长按 `KEY1` 跨页直接返回上级，任意页长按 `KEY2`（500 ms）全局回桌面第 1 页（首页无动作防误锁）；全系统去除冗余尾部英文。

@@ -89,7 +89,7 @@ static void book_progress_watch_destroy(book_progress_watch_t* w){book_progress_
 static book_store_root_t test_roots[2];
 static int test_root_count=1;
 static void* heap_caps_realloc(void* p,size_t n,int caps){(void)caps;return test_oom?NULL:realloc(p,n);}
-static void* heap_caps_malloc(size_t n,int caps){(void)caps;return malloc(n);}
+static void* heap_caps_malloc(size_t n,int caps){(void)caps;return test_oom?NULL:malloc(n);}
 static bool book_store_flash_ready(void){return true;}
 static bool book_store_roots_degraded(void){return test_degraded;}
 static uint64_t book_store_free_bytes(const book_store_root_t* root){(void)root;return 1000000;}
@@ -167,6 +167,13 @@ static uint32_t s_reading_acc_ms;
 static int s_du_count;
 static int64_t s_size_settle_ms,s_poll_ms;
 static void* s_prep_task,*s_prep_done,*s_draw_lock,*s_next_fb;
+static uint8_t* s_cover_thumb;
+#define BOOK_COVER_THUMB_BYTES (144 * 196 / 2)
+static bool test_cover_hit;
+static unsigned test_cover_blits, test_cover_paperbacks;
+static bool book_cover_load_thumb(const char* path,uint32_t size,uint8_t out[BOOK_COVER_THUMB_BYTES]){(void)path;(void)size;if(!test_cover_hit)return false;memset(out,0xAA,BOOK_COVER_THUMB_BYTES);return true;}
+static void blit_cover_4bpp_scaled(uint8_t* fb,const uint8_t* thumb,EpdRect dst){(void)fb;(void)dst;assert(thumb==s_cover_thumb&&thumb[0]==0xAA);++test_cover_blits;}
+static void draw_paperback_cover(uint8_t* fb,EpdRect box,const char* name){(void)fb;(void)box;(void)name;++test_cover_paperbacks;}
 static void ensure_prep(void){}
 static int app_settings_book_px(void){return 48;}
 static void read_pico_sd_start_probe(void){}
@@ -206,7 +213,7 @@ static int ttf_text_width_px(int px,const char* text){int width=0;for(;*text;tex
 static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bool inv){(void)fb;(void)x;(void)y;(void)px;(void)align;(void)inv;assert(strlen(test_wrapped)+strlen(text)<sizeof(test_wrapped));strcat(test_wrapped,text);}
 '''
 for name in ("copy_text", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf",
-             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "shelf_is_grid", "shelf_per_page", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "resume_choice", "free_image", "close_image", "open_image", "gesture_event", "on_key", "draw_wrapped_name", "on_enter", "book_on_exit"):
+             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "shelf_is_grid", "shelf_per_page", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "resume_choice", "free_image", "close_image", "open_image", "draw_book_cover_box", "gesture_event", "on_key", "draw_wrapped_name", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
 unit += r'''
 int main(void) {
@@ -346,6 +353,22 @@ int main(void) {
     for(int i=0;i<s_count;i++)if(s_shelf[i].removed){s_shelf[i].selected=true;++retry_count;}
     assert(retry_count==2);calls=test_delete_calls;batch_apply(&ctx);
     assert(!s_delete_retries&&test_delete_calls==calls&&!selected_count());
+    // 封面缩略图复用堆缓冲并在退页释放，OOM 时回退纸书封。
+    // Cover thumbnail reuses a heap buffer freed on exit and falls back to paperback on OOM.
+    shelf_entry_t cov_item = {.name = "demo.epub", .path = "/sdcard/books/demo.epub", .size = 123};
+    EpdRect cov_box = {40, 264, 144, 196};
+    test_oom = true; test_cover_hit = true;
+    draw_book_cover_box(NULL, cov_box, &cov_item);
+    assert(!s_cover_thumb && test_cover_blits == 0 && test_cover_paperbacks == 1);
+    test_oom = false;
+    draw_book_cover_box(NULL, cov_box, &cov_item);
+    assert(s_cover_thumb && test_cover_blits == 1 && test_cover_paperbacks == 1);
+    test_cover_hit = false;
+    draw_book_cover_box(NULL, cov_box, &cov_item);
+    assert(s_cover_thumb && test_cover_blits == 1 && test_cover_paperbacks == 2);
+    book_on_exit(&ctx);
+    assert(!s_cover_thumb);
+
     free(s_shelf);
     while(s_pending)pending_discard(s_pending->path);
     for(int i=0;i<65;i++){char path[340];snprintf(path,sizeof(path),"%s/book%03d.txt",test_roots[0].path,i);unlink(path);}rmdir(test_roots[0].path);
@@ -355,6 +378,26 @@ int main(void) {
 with tempfile.TemporaryDirectory() as tmp:
     c = Path(tmp) / "test.c"
     exe = Path(tmp) / "test"
+    obj = Path(tmp) / "frame_check.o"
     c.write_text(unit, encoding="utf-8")
     subprocess.run(["gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-variable", "-fsanitize=address,undefined", str(c), "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)
+    # 防止 draw_book_cover_box 再次在栈上分配 14 KB 缩略图缓冲导致主任务栈溢出。
+    # Guard against placing the 14 KB cover thumbnail buffer back on the main task stack.
+    frame_unit = (
+        "#include <stdbool.h>\n#include <stdint.h>\n#include <stdlib.h>\n"
+        "#define MALLOC_CAP_SPIRAM 1\n#define MALLOC_CAP_8BIT 2\n"
+        "#define BOOK_COVER_THUMB_BYTES (144 * 196 / 2)\n"
+        "typedef struct { int x, y, width, height; } EpdRect;\n"
+        "typedef struct { char name[256]; char path[288]; uint32_t size; bool removed; } shelf_entry_t;\n"
+        "static uint8_t* s_cover_thumb;\n"
+        "void* heap_caps_malloc(size_t n, int caps);\n"
+        "bool book_cover_load_thumb(const char* p, uint32_t s, uint8_t out[BOOK_COVER_THUMB_BYTES]);\n"
+        "void blit_cover_4bpp_scaled(uint8_t* fb, const uint8_t* thumb, EpdRect dst);\n"
+        "void draw_paperback_cover(uint8_t* fb, EpdRect box, const char* name);\n"
+        + function("draw_book_cover_box")
+        + "\nvoid cover_entry(uint8_t* fb, EpdRect box, const shelf_entry_t* item) { draw_book_cover_box(fb, box, item); }\n"
+    )
+    frame_c = Path(tmp) / "frame_check.c"
+    frame_c.write_text(frame_unit, encoding="utf-8")
+    subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-Wframe-larger-than=1024", "-c", str(frame_c), "-o", str(obj)], check=True)
