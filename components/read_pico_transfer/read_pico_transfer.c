@@ -1495,6 +1495,7 @@ static esp_err_t info_handler(httpd_req_t *req) {
     cJSON_AddBoolToObject(json, "book_progress_enabled", s_cfg.book_progress_cb != NULL);
     cJSON_AddBoolToObject(json, "notes_json_enabled", true);
     cJSON_AddBoolToObject(json, "webmarks_enabled", s_cfg.webmarks_list_cb != NULL);
+    cJSON_AddBoolToObject(json, "feeds_enabled", s_cfg.feeds_list_cb != NULL);
     cJSON_AddBoolToObject(json, "focus_enabled", s_cfg.focus_get_cb != NULL);
     cJSON_AddBoolToObject(json, "pin_required", status.pin_required);
     char device_id[13] = {0}, ble_name[20] = {0};
@@ -3481,6 +3482,122 @@ static esp_err_t webmarks_handler(httpd_req_t *req) {
     return wifi_response(req, "200 OK", "{\"ok\":true}");
 }
 
+static esp_err_t feeds_handler(httpd_req_t *req) {
+    if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
+    if (!s_cfg.feeds_list_cb)
+        return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持订阅源管理\"}");
+
+    if (req->method == HTTP_GET) {
+        if (req->content_len) return respond_error(req, 400);
+        read_pico_feed_source_t *items = transfer_alloc(sizeof(read_pico_feed_source_t) * READ_PICO_FEEDS_MAX);
+        if (!items) return ESP_ERR_NO_MEM;
+        size_t count = s_cfg.feeds_list_cb(items, READ_PICO_FEEDS_MAX, s_cfg.feeds_ctx);
+        cJSON *json = cJSON_CreateObject();
+        if (!json) { free(items); return ESP_ERR_NO_MEM; }
+        cJSON_AddNumberToObject(json, "count", (double)count);
+        cJSON_AddNumberToObject(json, "max", (double)READ_PICO_FEEDS_MAX);
+        cJSON *arr = cJSON_AddArrayToObject(json, "items");
+        for (size_t i = 0; arr && i < count && i < READ_PICO_FEEDS_MAX; ++i) {
+            cJSON *obj = cJSON_CreateObject();
+            if (!obj) continue;
+            cJSON_AddStringToObject(obj, "name", items[i].name);
+            cJSON_AddStringToObject(obj, "url", items[i].url);
+            cJSON_AddNumberToObject(obj, "kind", (double)items[i].kind);
+            cJSON_AddStringToObject(obj, "auth_user", items[i].auth_user);
+            cJSON_AddBoolToObject(obj, "has_password", items[i].has_password);
+            cJSON_AddItemToArray(arr, obj);
+        }
+        free(items);
+        return send_json(req, json);
+    }
+
+    if (check_pin_or_respond(req) != ESP_OK) return ESP_FAIL;
+
+    if (req->method == HTTP_DELETE) {
+        if (!s_cfg.feeds_delete_cb)
+            return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持删除订阅源\"}");
+        char url[256] = {0};
+        char query[900] = {0}, encoded[768] = {0};
+        if (httpd_req_get_url_query_len(req)) {
+            if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+                httpd_query_key_value(query, "url", encoded, sizeof(encoded)) != ESP_OK ||
+                !decode_url_query_value(encoded, url, sizeof(url))) {
+                return send_json_error(req, "400 Bad Request", "请提供有效的 url 参数");
+            }
+        } else if (req->content_len > 0 && req->content_len <= 512) {
+            char body[513] = {0};
+            size_t got = 0;
+            while (got < req->content_len) {
+                int n = receive_http(req, body + got, req->content_len - got);
+                if (n <= 0) return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400);
+                got += (size_t)n;
+            }
+            body[got] = '\0';
+            cJSON *root = companion_parse_strict_json(body, got);
+            const cJSON *u = root ? cJSON_GetObjectItemCaseSensitive(root, "url") : NULL;
+            bool ok = cJSON_IsString(u) && u->valuestring && strlen(u->valuestring) < sizeof(url);
+            if (ok) snprintf(url, sizeof(url), "%s", u->valuestring);
+            cJSON_Delete(root);
+            if (!ok) return send_json_error(req, "400 Bad Request", "请求须包含合法的 url 字段");
+        } else {
+            return send_json_error(req, "400 Bad Request", "缺少要删除的 url");
+        }
+        esp_err_t err = s_cfg.feeds_delete_cb(url, s_cfg.feeds_ctx);
+        if (err == ESP_ERR_NOT_FOUND) return wifi_response(req, "404 Not Found", "{\"error\":\"未找到该订阅源\"}");
+        if (err != ESP_OK) return send_json_error(req, "400 Bad Request", "删除订阅源失败");
+        return wifi_response(req, "200 OK", "{\"ok\":true}");
+    }
+
+    if (!s_cfg.feeds_upsert_cb)
+        return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持保存订阅源\"}");
+    char content_type[80];
+    if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) != ESP_OK ||
+        strncasecmp(content_type, "application/json", 16) ||
+        (content_type[16] && content_type[16] != ';' && content_type[16] != ' '))
+        return send_json_error(req, "400 Bad Request", "仅接受 application/json");
+    if (!req->content_len || req->content_len > 1024)
+        return respond_error(req, req->content_len > 1024 ? 413 : 400);
+    char body[1025] = {0};
+    size_t got = 0;
+    while (got < req->content_len) {
+        int n = receive_http(req, body + got, req->content_len - got);
+        if (n <= 0) return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400);
+        got += (size_t)n;
+    }
+    body[got] = '\0';
+    cJSON *root = companion_parse_strict_json(body, got);
+    clear_secret(body, sizeof(body));
+    if (!root || !cJSON_IsObject(root)) { cJSON_Delete(root); return send_json_error(req, "400 Bad Request", "无效的 JSON"); }
+    const cJSON *u = cJSON_GetObjectItemCaseSensitive(root, "url");
+    const cJSON *nm = cJSON_GetObjectItemCaseSensitive(root, "name");
+    const cJSON *kd = cJSON_GetObjectItemCaseSensitive(root, "kind");
+    const cJSON *au = cJSON_GetObjectItemCaseSensitive(root, "auth_user");
+    const cJSON *ap = cJSON_GetObjectItemCaseSensitive(root, "auth_pass");
+    const cJSON *ca = cJSON_GetObjectItemCaseSensitive(root, "clear_auth");
+    if (!cJSON_IsString(u) || !u->valuestring ||
+        (nm && (!cJSON_IsString(nm) || !nm->valuestring)) ||
+        (au && (!cJSON_IsString(au) || !au->valuestring)) ||
+        (ap && (!cJSON_IsString(ap) || !ap->valuestring)) ||
+        (kd && (!cJSON_IsNumber(kd) || (kd->valuedouble != 0.0 && kd->valuedouble != 1.0)))) {
+        cJSON_Delete(root);
+        return send_json_error(req, "400 Bad Request", "请提供合法的订阅源字段");
+    }
+    uint8_t kind = kd ? (uint8_t)kd->valueint : 0;
+    bool clear_auth = cJSON_IsBool(ca) && cJSON_IsTrue(ca);
+    esp_err_t err = s_cfg.feeds_upsert_cb(
+        nm ? nm->valuestring : "",
+        u->valuestring,
+        kind,
+        au ? au->valuestring : "",
+        ap ? ap->valuestring : "",
+        clear_auth,
+        s_cfg.feeds_ctx);
+    cJSON_Delete(root);
+    if (err == ESP_ERR_NO_MEM) return wifi_response(req, "409 Conflict", "{\"error\":\"订阅源已满（最多 16 个）\"}");
+    if (err != ESP_OK) return send_json_error(req, "400 Bad Request", "订阅源地址无效或保存失败");
+    return wifi_response(req, "200 OK", "{\"ok\":true}");
+}
+
 static esp_err_t focus_handler(httpd_req_t *req) {
     if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
     if (!s_cfg.focus_get_cb)
@@ -3749,7 +3866,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     err = esp_wifi_start(); if (err != ESP_OK) goto fail;
     s_started = true;
     httpd_config_t http = HTTPD_DEFAULT_CONFIG();
-    http.stack_size = 16384; http.max_uri_handlers = 48; http.recv_wait_timeout = 5;
+    http.stack_size = 16384; http.max_uri_handlers = 56; http.recv_wait_timeout = 5;
     http.lru_purge_enable = true;
     err = httpd_start(&s_http, &http); if (err != ESP_OK) goto fail;
     const httpd_uri_t routes[] = {
@@ -3777,6 +3894,9 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         { .uri = "/webmarks", .method = HTTP_GET, .handler = webmarks_handler },
         { .uri = "/webmarks", .method = HTTP_POST, .handler = webmarks_handler },
         { .uri = "/webmarks", .method = HTTP_DELETE, .handler = webmarks_handler },
+        { .uri = "/feeds", .method = HTTP_GET, .handler = feeds_handler },
+        { .uri = "/feeds", .method = HTTP_POST, .handler = feeds_handler },
+        { .uri = "/feeds", .method = HTTP_DELETE, .handler = feeds_handler },
         { .uri = "/focus", .method = HTTP_GET, .handler = focus_handler },
         { .uri = "/focus", .method = HTTP_POST, .handler = focus_handler },
         { .uri = "/wifi", .method = HTTP_POST, .handler = wifi_handler },

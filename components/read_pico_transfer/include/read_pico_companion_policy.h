@@ -158,9 +158,9 @@ static inline bool companion_settings_patch_object(read_pico_device_settings_t *
             if (ok) next.book_gesture = (uint8_t)iv;
             else err = "book_gesture 须为 0..2";
         } else if (!strcmp(key, "saver_style")) {
-            ok = companion_json_int_range(item, 0, 2, &iv);
+            ok = companion_json_int_range(item, 0, 3, &iv);
             if (ok) next.saver_style = (uint8_t)iv;
-            else err = "saver_style 须为 0..2";
+            else err = "saver_style 须为 0..3";
         } else if (!strcmp(key, "dashboard_items")) {
             ok = companion_json_int_range(item, 0, 15, &iv);
             if (ok) next.dashboard_items = (uint8_t)iv;

@@ -2,61 +2,74 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * Pico OS 一级应用与系统工具入口。主菜单顺序在这里维护。
+ * Pico OS 全部 24 个应用与工具注册表。九宫格桌面按此表分 3 页平铺（9 + 9 + 6）。
  *
- * Pico OS top-level apps and system tools entry. The root menu order lives here.
+ * Pico OS registry of all 24 apps and tools. The 3x3 grid desktop lays out
+ * this table across 3 pages (9 + 9 + 6).
  *
- * 冻结：一级菜单突出固件原生应用与设备自检；硬件演示和开发诊断统一从系统工具进入，避免 Pico OS 被呈现为众多演示页之一。
- * Frozen: The root menu foregrounds native firmware apps and device self-test;
- * hardware demos and development diagnostics live under System Tools so Pico OS
- * is not presented as one item among a flat list of demos.
+ * 冻结：取消全屏列表菜单（ui_menu）与二级系统工具页（app_system_tools）；
+ * 全部应用按使用频率平铺为 3 页九宫格，顺序以本表为准。
+ * Frozen: Full-screen menu list and System Tools sub-index are removed; all 24
+ * apps sit flat across 3 pages of the 3x3 grid in this table's order.
  */
 
 #include "app_registry.h"
 
-extern const app_desc_t app_home;
-extern const app_desc_t app_personal;
 extern const app_desc_t app_pico_home;
-extern const app_desc_t app_refresh;
-extern const app_desc_t app_reading;
-extern const app_desc_t app_touch;
-extern const app_desc_t app_axis;
-extern const app_desc_t app_axis_lab;
-extern const app_desc_t app_power;
-extern const app_desc_t app_pmu;
-extern const app_desc_t app_key;
-extern const app_desc_t app_sleep;
-extern const app_desc_t app_sd;
-extern const app_desc_t app_font_pick;
-extern const app_desc_t app_ioe;
-extern const app_desc_t app_selftest;
 extern const app_desc_t app_book;
 extern const app_desc_t app_transfer;
 extern const app_desc_t app_web;
-extern const app_desc_t app_agent;
-extern const app_desc_t app_system_tools;
-extern const app_desc_t app_settings;
 extern const app_desc_t app_feeds;
 extern const app_desc_t app_sketch;
 extern const app_desc_t app_focus;
+extern const app_desc_t app_personal;
+extern const app_desc_t app_agent;
+extern const app_desc_t app_settings;
+extern const app_desc_t app_files;
+extern const app_desc_t app_font_pick;
+extern const app_desc_t app_home;
+extern const app_desc_t app_selftest;
+extern const app_desc_t app_sleep;
+extern const app_desc_t app_sd;
+extern const app_desc_t app_power;
+extern const app_desc_t app_refresh;
+extern const app_desc_t app_touch;
+extern const app_desc_t app_reading;
+extern const app_desc_t app_axis;
+extern const app_desc_t app_axis_lab;
+extern const app_desc_t app_pmu;
+extern const app_desc_t app_key;
+extern const app_desc_t app_ioe;
 
-// 一级列宫格桌面、日常功能、设置、自检和系统工具入口；硬件诊断由工具页继续进入。
-// Keep the grid home, daily functions, Settings, self-test and system tools at the root; diagnostics live one level deeper.
+// 24 格九宫格桌面顺序（3 页：9 + 9 + 6）。/ 24-tile grid order (3 pages: 9 + 9 + 6).
 static const app_desc_t* const s_apps[] = {
-    &app_pico_home,
+    // 第 1 页（高频日常）/ Page 1 (Daily apps)
     &app_book,
     &app_transfer,
     &app_web,
     &app_feeds,
     &app_sketch,
     &app_focus,
-    &app_agent,
-    &app_home,
     &app_personal,
-    &app_selftest,
-    &app_font_pick,
-    &app_system_tools,
+    &app_agent,
     &app_settings,
+    // 第 2 页（管理与设备）/ Page 2 (Management & device)
+    &app_files,
+    &app_font_pick,
+    &app_home,
+    &app_selftest,
+    &app_sleep,
+    &app_sd,
+    &app_power,
+    &app_refresh,
+    &app_touch,
+    // 第 3 页（硬件诊断）/ Page 3 (Hardware diagnostics)
+    &app_reading,
+    &app_axis,
+    &app_axis_lab,
+    &app_pmu,
+    &app_key,
+    &app_ioe,
 };
 
 #define APP_COUNT ((int)(sizeof(s_apps) / sizeof(s_apps[0])))

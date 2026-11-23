@@ -195,7 +195,8 @@ void app_main(void) {
 
     if (!confirm_pending_image()) { rollback_pending_image(); return; }
 
-    if (app_settings_saver_style() == APP_SAVER_IMAGE) {
+    if (app_settings_saver_style() == APP_SAVER_IMAGE ||
+        app_settings_saver_style() == APP_SAVER_BOOK_COVER) {
         (void)read_pico_sd_start_probe();
     }
 

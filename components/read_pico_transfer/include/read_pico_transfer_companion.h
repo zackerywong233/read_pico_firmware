@@ -27,7 +27,7 @@ typedef struct {
     uint16_t book_weight;           ///< 字重 0 或 300..800 / Font weight 0 or 300..800
     uint8_t book_rotation;          ///< 阅读方向 0..2 / Reader orientation 0..2
     uint8_t book_gesture;           ///< 翻页手势 0..2 / Page-turn gesture 0..2
-    uint8_t saver_style;            ///< 锁屏样式 0..2 / Lock-screen style 0..2
+    uint8_t saver_style;            ///< 锁屏样式 0..3 / Lock-screen style 0..3
     uint8_t dashboard_items;        ///< 看板开关位掩码 0..15 / Dashboard item bitmask 0..15
     int16_t timezone_min;           ///< 全局时区偏移分钟 -720..840 / Timezone offset minutes -720..840
     bool charge_led;                ///< 充电指示灯开关 / Charge indicator LED switch
@@ -76,6 +76,16 @@ typedef struct {
     char title[64];  ///< 网页收藏标题 / Bookmark title
     char url[256];   ///< 网页收藏 HTTP(S) 地址 / Bookmark HTTP(S) URL
 } read_pico_webmark_t;
+
+#define READ_PICO_FEEDS_MAX 16U
+
+typedef struct {
+    char name[64];       ///< 订阅源名称 / Feed source name
+    char url[256];       ///< 订阅源 HTTP(S) 地址 / Feed source HTTP(S) URL
+    uint8_t kind;        ///< 0 = RSS/Atom, 1 = OPDS / 0 = RSS/Atom, 1 = OPDS
+    char auth_user[64];  ///< 可选用户名 / Optional username
+    bool has_password;   ///< 是否已保存密码（绝不回显明文）/ Whether a password is stored (never plaintext)
+} read_pico_feed_source_t;
 
 typedef struct {
     bool running;             ///< 番茄钟是否运行中 / Whether pomodoro is running

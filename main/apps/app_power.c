@@ -30,7 +30,7 @@
 
 #define TAG "app_power"
 
-#define PWR_TITLE "电源与电池 Power"
+#define PWR_TITLE "电源状态"
 #define PWR_POLL_MS 1500
 #define PWR_BAT_ROWS 2
 #define PWR_RAIL_ROWS 2
@@ -79,24 +79,24 @@ static void refresh_vcom(void) {
 }
 
 static const char* charge_text(const pmu_snapshot_t* s) {
-    if (!s->status_ok) return "未读到 No data";
+    if (!s->status_ok) return "未读到";
     switch (s->charge_state) {
-        case PMU_CHARGE_NOT_CHARGING: return "未充电 Idle";
-        case PMU_CHARGE_CHARGING: return "充电中 Charging";
-        case PMU_CHARGE_FULL_INFERRED: return "已满 Full";
-        case PMU_CHARGE_FAULT: return "故障 Fault";
-        default: return "未知 Unknown";
+        case PMU_CHARGE_NOT_CHARGING: return "未充电";
+        case PMU_CHARGE_CHARGING: return "充电中";
+        case PMU_CHARGE_FULL_INFERRED: return "已满";
+        case PMU_CHARGE_FAULT: return "故障";
+        default: return "未知";
     }
 }
 
 static const char* led_text(const pmu_snapshot_t* s) {
-    if (!s->status_ok) return "未读到 No data";
+    if (!s->status_ok) return "未读到";
     // STATUS[18] 读到了；高位偶有附加标志，灯色只看低 2 位。/ STATUS[18] is valid; high bits may carry extra flags, so LED color uses the low 2 bits only.
     switch (s->led_state & 0x03) {
-        case PMU_LED_RED: return "红 Red";
-        case PMU_LED_WHITE: return "白 White";
-        case PMU_LED_RED_WHITE: return "红白 Both";
-        default: return "关 Off";
+        case PMU_LED_RED: return "红";
+        case PMU_LED_WHITE: return "白";
+        case PMU_LED_RED_WHITE: return "红白";
+        default: return "关";
     }
 }
 
@@ -116,11 +116,11 @@ static void dischg_text(uint8_t dis, char* out, size_t n) {
         if (dis & rails[i].bit) off++;
     }
     if (off == 0) {
-        snprintf(out, n, "四路全开 All on");
+        snprintf(out, n, "四路全开");
         return;
     }
     if (off == 4) {
-        snprintf(out, n, "四路全关 All off");
+        snprintf(out, n, "四路全关");
         return;
     }
     char on[28] = { 0 };
@@ -150,7 +150,7 @@ static const char* sy_fault_name(sy7636a_fault_t fault) {
         case SY7636A_FAULT_SCP_VEE: return "短路负压 SCP";
         case SY7636A_FAULT_SCP_VCOM: return "短路 VCOM";
         case SY7636A_FAULT_OTP: return "过温 OTP";
-        default: return "故障 Fault";
+        default: return "故障";
     }
 }
 
@@ -184,8 +184,8 @@ static void draw_page(uint8_t* framebuffer, const read_pico_status_t* status) {
     ui_clear_page(framebuffer);
     ui_draw_header(framebuffer, PWR_TITLE, "EPD PMIC: SY7636A");
 
-    int y = ui_draw_section(framebuffer, g.bat_y, "电池 Battery");
-    const char* none = "未读到 No data";
+    int y = ui_draw_section(framebuffer, g.bat_y, "电池");
+    const char* none = "未读到";
     const char* volt = none;
     const char* soc = none;
     const char* chg = none;
@@ -201,44 +201,43 @@ static void draw_page(uint8_t* framebuffer, const read_pico_status_t* status) {
         chg = charge_text(pmu);
         led = led_text(pmu);
     }
-    y = ui_draw_row2(framebuffer, y, "电压 Voltage", volt, "电量 SOC", soc);
-    y = ui_draw_row2(framebuffer, y, "充电 Charge", chg, "指示灯 LED", led);
+    y = ui_draw_row2(framebuffer, y, "电压", volt, "电量", soc);
+    y = ui_draw_row2(framebuffer, y, "充电", chg, "指示灯 LED", led);
 
-    y = ui_draw_section(framebuffer, g.rail_y, "屏幕电源 EPD Power");
+    y = ui_draw_section(framebuffer, g.rail_y, "屏幕电源");
     snprintf(line, sizeof(line), "%d ℃", sy->temperature_c);
     y = ui_draw_row2(
-        framebuffer, y, "温度 Temp", line,
-        "就绪 PGOOD", pgood ? "是 Yes" : "否 No"
+        framebuffer, y, "温度", line,
+        "就绪", pgood ? "是" : "否 No"
     );
     // 寄存器原值：bit0=PG，故障码在 bit[4:1]。01 是就绪且无故障，不是 1 号故障。/ Raw register: bit0=PG, fault code in bit[4:1]. 01 is ready with no fault, not fault number 1.
     snprintf(line, sizeof(line), "代码 %02X　%s", sy->fault_reg, sy_fault_name(sy->fault));
-    y = ui_draw_row2(framebuffer, y, "故障 Fault", line, NULL, NULL);
+    y = ui_draw_row2(framebuffer, y, "故障", line, NULL, NULL);
 
     y = ui_draw_section(framebuffer, g.cfg_y, "芯片配置");
     if (s_vcom_valid) {
         snprintf(aux, sizeof(aux), "-%d mV", s_vcom_mv);
     } else {
-        snprintf(aux, sizeof(aux), "未标定 Unset");
+        snprintf(aux, sizeof(aux), "未标定");
     }
     y = ui_draw_row2(
         framebuffer, y, "源极 VLDO", sy7636a_vldo_name(sy->vldo), "面板 VCOM", aux
     );
     dischg_text(sy->discharge, line, sizeof(line));
-    y = ui_draw_row2(framebuffer, y, "掉电放电 Discharge", line, NULL, NULL);
+    y = ui_draw_row2(framebuffer, y, "掉电放电", line, NULL, NULL);
     snprintf(
         line, sizeof(line), "%d / %d / %d / %d ms",
         sy->dly_ms[0], sy->dly_ms[1], sy->dly_ms[2], sy->dly_ms[3]
     );
     ui_draw_row2(
-        framebuffer, y, "上电延时 Delay", line,
-        "门控 Gate", sy->vcom_manual ? "VCOM_EN" : "自动 Auto"
+        framebuffer, y, "上电延时", line,
+        "门控", sy->vcom_manual ? "VCOM_EN" : "自动"
     );
 
     y = ui_draw_section(framebuffer, g.note_y, "说明");
     pwr_draw_notes(framebuffer, y);
 
-    ui_draw_button(framebuffer, g.read, "读取 Read", false);
-    ui_draw_menu_handle(framebuffer, false);
+    ui_draw_button(framebuffer, g.read, "读取", false);
 }
 
 static bool status_changed(const read_pico_status_t* a, const read_pico_status_t* b) {
@@ -303,7 +302,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
 
 const app_desc_t app_power = {
     .title = PWR_TITLE,
-    .detail = "电池与屏幕电源 Battery & EPD Power",
+    .detail = "电池与屏幕电源",
     .render = render,
     .on_enter = on_enter,
     .on_touch = on_touch,

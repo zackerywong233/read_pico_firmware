@@ -58,7 +58,11 @@ static EpdRect ui_bar_rect(int i,int count){int width=(508-(count-1)*12)/count;r
 static bool ui_rect_hit(EpdRect r,int x,int y){return x>=r.x&&x<r.x+r.width&&y>=r.y&&y<r.y+r.height;}
 typedef struct {char name[256],path[288];uint32_t size;bool is_flash,has_progress;uint8_t pct;uint32_t recent;bool selected,removed,search_match;} shelf_entry_t;
 #define BOOK_ROWS 7
+#define BOOK_GRID_ROWS 6
 #define BOOK_SEARCH_RESULTS 7
+static int s_recent_index = -1;
+static uint8_t app_settings_book_shelf_view(void) { return 1; }
+static void book_cover_clear_lru(void) {}
 #define BOOK_NOTE_ROWS 8
 #define UI_BTN_H 84
 static EpdRect ui_row_rect(int i,int count,int y,int height){EpdRect r=ui_bar_rect(i,count);r.y=y;r.height=height;return r;}
@@ -146,7 +150,18 @@ static bool s_scan_pending,s_toolbar;
 static bool s_resume_pending,s_full,s_shake_enabled;
 static bool s_chapter_search;
 static size_t s_chapter_matches[BOOK_SEARCH_RESULTS],s_chapter_match_count,s_text_len;
-static bool s_note_delete_confirm,s_note_delete_index_valid,s_reader_landscape;
+static bool s_note_delete_confirm,s_note_delete_index_valid,s_reader_landscape,s_selecting,s_cbz_mode;
+static size_t s_sel_start,s_sel_end,s_cbz_page;
+static int s_sel_line_y;
+static size_t book_comic_page_count(void){return 0;}
+#define BOOK_KIND_CBZ 3
+#define MODE_DU 1
+#define MODE_GL16 2
+static int book_kind(void){return 0;}
+static bool book_layout_hit_text(size_t p,EpdRect r,int x,int y,size_t* off,int* ly){(void)p;(void)r;(void)x;(void)y;if(off)*off=0;if(ly)*ly=100;return true;}
+static bool book_layout_sentence_bounds(const char* t,size_t l,size_t o,size_t a,size_t b,size_t* s,size_t* e){(void)t;(void)l;(void)o;(void)a;(void)b;if(s)*s=0;if(e)*e=1;return true;}
+static app_redraw_t paint_reading(app_ctx_t* ctx,int mode){(void)ctx;(void)mode;return APP_REDRAW_AREA;}
+static bool save_selected_excerpt(size_t a,size_t b){(void)a;(void)b;return true;}
 static int64_t s_reading_tick_ms;
 static uint32_t s_reading_acc_ms;
 static int s_du_count;
@@ -191,7 +206,7 @@ static int ttf_text_width_px(int px,const char* text){int width=0;for(;*text;tex
 static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bool inv){(void)fb;(void)x;(void)y;(void)px;(void)align;(void)inv;assert(strlen(test_wrapped)+strlen(text)<sizeof(test_wrapped));strcat(test_wrapped,text);}
 '''
 for name in ("copy_text", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf",
-             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "resume_choice", "free_image", "close_image", "open_image", "gesture_event", "on_key", "draw_wrapped_name", "on_enter", "book_on_exit"):
+             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "shelf_is_grid", "shelf_per_page", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "resume_choice", "free_image", "close_image", "open_image", "gesture_event", "on_key", "draw_wrapped_name", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
 unit += r'''
 int main(void) {
@@ -237,7 +252,7 @@ int main(void) {
     assert(!strcmp(test_open_path,"/sdcard/books/large.epub"));
     assert(resume_choice(&resume_ctx,true)==APP_REDRAW_NONE && test_open_calls==1);
     strcpy(s_resume_path,"/sdcard/books/large.epub");
-    assert(on_key(&resume_ctx,UI_KEY_2)==APP_REDRAW_NONE && !resume_ctx.request_menu && s_resume_path[0] && test_open_calls==1);
+    assert(on_key(&resume_ctx,UI_KEY_2)==APP_REDRAW_NONE && s_resume_path[0] && test_open_calls==1);
     s_resume_path[0]=0;
 
     shelf_entry_t a={.search_match=true,.name="Same.txt",.path="/sdcard/books/A/Same.txt"};

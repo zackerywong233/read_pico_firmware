@@ -26,6 +26,7 @@ static bool backup_exists;
 static int backup_mode = S_IFREG, backup_unlink_error, rename_error;
 static char forgotten[BOOK_STORE_PATH_MAX];
 esp_err_t book_notes_forget(const char *path) { (void)path; return ESP_OK; }
+void book_cover_forget(const char *path) { (void)path; }
 static int mock_mkdir(const char* path, mode_t mode) {
     (void)mode;
     errno = sd_mkdir_error && !strncmp(path, "/sdcard/", 8) ? sd_mkdir_error : mkdir_error;

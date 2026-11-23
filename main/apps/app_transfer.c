@@ -42,6 +42,7 @@
 #include "settings.h"
 #include "time_sync.h"
 #include "web_bookmarks.h"
+#include "feeds_store.h"
 #include "book_store.h"
 #include "book_progress.h"
 #include "display.h"
@@ -238,6 +239,40 @@ static esp_err_t transfer_webmarks_delete(const char* url, void* ctx) {
     return web_bookmarks_delete(url);
 }
 
+static size_t transfer_feeds_list(read_pico_feed_source_t* out, size_t cap, void* ctx) {
+    (void)ctx;
+    if (!out || !cap) return 0;
+    feed_public_source_t items[FEEDS_MAX_SOURCES];
+    size_t count = feeds_store_list_public(items, FEEDS_MAX_SOURCES);
+    if (count > cap) count = cap;
+    for (size_t i = 0; i < count; ++i) {
+        snprintf(out[i].name, sizeof(out[i].name), "%s", items[i].name);
+        snprintf(out[i].url, sizeof(out[i].url), "%s", items[i].url);
+        out[i].kind = items[i].kind;
+        snprintf(out[i].auth_user, sizeof(out[i].auth_user), "%s", items[i].auth_user);
+        out[i].has_password = items[i].has_password;
+    }
+    return count;
+}
+
+static esp_err_t transfer_feeds_upsert(const char* name, const char* url, uint8_t kind,
+                                       const char* auth_user, const char* auth_pass,
+                                       bool clear_auth, void* ctx) {
+    (void)ctx;
+    bool full = false;
+    if (!feeds_store_upsert(name, url, (feed_kind_t)kind, auth_user, auth_pass, clear_auth, &full)) {
+        return full ? ESP_ERR_NO_MEM : ESP_ERR_INVALID_ARG;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t transfer_feeds_delete(const char* url, void* ctx) {
+    (void)ctx;
+    bool found = false;
+    if (!feeds_store_delete(url, &found)) return ESP_FAIL;
+    return found ? ESP_OK : ESP_ERR_NOT_FOUND;
+}
+
 static bool transfer_focus_get(read_pico_focus_status_t* out, void* ctx) {
     (void)ctx;
     if (!out) return false;
@@ -362,7 +397,6 @@ static void draw_networks(uint8_t* fb) {
         if (!s_saved_count) ui_text(fb, UI_MARGIN, 320, UI_PX_BODY, "尚未保存网络", EPD_DRAW_ALIGN_LEFT, false);
         provisioning_button(fb, saved_control_rect(5), "遗忘全部", 5);
         provisioning_button(fb, saved_control_rect(6), "返回选网", 6);
-        ui_draw_menu_handle(fb, false);
         return;
     }
     if (s_forget_confirm) {
@@ -374,7 +408,6 @@ static void draw_networks(uint8_t* fb) {
         ui_text(fb, UI_MARGIN, 450, UI_PX_CAPTION, s_network_message, EPD_DRAW_ALIGN_LEFT, false);
         provisioning_button(fb, network_control_rect(11), "确认遗忘", 11);
         provisioning_button(fb, network_control_rect(12), "取消", 12);
-        ui_draw_menu_handle(fb, false);
         return;
     }
     ui_draw_header(fb, "选择 WiFi", "选择 2.4 GHz 网络，连接后同网传书");
@@ -414,7 +447,6 @@ static void draw_networks(uint8_t* fb) {
     provisioning_button(fb, network_control_rect(8), "重新扫描", 8);
     provisioning_button(fb, network_control_rect(9), "下一页", 9);
     provisioning_button(fb, network_control_rect(10), "返回传书", 10);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void draw_password(uint8_t* fb) {
@@ -450,7 +482,6 @@ static void draw_password(uint8_t* fb) {
     provisioning_button(fb, password_control_rect(44), "取消", 44);
     provisioning_button(fb, password_control_rect(45), s_password_visible ? "隐藏" : "显示", 45);
     provisioning_button(fb, password_control_rect(46), "连接", 46);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void queue_network_start(read_pico_transfer_mode_t mode) {
@@ -698,7 +729,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     if (s_view == TRANSFER_PASSWORD) { draw_password(fb); return; }
     (void)ctx;
     ui_clear_page(fb);
-    ui_draw_header(fb, "传书 Transfer", "浏览器上传图书或 TTF 字体");
+    ui_draw_header(fb, "传书", "浏览器上传图书或 TTF 字体");
     for (int i = 0; i < 2; ++i) {
         EpdRect r = control_rect(i);
         if (s_pressed == i) ui_draw_pressed_round_rect(fb, r, UI_BTN_RADIUS);
@@ -743,7 +774,6 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     EpdRect back = control_rect(2);
     if (s_pressed == 2) ui_draw_pressed_round_rect(fb, back, UI_BTN_RADIUS);
     ui_draw_button(fb, back, "停止并返回", false);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void on_enter(app_ctx_t* ctx) {
@@ -953,6 +983,9 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
                 .webmarks_list_cb = transfer_webmarks_list,
                 .webmarks_upsert_cb = transfer_webmarks_upsert,
                 .webmarks_delete_cb = transfer_webmarks_delete,
+                .feeds_list_cb = transfer_feeds_list,
+                .feeds_upsert_cb = transfer_feeds_upsert,
+                .feeds_delete_cb = transfer_feeds_delete,
                 .focus_get_cb = transfer_focus_get,
                 .focus_ctrl_cb = transfer_focus_ctrl,
                 .stop_request_cb = transfer_stop_request};
@@ -1054,6 +1087,8 @@ static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
 static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     if (redraw == APP_REDRAW_FULL && s_settle) {
         render(ctx, ctx->fb);
+        ui_key_hints_t hints = { .left = "返回", .center = "刷新 · 长按桌面" };
+        ui_draw_key_hints(ctx->fb, &hints);
         guard_draw_result(ctx->hl, update_display_full(ctx->hl));
         s_settle = false;
         return true;
@@ -1135,7 +1170,7 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
 
 const app_desc_t app_transfer = {
     .on_media_lost = transfer_on_media_lost,
-    .title = "传书 Transfer", .detail = "热点或已有 WiFi，浏览器上传",
+    .title = "传书", .detail = "热点或已有 WiFi，浏览器上传",
     .blocks_idle_sleep = true,
     .on_enter = on_enter, .on_exit = transfer_on_exit, .render = render, .present = present,
     .on_tick = on_tick, .on_gesture = on_gesture, .on_key = on_key,

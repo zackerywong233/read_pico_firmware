@@ -43,3 +43,9 @@ uint32_t book_total_bytes(void);
 uint32_t book_chapter_byte_offset(size_t i);
 /// 当前类型；关闭时默认 TXT。/ Current kind, defaulting to TXT when closed.
 book_kind_t book_kind(void);
+/// CBZ 全屏漫读总页数（非 CBZ 返回 0）。/ Total fullscreen comic pages for CBZ (0 for other formats).
+size_t book_comic_page_count(void);
+/// 全屏适配解码一页 CBZ 漫画（支持 4x4 Bayer 有序抖动）；调用方 free(*pixels)。
+/// Decode one fullscreen CBZ comic page with optional 4x4 Bayer dithering; caller frees *pixels.
+esp_err_t book_comic_load_page(size_t page_index, uint16_t max_w, uint16_t max_h, bool dither,
+                               uint8_t **pixels, uint16_t *width, uint16_t *height);

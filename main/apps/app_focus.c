@@ -85,7 +85,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     }
 
     ui_clear_page(fb);
-    ui_draw_header(fb, "专注时钟 Focus", "时钟 / 番茄钟 Clock / Pomodoro");
+    ui_draw_header(fb, "专注时钟", "时钟与番茄钟");
     const int cx = epd_rotated_display_width() / 2;
 
     if (!s_timer) {
@@ -141,7 +141,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text_vc(fb, cx, UI_CONTENT_TOP + 230, UI_PX_HERO, value,
                    EPD_DRAW_ALIGN_CENTER, false);
         ui_text_vc(fb, cx, UI_CONTENT_TOP + 330, UI_PX_BODY,
-                   s_break ? "休息 Rest" : "专注 Focus",
+                   s_break ? "休息" : "专注",
                    EPD_DRAW_ALIGN_CENTER, false);
         snprintf(value, sizeof(value), "时长 %d 分钟  ·  已完成 %d 次", s_minutes, s_done);
         ui_text_vc(fb, cx, UI_CONTENT_TOP + 420, UI_PX_CAPTION, value,
@@ -150,7 +150,6 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_draw_button(fb, ui_bar_rect(1, 2), "完成 +1", false);
     }
 
-    ui_draw_menu_handle(fb, false);
 }
 
 static app_redraw_t touch(app_ctx_t *ctx, const cst836u_touch_t *t) {
@@ -298,8 +297,8 @@ void app_focus_remote_stop(void) {
 }
 
 const app_desc_t app_focus = {
-    .title = "专注时钟 Focus",
-    .detail = "桌面时钟与番茄钟 Clock & Pomodoro",
+    .title = "专注时钟",
+    .detail = "桌面时钟与番茄钟",
     .blocks_idle_sleep = true,
     .render = render,
     .on_enter = enter,

@@ -80,3 +80,11 @@ uint32_t book_chapter_byte_offset(size_t i) {
     return s_epub ? book_epub_chapter_byte_offset(s_epub, i) : s_md ? book_md_chapter_offset(s_md, i) : s_cbz ? book_cbz_chapter_offset(s_cbz, i) : i < s_book.count ? s_book.entries[i].offset : 0;
 }
 book_kind_t book_kind(void) { return s_epub ? BOOK_KIND_EPUB : s_md ? BOOK_KIND_MD : s_cbz ? BOOK_KIND_CBZ : BOOK_KIND_TXT; }
+size_t book_comic_page_count(void) { return s_cbz ? book_cbz_page_count(s_cbz) : 0; }
+esp_err_t book_comic_load_page(size_t page_index, uint16_t max_w, uint16_t max_h, bool dither,
+                               uint8_t **pixels, uint16_t *width, uint16_t *height) {
+    if (!pixels || !width || !height) return ESP_ERR_INVALID_ARG;
+    *pixels = NULL; *width = *height = 0;
+    if (!s_cbz) return ESP_ERR_NOT_SUPPORTED;
+    return book_cbz_decode_page(s_cbz, page_index, max_w, max_h, dither, pixels, width, height);
+}

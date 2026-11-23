@@ -31,13 +31,13 @@ STA 模式下广播 mDNS 主机名 `readpico.local` 与 `_http._tcp` 80 端口�
 
 ---
 
-## 3. 路由总览（共 41 条）/ Endpoints
+## 3. 路由总览（共 44 条）/ Endpoints
 
 ### 3.1 设备信息与鉴权
 
 | 方法与路径 | 鉴权 | 说明 |
 | --- | --- | --- |
-| `GET /info` | 否 | 返回 `api_version`、`firmware_version`、`build_date/time`、`device_id`、`ble_name`、`ble_supported`、`ble_enabled`、`ble_pin_required`、`active_storage`、`free_bytes`、`file_limit`、`flash_available/free_bytes`、`sd_available/free_bytes`、`can_switch_storage`、`mode`、`network_ready`、`url`、`mdns_host`、`wifi_configured`、`wifi_ssid`、`wifi_ssids`、`clip_token`、`pin_required`、能力开关（含 `book_download_enabled`、`book_progress_enabled`、`notes_json_enabled`、`webmarks_enabled`、`focus_enabled`）与缓存电池状态（`battery_soc`、`battery_mv`、`charging`、`charge_state`） |
+| `GET /info` | 否 | 返回 `api_version`、`firmware_version`、`build_date/time`、`device_id`、`ble_name`、`ble_supported`、`ble_enabled`、`ble_pin_required`、`active_storage`、`free_bytes`、`file_limit`、`flash_available/free_bytes`、`sd_available/free_bytes`、`can_switch_storage`、`mode`、`network_ready`、`url`、`mdns_host`、`wifi_configured`、`wifi_ssid`、`wifi_ssids`、`clip_token`、`pin_required`、能力开关（含 `book_download_enabled`、`book_progress_enabled`、`notes_json_enabled`、`webmarks_enabled`、`feeds_enabled`、`focus_enabled`）与缓存电池状态（`battery_soc`、`battery_mv`、`charging`、`charge_state`） |
 | `POST /auth/verify` | 校验 PIN | 请求头 `X-Pico-Pin` 或 JSON `{"pin":"123456"}`，返回 `{"ok":true,"pin_required":...}` |
 | `POST /storage` | PIN | 请求 `{"target":"flash"|"sd"}`；空闲时切换图书上传目标并重启服务 |
 | `POST /transfer/stop` | PIN | 空闲时返回 `{"ok":true,"stopping":true}`，约 120 ms 后停止局域网传书并退出传书页以自动恢复 BLE 广播；上传中返回 `409` |
@@ -53,6 +53,7 @@ STA 模式下广播 mDNS 主机名 `readpico.local` 与 `_http._tcp` 80 端口�
 | `GET /notes?name=<urlenc>[&format=json]` | PIN | 默认流式下载 UTF-8 Markdown；加 `&format=json` 返回结构化书签/摘录 JSON 数组（含 `index`、`kind`、`chapter`、`offset`、`percent`、`text`） |
 | `DELETE /notes?name=<urlenc>[&index=<idx>]` | PIN | 传入 `index` 原子删除指定单条书签/摘录；省略 `index` 清空该书全部笔记 |
 | `GET / POST / DELETE /webmarks` | POST/DELETE 需 PIN | 同步网页收藏夹（最多 20 条，`read_pico` NVS）：`GET` 列出；`POST` JSON `{"title":"...","url":"https://..."}` 新增或更新标题；`DELETE` 支持 `?url=<urlenc>` 或 JSON `{"url":"..."}` |
+| `GET / POST / DELETE /feeds` | POST/DELETE 需 PIN | 管理 OPDS 1.2 / RSS 2.0 订阅源（最多 16 个，独立 `rp_feeds` NVS）：`GET` 返回脱敏列表（含 `name`、`url`、`kind` [0=RSS, 1=OPDS]、`auth_user`、`has_password`，永不回显密码）；`POST` JSON `{"name":"...","url":"https://...","kind":0\|1,"auth_user":"...","auth_pass":"...","clear_auth":false}` 新增或更新；`DELETE` 支持 `?url=<urlenc>` 或 JSON `{"url":"..."}` |
 | `POST /webclip` | 见下 | 将网页正文剪藏为当前书架 `.txt`（正文上限 64 KiB）。支持：<br/>1) `application/x-www-form-urlencoded`（浏览器书签：`token`、`title`、`url`、`text`，返回 HTML）<br/>2) `application/json`（iOS App：`{"title":"...","url":"https://...","text":"..."}`，可选 `token` + 遵循 `X-Pico-Pin`，返回 `{"ok":true,"name":"webclip_...txt"}`） |
 | `POST /webopen` | PIN | JSON `{"url":"https://..."}`；设备停留在「传书页」或「网页阅读页」时自动切入网页阅读并抓取打开 |
 | `GET / POST /focus` | POST 需 PIN | 专注时钟（番茄钟）协同：`GET` 返回 `running`、`phase`（`idle`/`focus`/`break`）、`duration_min`、`remaining_sec`、`completed_count`；`POST` JSON `{"action":"start","minutes":25}`（支持 15/25/45 分钟并切入前台专注页）或 `{"action":"stop"}` |
@@ -81,7 +82,7 @@ STA 模式下广播 mDNS 主机名 `readpico.local` 与 `_http._tcp` 80 端口�
 | 方法与路径 | 鉴权 | 说明 |
 | --- | --- | --- |
 | `GET /settings` | 否 | 读取全部可远程管理设置快照（不含 VCOM） |
-| `PATCH /settings` | PIN | 原子校验并局部更新设置：`sleep_mode` (0..2)、`auto_sleep_sec` (0/30/60/120/300/600/900/1800/3600)、`pickup_wake`、`book_px` (36..72 步长 4)、`book_refresh` (0..2)、`book_line_height` (0..2)、`book_margin` (0..2)、`book_weight` (0 或 300..800 步长 100)、`book_rotation` (0..2)、`book_gesture` (0..2)、`saver_style` (0..2)、`dashboard_items` (0..15)、`timezone_min` (-720..840)、`charge_led`、`low_soc_notify_percent` (0 或 5..30 步长 5)、`muted`、`transfer_pin_required`、`ble_enabled`、`ble_pin_required`。未知键、越界值、`font_path` 与 `vcom` 均返回 `400` |
+| `PATCH /settings` | PIN | 原子校验并局部更新设置：`sleep_mode` (0..2)、`auto_sleep_sec` (0/30/60/120/300/600/900/1800/3600)、`pickup_wake`、`book_px` (36..72 步长 4)、`book_refresh` (0..2)、`book_line_height` (0..2)、`book_margin` (0..2)、`book_weight` (0 或 300..800 步长 100)、`book_rotation` (0..2)、`book_gesture` (0..2)、`saver_style` (0..3，3=当前书封面)、`dashboard_items` (0..15)、`timezone_min` (-720..840)、`charge_led`、`low_soc_notify_percent` (0 或 5..30 步长 5)、`muted`、`transfer_pin_required`、`ble_enabled`、`ble_pin_required`。未知键、越界值、`font_path` 与 `vcom` 均返回 `400` |
 | `GET /time` | 否 | 读取设备 UTC 时间戳、有效标志与时区偏移分钟 |
 | `POST /time` | PIN | JSON `{"unix_sec":1795190000,"timezone_min":480}`（`timezone_min` 可选），同步主机时钟与主板 PMU RTC |
 | `GET /dashboard` | 否 | 返回看板文字（`/sdcard/dashboard.txt`）、`total_reading_sec`、`last_book` 与 `excerpt` |

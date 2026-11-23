@@ -17,7 +17,10 @@
 typedef int esp_err_t;
 #define ESP_OK 0
 #define ESP_FAIL -1
+#define ESP_ERR_NO_MEM 0x101
 #define ESP_ERR_INVALID_ARG 0x102
+#define ESP_ERR_NOT_FOUND 0x105
+typedef struct { const char *left; const char *center; const char *right; bool hidden; } ui_key_hints_t;
 typedef struct { int x,y,width,height; } EpdRect;
 typedef enum { APP_REDRAW_NONE, APP_REDRAW_AREA, APP_REDRAW_PAGE, APP_REDRAW_FULL, APP_REDRAW_DONE } app_redraw_t;
 struct app_desc;
@@ -39,7 +42,7 @@ enum EpdDrawMode { MODE_DU,MODE_GL16,MODE_GC16 };
 #define UI_PX_SUB 30
 #define UI_PAD 16
 #define UI_GAP 12
-#define UI_BAR_TOP 1096
+#define UI_BAR_TOP 1072
 #define UI_LOCK_HEIGHT 1216
 #define UI_LOCK_WIDTH 684
 #define EPD_DRAW_ALIGN_LEFT 0
@@ -93,7 +96,7 @@ static inline void ui_draw_header(uint8_t* f, const char* title, const char* sub
 static inline void ui_draw_button(uint8_t* f,...) {(void)f;}
 static inline void ui_draw_pressed_round_rect(uint8_t* f,...) {(void)f;}
 static inline void ui_draw_round_rect(uint8_t* f,...) {(void)f;}
-static inline void ui_draw_menu_handle(uint8_t* f,...) {(void)f;}
+static inline void ui_draw_key_hints(uint8_t* f, const ui_key_hints_t* h) {(void)f;(void)h;}
 static inline void ui_hairline(uint8_t* f,...) {(void)f;}
 static inline void ui_text(uint8_t* f,...) {(void)f;}
 static inline void ui_text_vc(uint8_t* f,...) {(void)f;}
@@ -119,7 +122,7 @@ static inline void book_store_notify_changed(void) { ++test_store_changes; }
 static inline int app_count(void) {return 0;}
 static inline const app_desc_t* app_at(int i) {(void)i;return NULL;}
 typedef enum { APP_SLEEP_LIGHT = 0, APP_SLEEP_DEEP = 1, APP_SLEEP_OFF = 2 } app_sleep_mode_t;
-typedef enum { APP_SAVER_BUILTIN = 0, APP_SAVER_QUOTE = 1, APP_SAVER_IMAGE = 2 } app_saver_style_t;
+typedef enum { APP_SAVER_BUILTIN = 0, APP_SAVER_QUOTE = 1, APP_SAVER_IMAGE = 2, APP_SAVER_BOOK_COVER = 3 } app_saver_style_t;
 static read_pico_device_settings_t test_settings = {
     .sleep_mode = APP_SLEEP_DEEP, .auto_sleep_sec = 120, .book_px = 48,
     .book_refresh = 1, .book_line_height = 1, .book_margin = 1,
@@ -204,6 +207,10 @@ typedef struct {
     esp_err_t(*webmarks_upsert_cb)(const char*,const char*,void*);
     esp_err_t(*webmarks_delete_cb)(const char*,void*);
     void* webmarks_ctx;
+    size_t(*feeds_list_cb)(read_pico_feed_source_t*,size_t,void*);
+    esp_err_t(*feeds_upsert_cb)(const char*,const char*,uint8_t,const char*,const char*,bool,void*);
+    esp_err_t(*feeds_delete_cb)(const char*,void*);
+    void* feeds_ctx;
     bool(*focus_get_cb)(read_pico_focus_status_t*,void*);
     esp_err_t(*focus_ctrl_cb)(bool,int,void*);
     void* focus_ctx;
@@ -294,4 +301,29 @@ static inline esp_err_t web_bookmarks_delete(const char* url) {
         }
     }
     return ESP_FAIL;
+}
+
+#define FEEDS_MAX_SOURCES 16
+typedef enum { FEED_KIND_RSS = 0, FEED_KIND_OPDS = 1 } feed_kind_t;
+typedef struct {
+    char name[64];
+    char url[256];
+    uint8_t kind;
+    char auth_user[64];
+    bool has_password;
+} feed_public_source_t;
+static inline size_t feeds_store_list_public(feed_public_source_t* out, size_t cap) {
+    (void)out; (void)cap; return 0;
+}
+static inline bool feeds_store_upsert(const char* name, const char* url, feed_kind_t kind,
+                                      const char* auth_user, const char* auth_pass,
+                                      bool clear_auth, bool* out_full) {
+    (void)name; (void)url; (void)kind; (void)auth_user; (void)auth_pass; (void)clear_auth;
+    if (out_full) *out_full = false;
+    return true;
+}
+static inline bool feeds_store_delete(const char* url, bool* out_found) {
+    (void)url;
+    if (out_found) *out_found = true;
+    return true;
 }

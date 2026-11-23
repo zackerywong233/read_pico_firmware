@@ -352,3 +352,38 @@ bool book_image_decode_cover(const uint8_t* data, size_t len,
                              uint8_t** pixels, uint16_t* width, uint16_t* height) {
     return book_image_decode_impl(data, len, target_w, target_h, true, budget, pixels, width, height);
 }
+
+void book_image_dither_bayer4(uint8_t* pixels, uint16_t width, uint16_t height) {
+    if (!pixels || !width || !height) return;
+    // 4x4 Bayer 阈值矩阵（0..15 归一化到单灰阶步长 17 内的有序抖动偏移）。
+    // 4x4 Bayer threshold matrix normalized across one 4-bit gray step (17).
+    static const uint8_t k_bayer4[4][4] = {
+        {  0,  8,  2, 10 },
+        { 12,  4, 14,  6 },
+        {  3, 11,  1,  9 },
+        { 15,  7, 13,  5 },
+    };
+    for (uint16_t y = 0; y < height; ++y) {
+        uint8_t* row = pixels + (size_t)y * width;
+        const uint8_t* brow = k_bayer4[y & 3u];
+        for (uint16_t x = 0; x < width; ++x) {
+            int v = (int)row[x] + (int)brow[x & 3u] - 8;
+            if (v < 0) v = 0;
+            if (v > 255) v = 255;
+            unsigned level = (unsigned)((v * 15 + 127) / 255);
+            row[x] = (uint8_t)(level * 17u);
+        }
+    }
+}
+
+bool book_image_decode_fit(const uint8_t* data, size_t len,
+                           uint16_t max_w, uint16_t max_h, size_t budget, bool dither,
+                           uint8_t** pixels, uint16_t* width, uint16_t* height) {
+    if (!book_image_decode_impl(data, len, max_w, max_h, false, budget, pixels, width, height)) {
+        return false;
+    }
+    if (dither && *pixels && *width && *height) {
+        book_image_dither_bayer4(*pixels, *width, *height);
+    }
+    return true;
+}

@@ -48,3 +48,13 @@ esp_err_t book_cbz_load_image(book_cbz_t *book, size_t chapter, const char *refe
                               uint8_t **pixels, uint16_t *width, uint16_t *height);
 uint32_t book_cbz_total_bytes(const book_cbz_t *book);
 uint32_t book_cbz_chapter_offset(const book_cbz_t *book, size_t i);
+/// 提取 CBZ 自然排序首页图片原始字节作为封面；调用方 free(*encoded_out)。
+/// Extract raw bytes of the naturally-first image page in a CBZ as cover; caller frees *encoded_out.
+esp_err_t book_cbz_extract_cover(const char *path, uint8_t **encoded_out, size_t *encoded_len_out);
+/// CBZ 总图片页数（用于全屏连翻漫读）。/ Total CBZ image pages for fullscreen manga mode.
+size_t book_cbz_page_count(const book_cbz_t *book);
+/// 全屏适配解码单页 CBZ 漫画，支持可选 4x4 Bayer 有序抖动。
+/// Decode one CBZ manga page fitted to max_w x max_h with optional 4x4 Bayer dithering.
+esp_err_t book_cbz_decode_page(book_cbz_t *book, size_t page_index,
+                               uint16_t max_w, uint16_t max_h, bool dither,
+                               uint8_t **pixels, uint16_t *w, uint16_t *h);

@@ -48,6 +48,17 @@ textarea{width:100%;min-height:100px;box-sizing:border-box;font:13px/1.4 ui-mono
 <label for="ambientUrl">HTTP 地址</label><br><input id="ambientUrl" maxlength="256" type="url"><br>
 <label for="ambientAuth">鉴权请求头（留空保留已保存值）</label><br><input id="ambientAuth" maxlength="256" autocomplete="off"><br>
 <label><input id="ambientClearAuth" type="checkbox"> 清除已保存鉴权头</label><br><button id="saveAmbient" type="submit">保存定时看板</button></form><p id="ambientResult" role="status"></p></section>
+<section id="feedsSection" hidden><hr><h2>订阅书库 · OPDS / RSS</h2>
+<p class="hint">添加 RSS 2.0 / Atom 1.0 或 OPDS 1.2 订阅源（最多 16 个）。密码仅写入设备独立 NVS，绝不回显。</p>
+<ul id="feedsList"></ul>
+<form id="feedsForm">
+<label for="feedName">名称（可选）</label><br><input id="feedName" maxlength="63" placeholder="例如：我的 OPDS 书库"><br>
+<label for="feedUrl">订阅地址（http:// 或 https://）</label><br><input id="feedUrl" type="url" maxlength="255" placeholder="https://example.com/opds" required><br>
+<label for="feedKind">类型</label><br><select id="feedKind"><option value="0">RSS / Atom 资讯</option><option value="1">OPDS 1.2 在线书库</option></select><br>
+<label for="feedUser">用户名（可选）</label><br><input id="feedUser" maxlength="63" autocomplete="off"><br>
+<label for="feedPass">密码（留空保留已保存密码）</label><br><input id="feedPass" type="password" maxlength="127" autocomplete="new-password"><br>
+<label><input id="feedClearAuth" type="checkbox"> 清除已保存认证</label><br>
+<button id="saveFeed" type="submit">保存订阅源</button></form><p id="feedsResult" role="status"></p></section>
 <input id="files" aria-label="选择图书" type="file" accept=".txt,.epub,.md,.cbz" multiple>
 <br><button id="send" disabled>开始上传</button><button id="cancel" disabled>取消当前及剩余队列</button>
 <section><h2>上传字体</h2>
@@ -94,7 +105,9 @@ async function info(){
   $('webopenSection').hidden=!policy.network_ready;
   $('agentSection').hidden=!policy.network_ready;
   $('ambientSection').hidden=!policy.network_ready;
+  $('feedsSection').hidden=!policy.network_ready||!policy.feeds_enabled;
   if(policy.network_ready){
+    if(policy.feeds_enabled)loadFeeds().catch(e=>$('feedsResult').textContent=e.message);
     try{
       const agent=await request('/agent');
       if(agent.status!==200)throw Error(agent.body.error||'无法读取 Agent 配置');
@@ -182,5 +195,7 @@ $('agentForm').onsubmit=async e=>{e.preventDefault();$('saveAgent').disabled=$('
 $('ambientForm').onsubmit=async e=>{e.preventDefault();$('saveAmbient').disabled=true;$('ambientResult').textContent='正在保存…';try{const body={enabled:$('ambientEnabled').checked,interval_min:Number($('ambientInterval').value),quiet_start_h:Number($('ambientQuietStart').value),quiet_end_h:Number($('ambientQuietEnd').value),source_type:Number($('ambientSource').value),url:$('ambientUrl').value.trim(),auth_header:$('ambientAuth').value,clear_auth:$('ambientClearAuth').checked};const r=await request('/ambient',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.status!==200)throw Error(r.body.error||'保存失败');$('ambientAuth').value='';$('ambientClearAuth').checked=false;$('ambientResult').textContent='已保存。下次进入深睡时会重新设置 PMU 闹钟。';}catch(e){$('ambientResult').textContent=e.message;}finally{$('saveAmbient').disabled=false;}};
 $('forgetAgent').onclick=async()=>{if(!confirm('清除本设备保存的 MQTT/TLS 配置？'))return;$('saveAgent').disabled=$('forgetAgent').disabled=true;try{const r=await request('/agent',{method:'DELETE'});if(r.status!==200)throw Error(r.body.error||'清除失败');$('agentResult').textContent='配置已清除。';$('agentUri').value=$('agentUser').value=$('agentTopic').value='';$('agentPassword').value='';}catch(e){$('agentResult').textContent=e.message;}finally{$('saveAgent').disabled=$('forgetAgent').disabled=false;}};
 $('copyBookmarklet').onclick=async()=>{try{await navigator.clipboard.writeText($('bookmarkletCode').value);$('clipResult').textContent='已复制；新建书签后粘贴为网址。';}catch(e){$('bookmarkletCode').focus();$('bookmarkletCode').select();$('clipResult').textContent='请复制选中的代码，并粘贴为新书签的网址。';}};
+async function loadFeeds(){const r=await request('/feeds');if(r.status!==200)throw Error(r.body.error||'无法读取订阅源');$('feedsList').replaceChildren(...(r.body.items||[]).map(it=>{const li=document.createElement('li');li.textContent='['+(it.kind===1?'OPDS':'RSS')+'] '+it.name+' · '+it.url+(it.has_password?'（已设密码）':'')+' ';const b=document.createElement('button');b.type='button';b.textContent='删除';b.onclick=async()=>{if(!confirm('删除订阅源？\n\n'+it.name))return;try{const d=await request('/feeds?url='+encodeURIComponent(it.url),{method:'DELETE'});if(d.status!==200)throw Error(d.body.error||'删除失败');$('feedsResult').textContent='已删除订阅源。';await loadFeeds();}catch(e){$('feedsResult').textContent=e.message;}};li.append(b);return li;}));}
+$('feedsForm').onsubmit=async e=>{e.preventDefault();$('saveFeed').disabled=true;$('feedsResult').textContent='正在保存…';try{const body={name:$('feedName').value.trim(),url:$('feedUrl').value.trim(),kind:Number($('feedKind').value),auth_user:$('feedUser').value,auth_pass:$('feedPass').value,clear_auth:$('feedClearAuth').checked};const r=await request('/feeds',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.status!==200)throw Error(r.body.error||'保存失败');$('feedName').value=$('feedUrl').value=$('feedUser').value=$('feedPass').value='';$('feedClearAuth').checked=false;$('feedsResult').textContent='已保存；进入设备“订阅书库”即可浏览。';await loadFeeds();}catch(e){$('feedsResult').textContent=e.message;}finally{$('saveFeed').disabled=false;}};
 </script>
 </html>

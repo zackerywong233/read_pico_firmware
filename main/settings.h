@@ -20,11 +20,12 @@ typedef enum {
     APP_SLEEP_OFF = 2,
 } app_sleep_mode_t;
 
-/// 锁屏内容：默认图、TF 卡摘录、TF 卡图片。/ Lock content: built-in art, SD excerpt, or SD image.
+/// 锁屏内容：默认图、TF 卡摘录、TF 卡图片、当前书封面。/ Lock content: built-in art, SD excerpt, SD image, or current book cover.
 typedef enum {
     APP_SAVER_BUILTIN = 0,
     APP_SAVER_QUOTE = 1,
     APP_SAVER_IMAGE = 2,
+    APP_SAVER_BOOK_COVER = 3,
 } app_saver_style_t;
 
 typedef enum {
@@ -98,6 +99,30 @@ void app_settings_set_book_rotation(uint8_t rotation);
 uint8_t app_settings_book_gesture(void);
 /// 保存翻页手势档位。/ Persist page-turn gesture preset.
 void app_settings_set_book_gesture(uint8_t gesture);
+/// 阅读顶部状态栏（左时间 · 中书名 · 右电量），默认开启。/ Reader top status bar, default on.
+bool app_settings_book_top_bar(void);
+void app_settings_set_book_top_bar(bool on);
+/// 阅读底部信息栏（章节 + 进度），默认开启。/ Reader bottom info bar, default on.
+bool app_settings_book_bottom_bar(void);
+void app_settings_set_book_bottom_bar(bool on);
+/// 翻页融合刷新模式：0 关闭、1 波前极速（默认）、2 波前+润色。/ Page-turn animation: 0 off, 1 fast wavefront (default), 2 wavefront+polish.
+uint8_t app_settings_book_anim(void);
+void app_settings_set_book_anim(uint8_t mode);
+/// 阅读段间距：0 无、1 半行（默认）、2 一行。/ Paragraph gap: 0 none, 1 half-line (default), 2 full-line.
+uint8_t app_settings_book_para_gap(void);
+void app_settings_set_book_para_gap(uint8_t preset);
+/// 阅读段首缩进：0 跟随原文（默认）、1 强制两格。/ First-line indent: 0 follow source (default), 1 force 2em.
+uint8_t app_settings_book_indent(void);
+void app_settings_set_book_indent(uint8_t mode);
+/// 书架视图模式：0 封面网格（默认）、1 紧凑列表。/ Bookshelf view: 0 cover grid (default), 1 compact list.
+uint8_t app_settings_book_shelf_view(void);
+void app_settings_set_book_shelf_view(uint8_t view);
+/// CBZ 漫画翻页方向：0 右翻（默认）、1 日漫左翻。/ CBZ direction: 0 right-to-left next (default), 1 manga left-next.
+uint8_t app_settings_book_cbz_dir(void);
+void app_settings_set_book_cbz_dir(uint8_t dir);
+/// CBZ 漫画 16 灰阶有序抖动，默认开启。/ CBZ 4x4 Bayer ordered dithering, default on.
+bool app_settings_book_cbz_dither(void);
+void app_settings_set_book_cbz_dither(bool on);
 app_saver_style_t app_settings_saver_style(void);
 void app_settings_set_saver_style(app_saver_style_t style);
 uint8_t app_settings_dashboard_items(void);

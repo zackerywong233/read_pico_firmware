@@ -37,6 +37,14 @@
 #define NVS_KEY_BOOK_MARGIN "bk_mg"
 #define NVS_KEY_BOOK_WEIGHT "bk_wght"
 #define NVS_KEY_BOOK_ROTATION "bk_rot"
+#define NVS_KEY_BOOK_TOP "bk_top"
+#define NVS_KEY_BOOK_BOT "bk_bot"
+#define NVS_KEY_BOOK_ANIM "bk_anim"
+#define NVS_KEY_BOOK_PARA "bk_para"
+#define NVS_KEY_BOOK_INDENT "bk_ind"
+#define NVS_KEY_BOOK_SHELF "bk_shelf"
+#define NVS_KEY_BOOK_CBZ_DIR "bk_cbz_dir"
+#define NVS_KEY_BOOK_CBZ_DITH "bk_cbz_dith"
 #define NVS_KEY_SAVER "saver"
 #define NVS_KEY_DASH "dash"
 #define NVS_KEY_TZ_MIN "tz_min"
@@ -80,6 +88,14 @@ static uint8_t s_book_line_height = 1;
 static uint8_t s_book_margin = 1;
 static uint16_t s_book_weight;
 static uint8_t s_book_rotation;
+static bool s_book_top = true;
+static bool s_book_bot = true;
+static uint8_t s_book_anim = 1;
+static uint8_t s_book_para = 1;
+static uint8_t s_book_indent;
+static uint8_t s_book_shelf;
+static uint8_t s_book_cbz_dir;
+static bool s_book_cbz_dith = true;
 static app_saver_style_t s_saver = APP_SAVER_BUILTIN;
 static uint8_t s_dashboard = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK | APP_DASH_NOTE;
 static int16_t s_tz_min = 480;
@@ -173,7 +189,16 @@ void app_settings_init(void) {
         s_book_weight = book_weight;
     if (nvs_get_u8(h, NVS_KEY_BOOK_ROTATION, &book_rotation) == ESP_OK && book_rotation <= 2)
         s_book_rotation = book_rotation;
-    if (nvs_get_u8(h, NVS_KEY_SAVER, &saver) == ESP_OK && saver <= APP_SAVER_IMAGE) s_saver = (app_saver_style_t)saver;
+    uint8_t bk_u8 = 0;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_TOP, &bk_u8) == ESP_OK) s_book_top = bk_u8 != 0;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_BOT, &bk_u8) == ESP_OK) s_book_bot = bk_u8 != 0;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_ANIM, &bk_u8) == ESP_OK && bk_u8 <= 2) s_book_anim = bk_u8;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_PARA, &bk_u8) == ESP_OK && bk_u8 <= 2) s_book_para = bk_u8;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_INDENT, &bk_u8) == ESP_OK && bk_u8 <= 1) s_book_indent = bk_u8;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_SHELF, &bk_u8) == ESP_OK && bk_u8 <= 1) s_book_shelf = bk_u8;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_CBZ_DIR, &bk_u8) == ESP_OK && bk_u8 <= 1) s_book_cbz_dir = bk_u8;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_CBZ_DITH, &bk_u8) == ESP_OK) s_book_cbz_dith = bk_u8 != 0;
+    if (nvs_get_u8(h, NVS_KEY_SAVER, &saver) == ESP_OK && saver <= APP_SAVER_BOOK_COVER) s_saver = (app_saver_style_t)saver;
     if (nvs_get_u8(h, NVS_KEY_DASH, &s_dashboard) != ESP_OK) {
         s_dashboard = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK | APP_DASH_NOTE;
     }
@@ -467,10 +492,59 @@ void app_settings_set_book_gesture(uint8_t gesture) {
     nvs_close(h);
 }
 
+bool app_settings_book_top_bar(void) { return s_book_top; }
+void app_settings_set_book_top_bar(bool on) {
+    if (s_book_top == on) return;
+    s_book_top = on;
+    nvs_put_u8(NVS_KEY_BOOK_TOP, on ? 1 : 0);
+}
+bool app_settings_book_bottom_bar(void) { return s_book_bot; }
+void app_settings_set_book_bottom_bar(bool on) {
+    if (s_book_bot == on) return;
+    s_book_bot = on;
+    nvs_put_u8(NVS_KEY_BOOK_BOT, on ? 1 : 0);
+}
+uint8_t app_settings_book_anim(void) { return s_book_anim; }
+void app_settings_set_book_anim(uint8_t mode) {
+    if (mode > 2 || s_book_anim == mode) return;
+    s_book_anim = mode;
+    nvs_put_u8(NVS_KEY_BOOK_ANIM, mode);
+}
+uint8_t app_settings_book_para_gap(void) { return s_book_para; }
+void app_settings_set_book_para_gap(uint8_t preset) {
+    if (preset > 2 || s_book_para == preset) return;
+    s_book_para = preset;
+    nvs_put_u8(NVS_KEY_BOOK_PARA, preset);
+}
+uint8_t app_settings_book_indent(void) { return s_book_indent; }
+void app_settings_set_book_indent(uint8_t mode) {
+    if (mode > 1 || s_book_indent == mode) return;
+    s_book_indent = mode;
+    nvs_put_u8(NVS_KEY_BOOK_INDENT, mode);
+}
+uint8_t app_settings_book_shelf_view(void) { return s_book_shelf; }
+void app_settings_set_book_shelf_view(uint8_t view) {
+    if (view > 1 || s_book_shelf == view) return;
+    s_book_shelf = view;
+    nvs_put_u8(NVS_KEY_BOOK_SHELF, view);
+}
+uint8_t app_settings_book_cbz_dir(void) { return s_book_cbz_dir; }
+void app_settings_set_book_cbz_dir(uint8_t dir) {
+    if (dir > 1 || s_book_cbz_dir == dir) return;
+    s_book_cbz_dir = dir;
+    nvs_put_u8(NVS_KEY_BOOK_CBZ_DIR, dir);
+}
+bool app_settings_book_cbz_dither(void) { return s_book_cbz_dith; }
+void app_settings_set_book_cbz_dither(bool on) {
+    if (s_book_cbz_dith == on) return;
+    s_book_cbz_dith = on;
+    nvs_put_u8(NVS_KEY_BOOK_CBZ_DITH, on ? 1 : 0);
+}
+
 app_saver_style_t app_settings_saver_style(void) { return s_saver; }
 
 void app_settings_set_saver_style(app_saver_style_t style) {
-    if (style > APP_SAVER_IMAGE) style = APP_SAVER_BUILTIN;
+    if (style > APP_SAVER_BOOK_COVER) style = APP_SAVER_BUILTIN;
     if (s_saver == style) return;
     s_saver = style;
     nvs_put_u8(NVS_KEY_SAVER, (uint8_t)style);

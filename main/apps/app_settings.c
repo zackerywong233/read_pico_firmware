@@ -31,7 +31,7 @@
 extern const app_desc_t app_transfer;
 extern const app_desc_t app_sleep;
 extern const app_desc_t app_home;
-extern const app_desc_t app_system_tools;
+extern const app_desc_t app_sd;
 
 typedef enum {
     SETTINGS_VIEW_ROOT = 0,
@@ -94,6 +94,7 @@ static const char *saver_name(app_saver_style_t style) {
     switch (style) {
         case APP_SAVER_QUOTE: return "最近摘录";
         case APP_SAVER_IMAGE: return "TF 卡图片";
+        case APP_SAVER_BOOK_COVER: return "当前书封面";
         case APP_SAVER_BUILTIN:
         default: return "默认图案";
     }
@@ -143,7 +144,7 @@ static void draw_kv_btn(uint8_t *fb, EpdRect r, const char *title, const char *d
 }
 
 static void render_root(uint8_t *fb) {
-    ui_draw_header(fb, "设置 Settings", "点按分类查看与调整设备选项");
+    ui_draw_header(fb, "设置", "点按分类查看与调整设备选项");
     char detail[128];
     char tz[32];
     fmt_tz(tz, sizeof(tz), app_settings_timezone_min());
@@ -208,7 +209,6 @@ static void render_root(uint8_t *fb) {
         snprintf(wake_line, sizeof(wake_line), "下一次计划唤醒：未启用或时间未同步");
     }
     ui_text(fb, UI_MARGIN, 868, UI_PX_CAPTION, wake_line, EPD_DRAW_ALIGN_LEFT, false);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void render_network_time(uint8_t *fb) {
@@ -255,7 +255,6 @@ static void render_network_time(uint8_t *fb) {
                 s_notice, EPD_DRAW_ALIGN_LEFT, false);
     }
     draw_action_btn(fb, ui_bar_rect(0, 1), "返回设置", s_pressed == CTRL_BACK);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void render_display(uint8_t *fb) {
@@ -285,8 +284,24 @@ static void render_display(uint8_t *fb) {
     snprintf(detail, sizeof(detail), "%s", margin_name(app_settings_book_margin()));
     draw_kv_btn(fb, row_rect(5), "阅读页边距", detail, s_pressed == 6);
 
+    static const char *anim_names[3] = { "关闭", "波前极速", "波前+润色" };
+    snprintf(detail, sizeof(detail), "%s", anim_names[app_settings_book_anim() % 3]);
+    draw_kv_btn(fb, row_rect(6), "翻页效果", detail, s_pressed == 7);
+
+    int y7 = UI_CONTENT_TOP + 7 * (UI_BTN_H + UI_GAP);
+    draw_action_btn(fb, ui_row_rect(0, 2, y7, UI_BTN_H),
+                    app_settings_book_top_bar() ? "顶部状态栏 开" : "顶部状态栏 关", s_pressed == 8);
+    draw_action_btn(fb, ui_row_rect(1, 2, y7, UI_BTN_H),
+                    app_settings_book_bottom_bar() ? "底部信息栏 开" : "底部信息栏 关", s_pressed == 9);
+
+    int y8 = UI_CONTENT_TOP + 8 * (UI_BTN_H + UI_GAP);
+    static const char *para_names[3] = { "段距 无", "段距 半行", "段距 一行" };
+    draw_action_btn(fb, ui_row_rect(0, 2, y8, UI_BTN_H),
+                    para_names[app_settings_book_para_gap() % 3], s_pressed == 10);
+    draw_action_btn(fb, ui_row_rect(1, 2, y8, UI_BTN_H),
+                    app_settings_book_indent() ? "缩进 强制两格" : "缩进 跟随原文", s_pressed == 11);
+
     draw_action_btn(fb, ui_bar_rect(0, 1), "返回设置", s_pressed == CTRL_BACK);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void render_sleep(uint8_t *fb) {
@@ -306,7 +321,6 @@ static void render_sleep(uint8_t *fb) {
     draw_kv_btn(fb, row_rect(4), "我的看板与定时刷新", "打开 ›", s_pressed == 4);
 
     draw_action_btn(fb, ui_bar_rect(0, 1), "返回设置", s_pressed == CTRL_BACK);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void render_power(uint8_t *fb) {
@@ -338,11 +352,10 @@ static void render_power(uint8_t *fb) {
                 app_settings_muted() ? "开启" : "关闭", s_pressed == 2);
 
     draw_action_btn(fb, ui_bar_rect(0, 1), "返回设置", s_pressed == CTRL_BACK);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void render_device(uint8_t *fb) {
-    ui_draw_header(fb, "设备与系统工具", "固件版本、设备信息与硬件诊断");
+    ui_draw_header(fb, "设备与诊断", "固件版本、设备信息与硬件自检");
     const esp_app_desc_t *desc = esp_app_get_description();
     const pmu_snapshot_t *pmu = read_pico_pmu_get();
     char val[64];
@@ -359,12 +372,11 @@ static void render_device(uint8_t *fb) {
     y = ui_draw_row(fb, y, "PMU 固件", val);
 
     int btn_y = y + UI_SECTION_GAP;
-    draw_kv_btn(fb, sub_row_rect(btn_y, 0), "概览与设备识别码", "打开 ›", s_pressed == 0);
-    draw_kv_btn(fb, sub_row_rect(btn_y, 1), "系统工具与硬件诊断", "打开 ›", s_pressed == 1);
+    draw_kv_btn(fb, sub_row_rect(btn_y, 0), "设备概览与识别码", "打开 ›", s_pressed == 0);
+    draw_kv_btn(fb, sub_row_rect(btn_y, 1), "存储与蜂鸣", "打开 ›", s_pressed == 1);
     draw_kv_btn(fb, sub_row_rect(btn_y, 2), "设备自检", "打开 ›", s_pressed == 2);
 
     draw_action_btn(fb, ui_bar_rect(0, 1), "返回设置", s_pressed == CTRL_BACK);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void render_update(uint8_t *fb) {
@@ -387,7 +399,6 @@ static void render_update(uint8_t *fb) {
     draw_action_btn(fb, update_control_rect(1), "安装更新", s_pressed == 1);
     draw_action_btn(fb, update_control_rect(2), "取消 / 返回", s_pressed == 2);
     draw_action_btn(fb, ui_bar_rect(0, 1), "返回设置", s_pressed == CTRL_BACK);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void render(app_ctx_t *ctx, uint8_t *fb) {
@@ -451,7 +462,9 @@ static int hit_control(uint16_t x, uint16_t y, EpdRect *out_rect) {
 
     if (s_view == SETTINGS_VIEW_DISPLAY) {
         int y1 = UI_CONTENT_TOP + (UI_BTN_H + UI_GAP);
-        EpdRect rects[7] = {
+        int y7 = UI_CONTENT_TOP + 7 * (UI_BTN_H + UI_GAP);
+        int y8 = UI_CONTENT_TOP + 8 * (UI_BTN_H + UI_GAP);
+        EpdRect rects[12] = {
             row_rect(0),
             ui_row_rect(0, 2, y1, UI_BTN_H),
             ui_row_rect(1, 2, y1, UI_BTN_H),
@@ -459,8 +472,13 @@ static int hit_control(uint16_t x, uint16_t y, EpdRect *out_rect) {
             row_rect(3),
             row_rect(4),
             row_rect(5),
+            row_rect(6),
+            ui_row_rect(0, 2, y7, UI_BTN_H),
+            ui_row_rect(1, 2, y7, UI_BTN_H),
+            ui_row_rect(0, 2, y8, UI_BTN_H),
+            ui_row_rect(1, 2, y8, UI_BTN_H),
         };
-        for (int i = 0; i < 7; ++i) {
+        for (int i = 0; i < 12; ++i) {
             if (ui_rect_hit(rects[i], x, y)) {
                 if (out_rect) *out_rect = rects[i];
                 return i;
@@ -648,6 +666,16 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
             app_settings_set_book_line_height((uint8_t)((app_settings_book_line_height() + 1) % 3));
         } else if (hit == 6) {
             app_settings_set_book_margin((uint8_t)((app_settings_book_margin() + 1) % 3));
+        } else if (hit == 7) {
+            app_settings_set_book_anim((uint8_t)((app_settings_book_anim() + 1) % 3));
+        } else if (hit == 8) {
+            app_settings_set_book_top_bar(!app_settings_book_top_bar());
+        } else if (hit == 9) {
+            app_settings_set_book_bottom_bar(!app_settings_book_bottom_bar());
+        } else if (hit == 10) {
+            app_settings_set_book_para_gap((uint8_t)((app_settings_book_para_gap() + 1) % 3));
+        } else if (hit == 11) {
+            app_settings_set_book_indent((uint8_t)((app_settings_book_indent() + 1) % 2));
         }
         return APP_REDRAW_PAGE;
     }
@@ -666,7 +694,7 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
             return APP_REDRAW_PAGE;
         }
         if (hit == 2) {
-            app_settings_set_saver_style((app_saver_style_t)((app_settings_saver_style() + 1) % 3));
+            app_settings_set_saver_style((app_saver_style_t)((app_settings_saver_style() + 1) % 4));
             return APP_REDRAW_PAGE;
         }
         if (hit == 3) {
@@ -694,7 +722,7 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
 
     if (s_view == SETTINGS_VIEW_DEVICE) {
         if (hit == 0) ctx->request_app = &app_home;
-        else if (hit == 1) ctx->request_app = &app_system_tools;
+        else if (hit == 1) ctx->request_app = &app_sd;
         else if (hit == 2) ctx->request_app = app_selftest_page();
         return APP_REDRAW_NONE;
     }
@@ -853,7 +881,7 @@ static EpdRect area_hint(app_ctx_t *ctx) {
 }
 
 const app_desc_t app_settings = {
-    .title = "设置 Settings",
+    .title = "设置",
     .detail = "网络、阅读、电源与设备选项",
     .on_enter = on_enter,
     .on_exit = settings_on_exit,

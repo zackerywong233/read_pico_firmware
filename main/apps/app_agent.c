@@ -498,7 +498,6 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             if (y > UI_CONTENT_BOTTOM - 40) break;
         }
         ui_draw_button(fb, ui_bar_rect(0, 1), "返回消息", false);
-        ui_draw_menu_handle(fb, false);
         return;
     }
     if (s_history_selected >= 0 && s_history[s_history_selected].body_or_path) {
@@ -517,10 +516,9 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             ui_text(fb, UI_MARGIN, UI_CONTENT_BOTTOM - 12, UI_PX_CAPTION, page, EPD_DRAW_ALIGN_LEFT, false);
         }
         draw_actions(fb);
-        ui_draw_menu_handle(fb, false);
         return;
     }
-    if (s_image_pixels) { draw_image(fb); draw_actions(fb); ui_draw_menu_handle(fb, false); return; }
+    if (s_image_pixels) { draw_image(fb); draw_actions(fb); return; }
     ui_clear_page(fb);
     ui_draw_header(fb, s_title[0] ? s_title : "Agent 收件", s_notice);
     if (s_text) {
@@ -547,7 +545,6 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 240, UI_PX_CAPTION, "图片: {\"type\":\"image\",\"url\":\"https://…\"}", EPD_DRAW_ALIGN_LEFT, false);
     }
     draw_actions(fb);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void network_start(void) {

@@ -32,10 +32,11 @@ idf.py build
 | `main/ble_service.*` | 轻量 BLE 配套控制桥接：在主循环串行执行配网、远程传书、对时、设置与短文本指令。/ Lightweight BLE companion bridge executing provisioning, remote transfer, time, settings and memos on the main loop. |
 | `main/reading_stats.c` | 持久化累计阅读时间、最近摘录与最近图书进度。/ Persist cumulative reading time, saved excerpt and recent book progress. |
 | `main/app/app.h` | `app_desc_t` / `app_ctx_t` / `app_redraw_t` 契约。/ Page contract. |
-| `main/app/app_loop.c` | 与页面无关的事件循环：触摸去抖、三键与菜单把手、切页、刷屏、锁屏、SD 字体延迟加载。/ Shared event loop. |
-| `main/app/app_registry.c` | 一级应用菜单顺序。底层工具由 `app_system_tools.c` 汇总。/ Root app menu order; low-level tools are grouped by `app_system_tools.c`. |
+| `main/app/app_loop.c` | 与页面无关的事件循环：触摸去抖、三键短/长按与 8 层导航栈、切页、刷屏、底栏按键说明带、锁屏、SD 字体延迟加载。/ Shared event loop with 3-key short/long dispatch, 8-level nav stack, and key-hint bar. |
+| `main/app/app_registry.c` | 全部 24 个应用与工具的 3 页九宫格（9 + 9 + 6）顺序表。/ Flat 24-app order across 3 pages of 3×3 grid (9 + 9 + 6). |
 | `main/app/app_config.h` | 均衡 / ALL_DU 刷新档位。/ Refresh profile. |
-| `main/ui/` | `ui_kit` 排版常量与绘制原语；`ui_menu` 两层菜单。页面互不引用。/ Shared drawing; pages do not include each other. |
+| `main/ui/` | `ui_kit` 排版常量与绘制原语；`ui_icons` 24 格线框图标库；`ui_menu` 屏下三键命中与按键说明带。/ Shared drawing, wireframe icons, and physical key-hint bar. |
+| `main/files_ops.*` `main/feeds_store.*` | TF 卡文件管理安全护栏与 OPDS/RSS 订阅源独立 NVS 持久化及 XML 解析。/ TF file-manager guardrails and OPDS/RSS feed store + XML parser. |
 | `main/font/` | stb_truetype 字形缓存。`fallback.h` 是生成位图，勿手改。/ Glyph cache. Do not edit `fallback.h` by hand. |
 | `main/factory/` | 设备功能自检与出厂 VCOM 标定。/ Device self-test and factory VCOM. |
 | `main/display.*` `sleep.*` `settings.*` | 刷屏封装、睡眠/锁屏、NVS 设置。/ Present helpers, sleep/lock, NVS. |
@@ -67,31 +68,31 @@ Keep plans, checkpoints, review records, acceptance results and debug logs in ig
 
 ### 应用页与系统工具 / App pages and system tools
 
-每个文件只导出 `app_desc_t`。一级应用顺序与 `app_registry.c` 一致；底层硬件诊断由 `app_system_tools.c` 的工具表索引。
+每个文件只导出 `app_desc_t`。全部 24 个应用按 `app_registry.c` 平铺在 3 页九宫格桌面中。
 
-One file, one `app_desc_t`. Root app order matches `app_registry.c`; low-level diagnostics are indexed by the tool table in `app_system_tools.c`.
+One file, one `app_desc_t`. All 24 apps are arranged in `app_registry.c` across the 3-page 3×3 launcher grid.
 
 | 文件 / File | 功能 / Role | 依赖 / Depends on |
 | --- | --- | --- |
-| `app_pico_home.c` | Pico OS 默认桌面与日常应用入口。/ Pico OS launcher and daily app entry points. | `ui_kit` |
-| `app_book.c` | 一级应用：TXT / EPUB 书架、目录、字号、逐书进度、书签和摘录。/ Root app: TXT / EPUB shelf, TOC, size, progress, bookmarks and excerpts. | `book_*`, `ttf_font` |
-| `app_transfer.c` | 一级应用：设备热点/已有 WiFi 传书与 TF 字体上传。/ Root app: WiFi book and TF font transfer. | `read_pico_transfer`, `book_store` |
+| `app_pico_home.c` | Pico OS 3 页九宫格桌面（24 格线框图标与统一顶栏）。/ 3-page 3×3 launcher grid with wireframe icons and status bar. | `ui_kit`, `ui_icons` |
+| `app_book.c` | 一级应用：TXT / EPUB / MD / CBZ 书架（最近阅读卡片、3×2 封面网格/列表）、波前翻页、双开关 HUD、中文精排、长按文本摘录与 CBZ 漫读。/ Reader, cover shelf, wavefront turns, HUD, Chinese typography, long-press excerpts, CBZ manga mode. | `book_*`, `continuous_du`, `ttf_font` |
+| `app_transfer.c` | 一级应用：设备热点/已有 WiFi 传书、TF 字体上传与网页配置（含 `/feeds` 订阅源）。/ WiFi book/font transfer and LAN web UI (including `/feeds`). | `read_pico_transfer`, `book_store`, `feeds_store` |
 | `app_web.c` | 一级应用：静态抓取 HTTP/HTTPS 网页正文并开放同网剪藏入口。/ Root app: static HTTP/HTTPS page reader and local browser-clip endpoint. | `read_pico_transfer`, `html_text`, `book_layout`, `esp_http_client` |
-| `app_feeds.c` | 一级应用：订阅书库（RSS / OPDS / WebDAV）入口。/ Root app: feeds and online library entry. | `ui_kit`, `ui_menu` |
+| `app_feeds.c` | 一级应用：OPDS 1.2 / RSS 2.0 / Atom 1.0 订阅书库（正文阅读、目录分页、流式下书与离线缓存）。/ OPDS 1.2 / RSS 2.0 / Atom 1.0 feeds, streaming download and offline cache. | `feeds_store`, `xml_tok`, `html_text`, `book_layout`, `read_pico_transfer` |
+| `app_files.c` | 一级应用：TF 卡文件管理（浏览、排序、隐藏项、图片预览/设壁纸、文本预览、移入书架/字体与安全删除）。/ Standalone TF card file manager with safety guardrails. | `files_ops`, `book_image`, `book_store`, `read_pico_sd` |
 | `app_sketch.c` | 一级应用：手写便签与 PNG 导出。/ Root app: handwritten sketch pad with PNG export. | `settings`, `read_pico_sd`, `ui_kit`, `ui_menu` |
 | `app_focus.c` | 一级应用：桌面时钟与前台番茄钟。/ Root app: desk clock and foreground pomodoro timer. | `settings`, `reading_stats`, `read_pico_pmu`, `read_pico_buzzer` |
 | `app_agent.c` | 一级应用：活动期间订阅 MQTT/TLS；接收分页文字和 HTTPS 锁屏图片。/ Root app: subscribe to MQTT/TLS while active; receive paginated text and HTTPS lock-screen images. | `read_pico_transfer`, `book_layout`, `book_image`, `esp-mqtt` |
-| `app_home.c` | 一级应用：I2C 普查、识别码、电池、构建时间。/ Root app: device and system status. | `read_pico`, `read_pico_pmu` |
-| `app_personal.c` | 一级应用：个人看板与锁屏主题。/ Root app: personal dashboard and lock-screen theme. | `settings`, `reading_stats`, `read_pico_pmu`, `read_pico_sd` |
-| `app_selftest.c` | 一级应用：设备探活与 PMU 命令 ACK 自检。/ Root app: device probe and PMU command self-test. | `pmu_selftest` |
-| `app_font_pick.c` | 一级应用：预览并切换内置或 TF 卡字体。/ Root app: preview and switch built-in or TF card fonts. | `ttf_font`, `settings`, `read_pico_sd` |
-| `app_system_tools.c` | 二级入口：集中导航至硬件诊断与开发辅助页。/ Nested index for hardware diagnostics and development helpers. | tool app descriptors |
-| `app_settings.c` | 一级应用：统一设备设置与 Wi-Fi OTA 系统更新。/ Root app: unified device settings and Wi-Fi OTA updates. | `settings`, `ota_update`, `ui_gesture` |
-| 其余 `app_*.c` / Other `app_*.c` | 系统工具中的刷新、阅读、触摸、传感器、电源、睡眠、存储、字体与 IOE 页面。/ Refresh, reading, touch, sensor, power, sleep, storage, font and IOE tools. | varies |
+| `app_home.c` | 设备概览：I2C 普查、识别码、电池、构建时间。/ Device and system status. | `read_pico`, `read_pico_pmu` |
+| `app_personal.c` | 我的看板与锁屏主题（含当前书封面）。/ Personal dashboard and lock-screen theme (including current book cover). | `settings`, `reading_stats`, `read_pico_pmu`, `read_pico_sd` |
+| `app_selftest.c` | 设备自检：设备探活与 PMU 命令 ACK 自检。/ Device probe and PMU command self-test. | `pmu_selftest` |
+| `app_font_pick.c` | 字体管理：预览并切换内置或 TF 卡字体。/ Preview and switch built-in or TF card fonts. | `ttf_font`, `settings`, `read_pico_sd` |
+| `app_settings.c` | 统一设备设置（含阅读顶/底栏、翻页效果、锁屏封面与 Wi-Fi OTA）。/ Unified settings and Wi-Fi OTA. | `settings`, `ota_update`, `ui_gesture` |
+| 其余 `app_*.c` / Other `app_*.c` | 桌面第 2–3 页中的刷新、阅读、触摸、传感器、电源、睡眠、存储与 IOE 页面。/ Refresh, reading, touch, sensor, power, sleep, storage and IOE pages on launcher pages 2–3. | varies |
 
-新增一级应用：把页面加入 `app_registry.c`；新增硬件诊断：把页面加入 `app_system_tools.c` 的工具表。不要改 `app_loop.c`。
+新增应用：把页面加入 `app_registry.c` 的 24 格列表（并配对应 `ui_icons` 图标）。不要改 `app_loop.c`。
 
-Add root apps to `app_registry.c`; add hardware diagnostics to the tool table in `app_system_tools.c`. Leave `app_loop.c` alone.
+Add apps to `app_registry.c` (with a matching `ui_icons` glyph). Leave `app_loop.c` alone.
 
 ## `app_desc_t` 契约 / Contract
 

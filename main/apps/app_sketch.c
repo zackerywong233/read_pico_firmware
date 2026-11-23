@@ -212,7 +212,7 @@ static void draw_chrome(uint8_t *fb) {
              s_status[0] ? s_status : "滑动书写，支持撤销与导出",
              brush_label(),
              s_erase ? " · 橡皮中" : "");
-    ui_draw_header(fb, "随手便签 Sketch", sub);
+    ui_draw_header(fb, "随手便签", sub);
     ui_hairline(fb, SKETCH_CANVAS_BOTTOM, UI_MARGIN, ui_content_width(), UI_GRAY_LIGHT);
 
     const char *labels[SKETCH_TOOLS_COUNT] = {
@@ -228,7 +228,6 @@ static void draw_chrome(uint8_t *fb) {
 
     ui_text_vc(fb, UI_MARGIN, UI_BAR_TOP + UI_BAR_H / 2, UI_PX_CAPTION,
                "单指在画布区滑动书写 · KEY2 清残影", EPD_DRAW_ALIGN_LEFT, false);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void render(app_ctx_t *ctx, uint8_t *fb) {
@@ -477,8 +476,8 @@ static EpdRect area(app_ctx_t *ctx) {
 }
 
 const app_desc_t app_sketch = {
-    .title = "随手便签 Sketch",
-    .detail = "手写便签与 PNG 保存 Handwritten notes",
+    .title = "随手便签",
+    .detail = "手写便签与 PNG 保存",
     .render = render,
     .on_enter = on_enter,
     .on_exit = sketch_on_exit,

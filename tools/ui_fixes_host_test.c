@@ -161,7 +161,7 @@ void ui_draw_pressed_round_rect(uint8_t *fb, EpdRect r, int rad) { (void)fb; (vo
 void ui_draw_choice_round_rect(uint8_t *fb, EpdRect r, int rad, bool on) { (void)fb; (void)r; (void)rad; (void)on; }
 void ui_draw_button(uint8_t *fb, EpdRect r, const char *label, bool on) { (void)fb; (void)r; (void)on; record_text(label); }
 void ui_hairline(uint8_t *fb, int y, int x, int w, uint8_t c) { (void)fb; (void)y; (void)x; (void)w; (void)c; }
-void ui_draw_menu_handle(uint8_t *fb, bool open) { (void)fb; (void)open; }
+void ui_draw_key_hints(uint8_t *fb, const ui_key_hints_t *h) { (void)fb; (void)h; }
 int ui_content_width(void) { return epd_rotated_display_width() - 2 * UI_MARGIN; }
 int ui_content_right(void) { return epd_rotated_display_width() - UI_MARGIN; }
 EpdRect ui_content_refresh_area(void) { return (EpdRect){ 0, UI_HEADER_RULE_Y, 684, UI_CONTENT_BOTTOM - UI_HEADER_RULE_Y }; }
@@ -174,8 +174,7 @@ EpdRect ui_grid_rect(int col, int cols, int row, int y0, int h) {
 }
 EpdRect ui_row_rect(int col, int cols, int y0, int h) { return ui_grid_rect(col, cols, 0, y0, h); }
 EpdRect ui_bar_rect(int col, int cols) {
-    int right = epd_rotated_display_width() - UI_BAR_MARGIN - UI_MENU_BTN_SIZE - UI_GAP;
-    int avail = right - UI_MARGIN;
+    int avail = ui_content_width();
     int w = (avail - (cols - 1) * UI_GAP) / cols;
     return (EpdRect){ UI_MARGIN + col * (w + UI_GAP), UI_BAR_TOP, w, UI_BAR_H };
 }
@@ -199,6 +198,11 @@ static uint8_t s_book_refresh = 1;
 static uint16_t s_book_weight = 0;
 static uint8_t s_book_lh = 1;
 static uint8_t s_book_margin = 1;
+static bool s_book_top = true;
+static bool s_book_bot = true;
+static uint8_t s_book_anim = 1;
+static uint8_t s_book_para = 1;
+static uint8_t s_book_ind = 0;
 static app_sleep_mode_t s_sleep_mode = APP_SLEEP_DEEP;
 static uint16_t s_auto_sleep = 120;
 static app_saver_style_t s_saver = APP_SAVER_BUILTIN;
@@ -222,6 +226,16 @@ uint8_t app_settings_book_line_height(void) { return s_book_lh; }
 void app_settings_set_book_line_height(uint8_t v) { s_book_lh = v; }
 uint8_t app_settings_book_margin(void) { return s_book_margin; }
 void app_settings_set_book_margin(uint8_t v) { s_book_margin = v; }
+bool app_settings_book_top_bar(void) { return s_book_top; }
+void app_settings_set_book_top_bar(bool v) { s_book_top = v; }
+bool app_settings_book_bottom_bar(void) { return s_book_bot; }
+void app_settings_set_book_bottom_bar(bool v) { s_book_bot = v; }
+uint8_t app_settings_book_anim(void) { return s_book_anim; }
+void app_settings_set_book_anim(uint8_t v) { s_book_anim = v; }
+uint8_t app_settings_book_para_gap(void) { return s_book_para; }
+void app_settings_set_book_para_gap(uint8_t v) { s_book_para = v; }
+uint8_t app_settings_book_indent(void) { return s_book_ind; }
+void app_settings_set_book_indent(uint8_t v) { s_book_ind = v; }
 app_sleep_mode_t app_settings_sleep_mode(void) { return s_sleep_mode; }
 void app_settings_set_sleep_mode(app_sleep_mode_t v) { s_sleep_mode = v; }
 uint16_t app_settings_auto_sleep_sec(void) { return s_auto_sleep; }
@@ -310,7 +324,7 @@ void ota_update_get_status(ota_update_status_t *out) { *out = s_ota; }
 const app_desc_t app_transfer = { .title = "transfer" };
 const app_desc_t app_sleep = { .title = "sleep" };
 const app_desc_t app_home = { .title = "home" };
-const app_desc_t app_system_tools = { .title = "tools" };
+const app_desc_t app_sd = { .title = "sd" };
 const app_desc_t app_book = { .title = "book" };
 static const app_desc_t s_font_app = { .title = "font" };
 static const app_desc_t s_self_app = { .title = "selftest" };
@@ -326,13 +340,6 @@ const app_desc_t *app_font_page(void) { return &s_font_app; }
 const app_desc_t *app_settings_page(void) { return &app_settings; }
 
 int ui_key_hit_test(uint16_t x, uint16_t y) { return y >= UI_KEY_AREA_TOP && x < 480 ? x / 160 : -1; }
-bool ui_menu_handle_hit_test(uint16_t x, uint16_t y) { return x > 600 && y >= UI_BAR_TOP && y < UI_BAR_TOP + UI_BAR_H; }
-int ui_menu_leaf_for_app(const app_desc_t *a) { (void)a; return 0; }
-int ui_menu_leaf_count(void) { return 1; }
-void ui_draw_menu_page(uint8_t *fb, const app_desc_t *cur, int leaf) { (void)fb; (void)cur; (void)leaf; }
-int ui_menu_hit_test(uint16_t x, uint16_t y, int leaf) { (void)x; (void)y; (void)leaf; return UI_MENU_HIT_NONE; }
-bool ui_menu_row_rect(int leaf, int row, EpdRect *out) { (void)leaf; (void)row; (void)out; return false; }
-void ui_draw_menu_row_pressed(uint8_t *fb, const app_desc_t *c, int l, int r, bool p) { (void)fb; (void)c; (void)l; (void)r; (void)p; }
 
 void guard_draw_result(EpdiyHighlevelState *hl, enum EpdDrawError err) { (void)hl; assert(err == EPD_DRAW_SUCCESS); }
 enum EpdDrawError update_display_full(EpdiyHighlevelState *hl) { (void)hl; return EPD_DRAW_SUCCESS; }
@@ -504,7 +511,7 @@ static void test_settings_real_loop_navigation(void) {
     push_idle();
     if (!setjmp(s_loop_exit)) app_loop_run(&cfg);
     assert(s_book_px == 52);
-    assert(strcmp(s_last_header, "设置 Settings") == 0);
+    assert(strcmp(s_last_header, "设置") == 0);
 
     // 场景 3：进入设置 -> 点按“电源与提示” -> 点按“全局蜂鸣静音” -> 静音状态反转。
     // Scenario 3: Settings -> Power & Alerts -> toggle global mute.

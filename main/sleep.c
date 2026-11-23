@@ -18,6 +18,7 @@
 #include "app.h"
 #include "ambient_sync.h"
 #include "ble_service.h"
+#include "book_cover.h"
 #include "book_image.h"
 #include "reading_stats.h"
 #include "display.h"
@@ -466,6 +467,76 @@ static bool draw_saver_quote(uint8_t* framebuffer) {
 }
 
 
+// 当前在读书封面锁屏：优先 40ms 内直读 lock_current.4bpp 缓存，纯文本书回退满屏精装书封。
+// Current-book lockscreen: fast-load lock_current.4bpp (<40ms) or draw a full-screen paperback cover fallback.
+static bool draw_saver_book_cover(uint8_t* framebuffer) {
+    const size_t fb_bytes = (size_t)epd_width() * (size_t)epd_height() / 2;
+    if (book_cover_load_lock_cache(framebuffer, fb_bytes)) {
+        return true;
+    }
+    char book_title[128] = {0};
+    uint8_t pct = 0;
+    if (!ttf_font_ready() || !reading_stats_get_last_book(book_title, sizeof(book_title), &pct) || !book_title[0]) {
+        return false;
+    }
+    // 去掉常见扩展名。/ Strip common file extensions.
+    char* dot = strrchr(book_title, '.');
+    if (dot && dot > book_title && strlen(dot) <= 6) *dot = '\0';
+
+    ui_clear_page(framebuffer);
+    EpdRect outer = { 48, 64, UI_LOCK_WIDTH - 96, UI_LOCK_HEIGHT - 128 };
+    ui_draw_round_rect(framebuffer, outer, 16, UI_GRAY_BLACK);
+    EpdRect inner = ui_inset_rect(outer, 16);
+    ui_draw_round_rect(framebuffer, inner, 10, UI_GRAY_LIGHT);
+    // 书脊装饰线。/ Spine rule.
+    epd_fill_rect((EpdRect){ outer.x + 36, outer.y + 18, 3, outer.height - 36 }, UI_GRAY_LIGHT, framebuffer);
+
+    const int cx = outer.x + 24 + (outer.width - 24) / 2;
+    ui_text_vc(framebuffer, cx, outer.y + 110, UI_PX_CAPTION, "正在阅读", EPD_DRAW_ALIGN_CENTER, false);
+
+    // 居中折行绘制书名（最多 3 行）。/ Centered wrapped title (up to 3 lines).
+    const int max_w = inner.width - 96;
+    const char* p = book_title;
+    int y = outer.y + 340;
+    for (int line = 0; line < 3 && *p; ++line) {
+        char buf[128] = {0};
+        const char* cur = p;
+        const char* best = p;
+        while (*cur) {
+            unsigned char c = (unsigned char)*cur;
+            size_t n = c < 0x80 ? 1 : c >= 0xc2 && c <= 0xdf ? 2 : c >= 0xe0 && c <= 0xef ? 3 : 4;
+            if (n > strlen(cur)) n = 1;
+            size_t len = (size_t)(cur + n - p);
+            if (len >= sizeof(buf)) break;
+            memcpy(buf, p, len);
+            buf[len] = '\0';
+            if (ttf_text_width_px(52, buf) > max_w && best != p) break;
+            cur += n;
+            best = cur;
+        }
+        if (best == p) break;
+        size_t len = (size_t)(best - p);
+        if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+        memcpy(buf, p, len);
+        buf[len] = '\0';
+        ui_text_vc(framebuffer, cx, y, 52, buf, EPD_DRAW_ALIGN_CENTER, false);
+        y += 74;
+        p = best;
+    }
+
+    // 进度条与已读百分比。/ Reading progress bar + percentage.
+    const int bar_w = 340;
+    const int bar_x = cx - bar_w / 2;
+    const int bar_y = outer.y + outer.height - 220;
+    epd_fill_rect((EpdRect){ bar_x, bar_y, bar_w, 10 }, UI_GRAY_LIGHT, framebuffer);
+    epd_fill_rect((EpdRect){ bar_x, bar_y, bar_w * (int)pct / 100, 10 }, UI_GRAY_BLACK, framebuffer);
+    char prog[48];
+    snprintf(prog, sizeof(prog), "已读 %u%%", (unsigned)pct);
+    ui_text_vc(framebuffer, cx, bar_y + 42, UI_PX_CAPTION, prog, EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_vc(framebuffer, cx, outer.y + outer.height - 76, UI_PX_CAPTION, "小纸 Pico", EPD_DRAW_ALIGN_CENTER, false);
+    return true;
+}
+
 void enter_lock_and_sleep(
     EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc
 ) {
@@ -479,6 +550,7 @@ void enter_lock_and_sleep(
     bool custom = false;
     if (app_settings_saver_style() == APP_SAVER_IMAGE) custom = draw_saver_image(framebuffer);
     else if (app_settings_saver_style() == APP_SAVER_QUOTE) custom = draw_saver_quote(framebuffer);
+    else if (app_settings_saver_style() == APP_SAVER_BOOK_COVER) custom = draw_saver_book_cover(framebuffer);
     if (!custom) ui_draw_full_image(framebuffer, lock_4bpp_bin_start);
     epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
 

@@ -279,9 +279,7 @@ int ui_grid_hit(
 }
 
 EpdRect ui_bar_rect(int col, int cols) {
-    const int right = epd_rotated_display_width()
-        - UI_BAR_MARGIN - UI_MENU_BTN_SIZE - UI_GAP;
-    const int avail = right - UI_MARGIN;
+    const int avail = ui_content_width();
     const int w = (avail - (cols - 1) * UI_GAP) / cols;
     return (EpdRect){
         .x = UI_MARGIN + col * (w + UI_GAP),

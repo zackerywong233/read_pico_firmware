@@ -121,7 +121,7 @@ Lightweight Bluetooth Low Energy (BLE) control protocol for companion iOS apps (
 ### 4.5 对时、系统设置、Agent 与定时看板配置
 
 - **`time_sync`**：`{"id":12,"cmd":"time_sync","unix_sec":1795190000,"timezone_min":480}`；无需 Wi-Fi 同步主机时钟与主板 PMU RTC，当前在专注时钟或个人看板页时自动重绘刷新。
-- **`settings_get`** / **`settings_patch`**：读写设备设置快照（含 `ble_enabled`、`ble_pin_required`，与 HTTP `/settings` 共享原子校验，拒绝 `vcom` 与 `font_path`）。
+- **`settings_get`** / **`settings_patch`**：读写设备设置快照（含 `ble_enabled`、`ble_pin_required`、`saver_style` 0..3，与 HTTP `/settings` 共享原子校验，拒绝 `vcom` 与 `font_path`）。
   - 请求：`{"id":13,"cmd":"settings_patch","settings":{"book_px":52,"muted":true}}`
 - **`agent_get`** / **`agent_set`**：离线配置 MQTT/TLS Agent（密码永不回显；`{"clear":true}` 清除配置；不传 `password` 且 `clear_password` 不为 `true` 时保留原密码）。
   - 请求：`{"id":14,"cmd":"agent_set","uri":"mqtts://broker.example.com:8883","username":"u","password":"p","topic":"pico/inbox"}`
@@ -150,4 +150,4 @@ Lightweight Bluetooth Low Energy (BLE) control protocol for companion iOS apps (
 - **设备端开关**：在「设置 → 网络与时间」可独立开关「蓝牙 BLE」与「蓝牙配对码」（开启配对码时状态行实时显示 6 位随机码），对应 NVS 键 `ble_en`（默认开）和 `ble_pin`（默认关）。
 - **睡眠协调**：进入浅睡、软睡或关机前自动停止 NimBLE 协议栈；浅睡唤醒后按设置恢复广播。定时看板唤醒（`wake_reason == 6`）与自检续跑不启动蓝牙。
 - **Wi-Fi / BLE 共存**：启用 `CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y`，NimBLE 缓冲优先分配在 PSRAM（`CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y`）。
-- **硬约束**：永不暴露面板 VCOM 或 SY7636A 寄存器写入；Wi-Fi 密码、MQTT 密码、定时看板鉴权头与 6 位配对码永不经公开接口回显。
+- **硬约束**：永不暴露面板 VCOM 或 SY7636A 寄存器写入；Wi-Fi 密码、MQTT 密码、订阅源密码、定时看板鉴权头与 6 位配对码永不经公开接口回显。

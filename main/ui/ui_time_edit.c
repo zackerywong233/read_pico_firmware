@@ -199,7 +199,6 @@ void ui_time_edit_render(const ui_time_edit_t *ed, uint8_t *fb) {
 
     ui_draw_button(fb, ui_bar_rect(0, 2), "返回", false);
     ui_draw_button(fb, ui_bar_rect(1, 2), "保存时间", true);
-    ui_draw_menu_handle(fb, false);
 }
 
 ui_time_edit_result_t ui_time_edit_tap(ui_time_edit_t *ed, uint16_t x, uint16_t y) {

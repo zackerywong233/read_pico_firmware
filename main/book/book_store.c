@@ -17,6 +17,7 @@
  * Frozen: clear a matching regular replacement backup before deletion; restore backup-only books first and preserve recovery on failure.
  */
 #include "book_store.h"
+#include "book_cover.h"
 #include "book_progress.h"
 #include "book_notes.h"
 
@@ -223,6 +224,7 @@ esp_err_t book_store_delete(const char* path, bool* removed) {
 }
 
 esp_err_t book_store_forget_changed_path(const char *path) {
+    book_cover_forget(path);
     esp_err_t progress_err = book_progress_forget(path);
     esp_err_t notes_err = book_notes_forget(path);
     return progress_err != ESP_OK ? progress_err : notes_err;

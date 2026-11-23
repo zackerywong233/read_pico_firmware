@@ -78,16 +78,19 @@ extern "C" {
 #define UI_HEADER_RULE_Y 152
 #define UI_CONTENT_TOP 176
 
-// 底栏贴屏幕下沿，右端固定留给菜单按钮，两者同高同基线。
-// Bottom bar sits on the lower edge; the right cell is reserved for the menu button. Same height and baseline.
-#define UI_BAR_H 96
-#define UI_BAR_MARGIN 24
-#define UI_BAR_TOP (UI_LOCK_HEIGHT - UI_BAR_MARGIN - UI_BAR_H)
-#define UI_CONTENT_BOTTOM (UI_BAR_TOP - 20)
+// 底部按键说明带：y = 1170..1214（高 44px），顶部 y = 1168 绘 1px 分隔线，三等分对齐屏下三键。
+// Bottom key-hint strip: y = 1170..1214 (44px high), 1px hairline at y = 1168, 3 equal columns for the 3 keys.
+#define UI_KEY_HINT_RULE_Y 1168
+#define UI_KEY_HINT_TOP 1170
+#define UI_KEY_HINT_H 44
+#define UI_PX_KEY_HINT 24
 
-// 菜单按钮是底栏最右一格，箭头向上表示能打开全屏一级菜单。
-// The menu button is the rightmost bar cell; an up arrow means the root menu can open.
-#define UI_MENU_BTN_SIZE UI_BAR_H
+// 触控操作栏上移至说明带上方，水平恢复满内容宽 604px（不再预留右下角方框箭头）。
+// Touch action bar sits above the key-hint strip at full 604px content width (no menu-handle cell).
+#define UI_BAR_H 84
+#define UI_BAR_MARGIN 24
+#define UI_BAR_TOP 1072
+#define UI_CONTENT_BOTTOM 1056
 
 // epdiy 图形接口取 8 位灰度（仅高 4 位有效），字体属性取 4 位灰度，两者不可混用。
 // epdiy graphics uses 8-bit gray (high nibble only); font attrs use 4-bit gray. Do not mix them.
@@ -147,8 +150,8 @@ EpdRect ui_row_rect(int col, int cols, int y0, int h);
 int ui_grid_hit(
     uint16_t x, uint16_t y, int cols, int rows, int y0, int h, const int* ids
 );
-/// 底栏按钮：右端固定留给菜单按钮，剩下的宽度按 cols 等分。绘制和命中共用。
-/// Bar buttons: right cell reserved for the menu button; the rest splits into cols. Shared by draw and hit-test.
+/// 底栏按钮：占满 604px 内容宽度并按 cols 等分。绘制和命中共用。
+/// Bar buttons: span full 604px content width split into cols. Shared by draw and hit-test.
 EpdRect ui_bar_rect(int col, int cols);
 int ui_bar_hit(uint16_t x, uint16_t y, int cols);
 

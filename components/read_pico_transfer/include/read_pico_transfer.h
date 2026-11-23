@@ -68,6 +68,10 @@ typedef struct {
     esp_err_t (*webmarks_upsert_cb)(const char *title, const char *url, void *ctx); ///< 可选：添加或更新网页收藏 / Optional: upsert one web bookmark
     esp_err_t (*webmarks_delete_cb)(const char *url, void *ctx); ///< 可选：删除网页收藏 / Optional: delete one web bookmark
     void *webmarks_ctx; ///< 网页收藏回调上下文 / Context for web bookmark callbacks
+    size_t (*feeds_list_cb)(read_pico_feed_source_t *out, size_t cap, void *ctx); ///< 可选：列出脱敏订阅源 / Optional: list redacted feed sources
+    esp_err_t (*feeds_upsert_cb)(const char *name, const char *url, uint8_t kind, const char *auth_user, const char *auth_pass, bool clear_auth, void *ctx); ///< 可选：添加或更新订阅源 / Optional: upsert one feed source
+    esp_err_t (*feeds_delete_cb)(const char *url, void *ctx); ///< 可选：删除订阅源 / Optional: delete one feed source
+    void *feeds_ctx; ///< 订阅源回调上下文 / Context for feed source callbacks
     bool (*focus_get_cb)(read_pico_focus_status_t *out, void *ctx); ///< 可选：读取专注时钟状态 / Optional: read focus timer status
     esp_err_t (*focus_ctrl_cb)(bool start, int minutes, void *ctx); ///< 可选：远程启动或停止专注时钟 / Optional: start or stop focus timer remotely
     void *focus_ctx; ///< 专注时钟回调上下文 / Context for focus timer callbacks

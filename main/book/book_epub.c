@@ -630,3 +630,145 @@ esp_err_t book_epub_load_image(book_epub_t *book, size_t i, const char *referenc
 }
 uint32_t book_epub_total_bytes(const book_epub_t *book) { return book ? book->total : 0; }
 uint32_t book_epub_chapter_byte_offset(const book_epub_t *book, size_t i) { return book && i < book->count ? book->chapters[i].offset : 0; }
+
+static bool is_image_media_type(const char *mt) {
+    return mt && (strstr(mt, "image/jpeg") || strstr(mt, "image/png") || strstr(mt, "image/jpg"));
+}
+
+static bool has_cover_word(const char *s) {
+    if (!s) return false;
+    for (const char *p = s; *p; ++p) {
+        if ((p[0] == 'c' || p[0] == 'C') && (p[1] == 'o' || p[1] == 'O') &&
+            (p[2] == 'v' || p[2] == 'V') && (p[3] == 'e' || p[3] == 'E') &&
+            (p[4] == 'r' || p[4] == 'R')) return true;
+    }
+    return false;
+}
+
+esp_err_t book_epub_extract_cover(const char *path,
+                                  char *title_out, size_t title_cap,
+                                  char *author_out, size_t author_cap,
+                                  uint8_t **encoded_out, size_t *encoded_len_out) {
+    if (title_out && title_cap) title_out[0] = 0;
+    if (author_out && author_cap) author_out[0] = 0;
+    if (encoded_out) *encoded_out = NULL;
+    if (encoded_len_out) *encoded_len_out = 0;
+    if (!path) return ESP_ERR_INVALID_ARG;
+
+    book_epub_t tmp = {0};
+    esp_err_t err = zip_open(path, &tmp.zip);
+    if (err != ESP_OK) return err;
+
+    char opf_path[EPUB_PATH_CAP] = {0};
+    char *container_xml = NULL;
+    size_t container_len = 0;
+    err = load_entry_limit(&tmp, zip_find(tmp.zip, "META-INF/container.xml"),
+                           &container_xml, &container_len, EPUB_ENTRY_MAX);
+    if (err != ESP_OK) { zip_close(tmp.zip); return err; }
+    {
+        xml_t xml; token_t t;
+        xml_reader(&xml, container_xml, container_len);
+        while (xml_next(&xml, &t)) {
+            if (t.kind == XML_OPEN && local_name(t.name, "rootfile")) {
+                char full[EPUB_PATH_CAP] = {0};
+                if (attribute(t, "full-path", full, sizeof(full)) && full[0]) {
+                    if (resolve_path("", full, opf_path)) break;
+                }
+            }
+        }
+        free(container_xml);
+    }
+    if (!opf_path[0]) { zip_close(tmp.zip); return ESP_ERR_NOT_FOUND; }
+
+    char *opf_xml = NULL;
+    size_t opf_len = 0;
+    err = load_entry_limit(&tmp, zip_find(tmp.zip, opf_path), &opf_xml, &opf_len, EPUB_ENTRY_MAX);
+    if (err != ESP_OK) { zip_close(tmp.zip); return err; }
+
+    // 扫描 OPF 提取 dc:title、dc:creator 以及封面项 id/href。
+    // Scan OPF for dc:title, dc:creator, and cover image id/href.
+    char meta_cover_id[96] = {0};
+    char cover_href[EPUB_PATH_CAP] = {0};
+    char fallback_href[EPUB_PATH_CAP] = {0};
+    bool in_title = false, in_creator = false;
+    {
+        xml_t xml; token_t t;
+        xml_reader(&xml, opf_xml, opf_len);
+        while (xml_next(&xml, &t)) {
+            if (t.kind == XML_OPEN) {
+                if (local_name(t.name, "title") && !t.empty) in_title = true;
+                else if (local_name(t.name, "creator") && !t.empty) in_creator = true;
+                else if (local_name(t.name, "meta")) {
+                    char mname[64] = {0}, mcontent[96] = {0};
+                    if (attribute(t, "name", mname, sizeof(mname)) && !strcmp(mname, "cover") &&
+                        attribute(t, "content", mcontent, sizeof(mcontent)) && mcontent[0]) {
+                        snprintf(meta_cover_id, sizeof(meta_cover_id), "%s", mcontent);
+                    }
+                } else if (local_name(t.name, "item")) {
+                    char id[96] = {0}, href[EPUB_PATH_CAP] = {0}, mt[64] = {0}, props[96] = {0};
+                    (void)attribute(t, "id", id, sizeof(id));
+                    (void)attribute(t, "href", href, sizeof(href));
+                    (void)attribute(t, "media-type", mt, sizeof(mt));
+                    (void)attribute(t, "properties", props, sizeof(props));
+                    if (href[0] && is_image_media_type(mt)) {
+                        if (strstr(props, "cover-image")) {
+                            snprintf(cover_href, sizeof(cover_href), "%s", href);
+                        } else if (!cover_href[0] && meta_cover_id[0] && !strcmp(id, meta_cover_id)) {
+                            snprintf(cover_href, sizeof(cover_href), "%s", href);
+                        } else if (!fallback_href[0] && (has_cover_word(id) || has_cover_word(href))) {
+                            snprintf(fallback_href, sizeof(fallback_href), "%s", href);
+                        }
+                    }
+                }
+            } else if (t.kind == XML_CLOSE) {
+                if (local_name(t.name, "title")) in_title = false;
+                else if (local_name(t.name, "creator")) in_creator = false;
+            } else if (t.kind == XML_TEXT) {
+                if (in_title && title_out && title_cap > 1 && !title_out[0]) {
+                    (void)decode(t.text, title_out, title_cap, true, false);
+                } else if (in_creator && author_out && author_cap > 1 && !author_out[0]) {
+                    (void)decode(t.text, author_out, author_cap, true, false);
+                }
+            }
+        }
+    }
+    // 若 <meta name="cover"> 出现在 <manifest> 之后，再做一次轻量 id 匹配。
+    // If <meta name="cover"> appeared after <manifest>, resolve the id in a second quick pass.
+    if (!cover_href[0] && meta_cover_id[0]) {
+        xml_t xml; token_t t;
+        xml_reader(&xml, opf_xml, opf_len);
+        while (xml_next(&xml, &t)) {
+            if (t.kind == XML_OPEN && local_name(t.name, "item")) {
+                char id[96] = {0}, href[EPUB_PATH_CAP] = {0}, mt[64] = {0};
+                (void)attribute(t, "id", id, sizeof(id));
+                (void)attribute(t, "href", href, sizeof(href));
+                (void)attribute(t, "media-type", mt, sizeof(mt));
+                if (href[0] && is_image_media_type(mt) && !strcmp(id, meta_cover_id)) {
+                    snprintf(cover_href, sizeof(cover_href), "%s", href);
+                    break;
+                }
+            }
+        }
+    }
+    free(opf_xml);
+
+    const char *chosen = cover_href[0] ? cover_href : fallback_href;
+    if (!chosen[0] || !encoded_out || !encoded_len_out) {
+        zip_close(tmp.zip);
+        return chosen[0] ? ESP_OK : ESP_ERR_NOT_FOUND;
+    }
+
+    char img_path[EPUB_PATH_CAP] = {0};
+    if (!resolve_path(opf_path, chosen, img_path)) {
+        zip_close(tmp.zip);
+        return ESP_ERR_NOT_FOUND;
+    }
+    char *raw = NULL;
+    size_t raw_len = 0;
+    err = load_entry_limit(&tmp, zip_find(tmp.zip, img_path), &raw, &raw_len, 2u * 1024u * 1024u);
+    zip_close(tmp.zip);
+    if (err != ESP_OK) return err;
+    *encoded_out = (uint8_t*)raw;
+    *encoded_len_out = raw_len;
+    return ESP_OK;
+}

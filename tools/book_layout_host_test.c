@@ -261,6 +261,67 @@ int main(void) {
     drawn[0]=0;book_layout_draw_page(&fb,0,r,48);
     assert(strstr(drawn,"标题图") && !strstr(drawn,"重复") && !strstr(drawn,"第 8 节"));
     assert(book_layout_page_count()==before_pages && book_layout_page_start_offset(0)==before_offset);
+
+    // 阶段 3 新增测试：连体标点保护、段首两格缩进、段距、正文坐标命中、智能断句与下划线回显。
+    // Stage 3 tests: punctuation-group protection, 2-em indent, para gap, hit-test, sentence bounds and highlights.
+    const char group_txt[] = "甲乙丙……丁戊——己。”庚";
+    r = (EpdRect){0, 0, 40, 200};
+    line_count = 0;
+    assert(book_layout_build(group_txt, strlen(group_txt), r, 10));
+    drawn[0] = 0;
+    for (size_t i = 0; i < book_layout_page_count(); ++i) book_layout_draw_page(&fb, i, r, 10);
+    assert(strcmp(drawn, group_txt) == 0);
+    // 确保 …… 与 —— 不被跨行拆成单字符。/ Ensure …… and —— never split across lines.
+    for (size_t i = 0; i < line_count; ++i) {
+        size_t n = strlen(line_log[i]);
+        if (n >= 3 && memcmp(line_log[i] + n - 3, "…", 3) == 0) {
+            assert(n >= 6 && memcmp(line_log[i] + n - 6, "……", 6) == 0);
+        }
+        if (n >= 3 && memcmp(line_log[i] + n - 3, "—", 3) == 0) {
+            assert(n >= 6 && memcmp(line_log[i] + n - 6, "——", 6) == 0);
+        }
+    }
+
+    // 段首两格缩进 + 段距档位测试。/ First-line 2-em indent and paragraph gap presets.
+    const char para_txt[] = "甲乙丙丁戊\n己庚辛壬癸";
+    book_layout_opts_t opts = { .para_gap = 2, .first_indent = 1, .justify = true };
+    book_layout_set_opts(&opts);
+    r = (EpdRect){0, 0, 50, 200};
+    assert(book_layout_build(para_txt, strlen(para_txt), r, 10));
+    // 第一行缩进 20px 后只剩 30px（3 字），故每段拆成 2 行。/ First line indented 20px leaves 30px (3 glyphs).
+    size_t hit_off = 999;
+    int hit_y = -1;
+    assert(book_layout_hit_text(0, r, 25, 5, &hit_off, &hit_y));
+    assert(hit_off == 0 && hit_y == 0);
+    assert(book_layout_hit_text(0, r, 35, 5, &hit_off, &hit_y));
+    assert(hit_off == 3);
+
+    // 智能断句与前后扩句、选整段。/ Smart sentence bounds, prev/next expand, paragraph bounds.
+    const char sent_txt[] = "第一句很好。第二句也不错！“第三句呢？”\n新段落开始了。";
+    size_t s0 = 0, s1 = 0;
+    size_t second_pos = strstr(sent_txt, "也不") - sent_txt;
+    assert(book_layout_sentence_bounds(sent_txt, strlen(sent_txt), second_pos, 0, strlen(sent_txt), &s0, &s1));
+    assert(strncmp(sent_txt + s0, "第二句也不错！", s1 - s0) == 0);
+    size_t exp_prev = 0, exp_next = 0;
+    assert(book_layout_expand_prev_sentence(sent_txt, strlen(sent_txt), s0, 0, &exp_prev));
+    assert(exp_prev == 0);
+    assert(book_layout_expand_next_sentence(sent_txt, strlen(sent_txt), s1, strlen(sent_txt), &exp_next));
+    assert(strncmp(sent_txt + s0, "第二句也不错！“第三句呢？”", exp_next - s0) == 0);
+    size_t ps = 0, pe = 0;
+    assert(book_layout_paragraph_bounds(sent_txt, strlen(sent_txt), second_pos, &ps, &pe));
+    assert(ps == 0 && strncmp(sent_txt + ps, "第一句很好。第二句也不错！“第三句呢？”", pe - ps) == 0);
+
+    // 下划线回显与活动选区绘制不破坏正文输出。/ Highlights and underlines draw pixels without corrupting text.
+    book_text_span_t ul = { 0, 6 };
+    book_text_span_t sel = { 3, 9 };
+    book_layout_set_highlights(&ul, 1, &sel);
+    image_pixels = 0;
+    drawn[0] = 0;
+    book_layout_draw_page(&fb, 0, r, 10);
+    assert(image_pixels > 0);
+    book_layout_set_highlights(NULL, 0, NULL);
+    book_layout_set_opts(NULL);
+
     book_layout_free();
     puts("book_layout_host_test: PASS");
 }

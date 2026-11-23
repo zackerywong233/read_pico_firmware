@@ -16,7 +16,7 @@
  * Frozen: no-font uses ui_draw_no_font_page; format needs two confirm taps;
  * maintain section top follows card-status height; if two stacked buttons do
  * not fit, put them in one row; score is fixed bright/decay/+24, button
- * "曲谱 Score"; probes A/B/1b/4k; bar is the menu handle only.
+ * "曲谱"; probes A/B/1b/4k; bar is the menu handle only.
  * KEY3 is the loop menu handle.
  */
 
@@ -32,11 +32,13 @@
 #include "ui_kit.h"
 #include "ui_menu.h"
 
+extern const app_desc_t app_files;
+
 extern const app_desc_t app_sd;
 
 #define TAG "app_sd"
 
-#define SD_TITLE "TF 卡与蜂鸣器 Storage"
+#define SD_TITLE "存储与蜂鸣"
 #define SD_PROBE_POLL_MS 500
 #define SD_READ_TIMEOUT_MS 8000
 #define SD_BTN_GAP UI_GAP
@@ -74,17 +76,17 @@ static char s_status[24];
 static bool s_sd_no_font;
 
 static const char* present_text(bool present) {
-    return present ? "已插入 Inserted" : "未找到 Missing";
+    return present ? "已插入" : "未找到";
 }
 
 static const char* fs_text(const read_pico_sd_info_t* info) {
-    if (info->error == ESP_ERR_NOT_FINISHED) return "检查中 Checking";
-    return info->mounted ? "已挂载 Mounted" : "未挂载 Unmounted";
+    if (info->error == ESP_ERR_NOT_FINISHED) return "检查中";
+    return info->mounted ? "已挂载" : "未挂载";
 }
 
 static const char* progress_text(const read_pico_sd_info_t* info, const char* status) {
     if (status != NULL && status[0] != '\0') return status;
-    if (info->needs_format) return "请格式化 Format";
+    if (info->needs_format) return "请格式化";
     return "-";
 }
 
@@ -150,8 +152,8 @@ static void draw_status(
     char avail[24];
     const char* progress = progress_text(info, status);
 
-    y = ui_draw_section(framebuffer, y, "卡状态 Card");
-    y = ui_draw_row(framebuffer, y, "卡片 Card", present_text(info->present));
+    y = ui_draw_section(framebuffer, y, "卡状态");
+    y = ui_draw_row(framebuffer, y, "卡片", present_text(info->present));
     y = ui_draw_row(framebuffer, y, "文件系统 FS", fs_text(info));
     if (info->mounted) {
         snprintf(
@@ -163,22 +165,22 @@ static void draw_status(
             (unsigned long long)(info->free_bytes / (1024 * 1024))
         );
         y = ui_draw_row2(
-            framebuffer, y, "名称 Name", info->name, "容量 Size", cap
+            framebuffer, y, "名称", info->name, "容量", cap
         );
         ui_draw_row2(
-            framebuffer, y, "剩余 Free", avail, "进度 Status", progress
+            framebuffer, y, "剩余", avail, "进度", progress
         );
         return;
     }
     if (info->error != ESP_ERR_NOT_FINISHED && info->error != ESP_OK) {
         snprintf(cap, sizeof(cap), "%d", info->error);
         ui_draw_row2(
-            framebuffer, y, "错误 Error", cap, "进度 Status", progress
+            framebuffer, y, "错误", cap, "进度", progress
         );
         return;
     }
     if (progress[0] != '-') {
-        ui_draw_row(framebuffer, y, "进度 Status", progress);
+        ui_draw_row(framebuffer, y, "进度", progress);
     }
 }
 
@@ -199,12 +201,12 @@ static void draw_sd_page(
     ui_draw_header(framebuffer, SD_TITLE, app_sd.detail);
     draw_status(framebuffer, g.status_y, info, status);
 
-    ui_draw_section(framebuffer, g.maint_y, "维护 Maintain");
-    ui_draw_button(framebuffer, g.remount, "重新读取 Remount", false);
+    ui_draw_section(framebuffer, g.maint_y, "维护");
+    ui_draw_button(framebuffer, g.remount, "重新读取", false);
     if (info->present) {
         ui_draw_button(
             framebuffer, g.format,
-            format_confirm ? "再点一次确认 Confirm" : "格式化 Format",
+            format_confirm ? "再点一次确认" : "格式化",
             format_confirm || info->needs_format
         );
     } else if (!g.pair) {
@@ -216,29 +218,25 @@ static void draw_sd_page(
         ui_text_vc(
             framebuffer, g.format.x + g.format.width / 2,
             g.format.y + g.format.height / 2, UI_PX_CAPTION,
-            "请插入存储卡 Insert card", EPD_DRAW_ALIGN_CENTER, false
+            "请插入存储卡", EPD_DRAW_ALIGN_CENTER, false
         );
     }
 
-    ui_draw_section(framebuffer, g.buzz_y, "蜂鸣器 Buzzer");
-    ui_draw_button(framebuffer, g.beep, "曲谱 Score", false);
+    ui_draw_section(framebuffer, g.buzz_y, "蜂鸣器");
+    ui_draw_button(framebuffer, g.beep, "曲谱", false);
     ui_draw_button(framebuffer, g.probe[0], "A", false);
     ui_draw_button(framebuffer, g.probe[1], "B", false);
     ui_draw_button(framebuffer, g.probe[2], "1b", false);
     ui_draw_button(framebuffer, g.probe[3], "4k", false);
 
-    int y_desc = ui_draw_section(framebuffer, g.desc_y, "说明 Description");
+    int y_desc = ui_draw_section(framebuffer, g.desc_y, "说明");
     ui_text(
         framebuffer, UI_MARGIN, y_desc, UI_PX_BODY,
         "重挂载会重扫字体。格式化清卡。", EPD_DRAW_ALIGN_LEFT, false
     );
-    ui_text(
-        framebuffer, UI_MARGIN, y_desc + UI_PX_BODY + 10, UI_PX_CAPTION,
-        "Remount rescans fonts. Format erases the card.",
-        EPD_DRAW_ALIGN_LEFT, false
-    );
-
-    ui_draw_menu_handle(framebuffer, false);
+    if (info->mounted) {
+        ui_draw_button(framebuffer, ui_bar_rect(0, 1), "打开文件管理", false);
+    }
 }
 
 static int sd_hit_test(const sd_geom_t* g, bool format_ok, uint16_t x, uint16_t y) {
@@ -308,6 +306,11 @@ static void sd_on_exit(app_ctx_t* ctx) {
 static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
     read_pico_sd_info_t info = { 0 };
     read_pico_sd_get_info(&info);
+    if (info.mounted && ui_rect_hit(ui_bar_rect(0, 1), touch->x, touch->y)) {
+        ctx->request_app = &app_files;
+        return APP_REDRAW_NONE;
+    }
+
     const sd_geom_t g = sd_geom(&info, NULL);
     int hit = sd_hit_test(&g, info.present, touch->x, touch->y);
 
@@ -328,7 +331,7 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
     }
     if (hit == SD_HIT_REMOUNT) {
         s_format_confirm = false;
-        status_set("读取 Read");
+        status_set("读取");
         s_read_t0_ms = ctx->now_ms;
         draw_now(ctx, &info, status_now());
         ttf_font_unload();
@@ -353,12 +356,12 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
         return APP_REDRAW_DONE;
     }
     s_format_confirm = false;
-    draw_now(ctx, &info, "正在格式化… Formatting");
+    draw_now(ctx, &info, "正在格式化…");
     ttf_font_unload();
     esp_err_t err = read_pico_sd_format();
     ttf_font_init();
     read_pico_sd_get_info(&info);
-    draw_now(ctx, &info, err == ESP_OK ? "格式化完成 Done" : "格式化失败 Fail");
+    draw_now(ctx, &info, err == ESP_OK ? "格式化完成" : "格式化失败");
     ESP_LOGI(TAG, "SD format %s", esp_err_to_name(err));
     return APP_REDRAW_DONE;
 }
@@ -374,7 +377,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
         if (s_read_t0_ms != 0
             && ctx->now_ms - s_read_t0_ms >= SD_READ_TIMEOUT_MS) {
             s_read_t0_ms = 0;
-            status_set("超时 Timeout");
+            status_set("超时");
             return APP_REDRAW_PAGE;
         }
         return APP_REDRAW_NONE;
@@ -398,7 +401,7 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
 
 const app_desc_t app_sd = {
     .title = SD_TITLE,
-    .detail = "存储卡与蜂鸣器 Storage & Buzzer",
+    .detail = "存储卡与蜂鸣器",
     .render = render,
     .on_enter = on_enter,
     .on_exit = sd_on_exit,

@@ -165,7 +165,6 @@ static void draw_dashboard(uint8_t* fb) {
     ui_draw_button(fb, ui_bar_rect(0, 2), "配置看板", false);
     ui_draw_button(fb, ui_bar_rect(1, 2), "继续阅读", false);
     ui_draw_button(fb, ui_row_rect(0, 1, 900, UI_BTN_H), "定时刷新设置", false);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void draw_settings(uint8_t* fb) {
@@ -184,12 +183,13 @@ static void draw_settings(uint8_t* fb) {
     }
     ui_text(fb, UI_MARGIN, PERSONAL_SAVER_LABEL_Y, UI_PX_SECTION, "锁屏内容", EPD_DRAW_ALIGN_LEFT, false);
     static const struct { app_saver_style_t style; const char* label; } savers[] = {
-        {APP_SAVER_BUILTIN, "默认图案"}, {APP_SAVER_QUOTE, "最近摘录"}, {APP_SAVER_IMAGE, "TF 卡图片"},
+        {APP_SAVER_BUILTIN, "默认图案"}, {APP_SAVER_QUOTE, "最近摘录"},
+        {APP_SAVER_IMAGE, "TF 卡图片"}, {APP_SAVER_BOOK_COVER, "当前书封面"},
     };
-    for (int i = 0; i < 3; ++i) {
-        EpdRect r = ui_row_rect(i, 3, PERSONAL_SAVER_Y, UI_BTN_H);
+    for (int i = 0; i < 4; ++i) {
+        EpdRect r = ui_row_rect(i, 4, PERSONAL_SAVER_Y, UI_BTN_H);
         ui_draw_choice_round_rect(fb, r, UI_BTN_RADIUS, app_settings_saver_style() == savers[i].style);
-        ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, UI_PX_CAPTION,
+        ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, 24,
                    savers[i].label, EPD_DRAW_ALIGN_CENTER, false);
     }
     ui_draw_button(fb, ui_row_rect(0, 2, PERSONAL_SYNC_Y, UI_BTN_H), "手动调时间", false);
@@ -202,7 +202,6 @@ static void draw_settings(uint8_t* fb) {
     if (s_time_sync_msg[0])
         ui_text(fb, UI_MARGIN, PERSONAL_HINT_Y + 80, UI_PX_CAPTION, s_time_sync_msg, EPD_DRAW_ALIGN_LEFT, false);
     ui_draw_button(fb, ui_bar_rect(0, 1), "返回看板", false);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void draw_ambient_settings(uint8_t* fb) {
@@ -253,7 +252,6 @@ static void draw_ambient_settings(uint8_t* fb) {
     ui_text(fb, UI_MARGIN, 775, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
     ui_draw_button(fb, ui_row_rect(0, 2, AMBIENT_TEST_Y, UI_BTN_H), "立即测试刷新", false);
     ui_draw_button(fb, ui_bar_rect(0, 1), "返回看板", false);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void render(app_ctx_t* ctx, uint8_t* fb) {
@@ -387,9 +385,11 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
             return APP_REDRAW_PAGE;
         }
     }
-    static const app_saver_style_t styles[] = {APP_SAVER_BUILTIN, APP_SAVER_QUOTE, APP_SAVER_IMAGE};
-    for (int i = 0; i < 3; ++i) {
-        if (ui_rect_hit(ui_row_rect(i, 3, PERSONAL_SAVER_Y, UI_BTN_H), touch->x, touch->y)) {
+    static const app_saver_style_t styles[] = {
+        APP_SAVER_BUILTIN, APP_SAVER_QUOTE, APP_SAVER_IMAGE, APP_SAVER_BOOK_COVER,
+    };
+    for (int i = 0; i < 4; ++i) {
+        if (ui_rect_hit(ui_row_rect(i, 4, PERSONAL_SAVER_Y, UI_BTN_H), touch->x, touch->y)) {
             app_settings_set_saver_style(styles[i]);
             return APP_REDRAW_PAGE;
         }

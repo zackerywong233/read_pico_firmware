@@ -534,7 +534,7 @@ static void draw_button(uint8_t *fb, EpdRect rect, const char *label, bool selec
 static void draw_keyboard(uint8_t *fb) {
     const web_geom_t g = web_geom();
     ui_clear_page(fb);
-    ui_draw_header(fb, "网页阅读 Web", "输入网址 · 支持 HTTP / HTTPS");
+    ui_draw_header(fb, "网页阅读", "输入网址 · 支持 HTTP / HTTPS");
     ui_draw_round_rect(fb, g.url_field, UI_BTN_RADIUS, UI_GRAY_BLACK);
     const char *tail = s_draft;
     while (*tail && ttf_text_width_px(UI_PX_BODY, tail) > g.url_field.width - 2 * UI_PAD) ++tail;
@@ -554,14 +554,13 @@ static void draw_keyboard(uint8_t *fb) {
             EPD_DRAW_ALIGN_LEFT, false);
     draw_button(fb, ui_bar_rect(0, 2), "取消", false);
     draw_button(fb, ui_bar_rect(1, 2), "打开", false);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void draw_home(uint8_t *fb) {
     const web_geom_t g = web_geom();
     ui_clear_page(fb);
-    ui_draw_header(fb, "网页阅读 Web", s_net_ready ? s_net.url : s_notice);
-    ui_draw_section(fb, UI_CONTENT_TOP, "网址 Address");
+    ui_draw_header(fb, "网页阅读", s_net_ready ? s_net.url : s_notice);
+    ui_draw_section(fb, UI_CONTENT_TOP, "网址");
     EpdRect field = {UI_MARGIN, UI_CONTENT_TOP + UI_SEC_HEAD, ui_content_width(), 86};
     ui_draw_round_rect(fb, field, UI_BTN_RADIUS, UI_GRAY_BLACK);
     ui_text_vc(fb, field.x + UI_PAD, field.y + field.height / 2, UI_PX_LABEL_SM,
@@ -569,7 +568,7 @@ static void draw_home(uint8_t *fb) {
     draw_button(fb, g.open, "输入网址 / 打开", false);
     draw_button(fb, g.home, "收藏夹", false);
     if (s_net_ready) {
-        ui_draw_section(fb, 540, "浏览器剪藏 Browser clip");
+        ui_draw_section(fb, 540, "浏览器剪藏");
         if (s_net.url[0]) {
             ui_wifi_qr_draw(fb, (EpdRect){UI_MARGIN + (ui_content_width() - 240) / 2, 650, 240, 240});
             char local_url[96];
@@ -583,7 +582,6 @@ static void draw_home(uint8_t *fb) {
         ui_text(fb, UI_MARGIN, 600, UI_PX_BODY, s_notice, EPD_DRAW_ALIGN_LEFT, false);
         if (!s_net_start_pending) draw_button(fb, ui_bar_rect(0, 1), "重新连接", false);
     }
-    ui_draw_menu_handle(fb, false);
 }
 
 static void draw_article(uint8_t *fb) {
@@ -598,7 +596,7 @@ static void draw_article(uint8_t *fb) {
                  s_article_truncated ? "已截断 · " : "",
                  (unsigned)s_page + 1, (unsigned)book_layout_page_count());
     }
-    ui_draw_header(fb, "网页阅读 Web", page);
+    ui_draw_header(fb, "网页阅读", page);
     book_layout_draw_page(fb, s_page, web_body_rect(), WEB_BODY_PX);
     draw_button(fb, web_geom().back, "网址", false);
     draw_button(fb, web_geom().prev, "上一页", false);
@@ -606,7 +604,6 @@ static void draw_article(uint8_t *fb) {
     size_t index = 0;
     draw_button(fb, web_geom().bookmark, bookmark_index(s_url, &index) ? "取消收藏" : "收藏", false);
     draw_button(fb, web_geom().save, "存到书架", false);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void draw_bookmarks(uint8_t *fb) {
@@ -626,7 +623,6 @@ static void draw_bookmarks(uint8_t *fb) {
     draw_button(fb, ui_bar_rect(0, 3), "返回", false);
     draw_button(fb, ui_bar_rect(1, 3), "上一页", false);
     draw_button(fb, ui_bar_rect(2, 3), "下一页", false);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void render(app_ctx_t *ctx, uint8_t *fb) {
@@ -905,7 +901,7 @@ void app_web_queue_url(const char *url) {
 }
 
 const app_desc_t app_web = {
-    .title = "网页阅读 Web",
+    .title = "网页阅读",
     .detail = "在线网页与浏览器剪藏",
     .owns_keys = true,
     .blocks_idle_sleep = true,
