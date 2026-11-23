@@ -216,7 +216,11 @@ static bool transfer_book_progress(const char* path, uint32_t size,
 static size_t transfer_webmarks_list(read_pico_webmark_t* out, size_t cap, void* ctx) {
     (void)ctx;
     if (!out || !cap) return 0;
-    web_bookmark_t items[WEB_BOOKMARK_MAX];
+    // 收藏数组约 6.4 KB，放 PSRAM 避免在 HTTPD 任务栈上溢出。
+    // Allocate the ~6.4 KB bookmark array in PSRAM to keep it off the HTTPD task stack.
+    web_bookmark_t* items = heap_caps_calloc(WEB_BOOKMARK_MAX, sizeof(*items), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!items) items = calloc(WEB_BOOKMARK_MAX, sizeof(*items));
+    if (!items) return 0;
     size_t count = 0;
     web_bookmarks_load(items, &count);
     if (count > cap) count = cap;
@@ -226,6 +230,7 @@ static size_t transfer_webmarks_list(read_pico_webmark_t* out, size_t cap, void*
         snprintf(out[i].url, sizeof(out[i].url), "%.*s",
                  (int)(sizeof(out[i].url) - 1), items[i].url);
     }
+    free(items);
     return count;
 }
 
@@ -242,7 +247,11 @@ static esp_err_t transfer_webmarks_delete(const char* url, void* ctx) {
 static size_t transfer_feeds_list(read_pico_feed_source_t* out, size_t cap, void* ctx) {
     (void)ctx;
     if (!out || !cap) return 0;
-    feed_public_source_t items[FEEDS_MAX_SOURCES];
+    // 订阅源公开表约 6.2 KB，放 PSRAM 避免与 feeds_store 叠加撑爆 HTTPD 任务栈。
+    // Allocate the ~6.2 KB public feed array in PSRAM to avoid overflowing the HTTPD task stack.
+    feed_public_source_t* items = heap_caps_calloc(FEEDS_MAX_SOURCES, sizeof(*items), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!items) items = calloc(FEEDS_MAX_SOURCES, sizeof(*items));
+    if (!items) return 0;
     size_t count = feeds_store_list_public(items, FEEDS_MAX_SOURCES);
     if (count > cap) count = cap;
     for (size_t i = 0; i < count; ++i) {
@@ -252,6 +261,7 @@ static size_t transfer_feeds_list(read_pico_feed_source_t* out, size_t cap, void
         snprintf(out[i].auth_user, sizeof(out[i].auth_user), "%s", items[i].auth_user);
         out[i].has_password = items[i].has_password;
     }
+    free(items);
     return count;
 }
 

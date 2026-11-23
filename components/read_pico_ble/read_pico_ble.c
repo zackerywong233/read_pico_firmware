@@ -458,8 +458,12 @@ static void on_stack_sync(void) {
 static void nimble_host_task(void *param) {
     (void)param;
     nimble_port_run();
-    nimble_port_freertos_deinit();
+    // nimble_port_freertos_deinit() 会调用 vTaskDelete(NULL) 且永不返回，
+    // 必须在它之前释放信号量，否则 read_pico_ble_stop() 每次都会卡满 3 秒超时。
+    // nimble_port_freertos_deinit() calls vTaskDelete(NULL) and never returns;
+    // signal the semaphore before it so read_pico_ble_stop() does not stall for 3 seconds.
     if (s_host_stopped_sem) xSemaphoreGive(s_host_stopped_sem);
+    nimble_port_freertos_deinit();
 }
 
 /* ---- 发送封装 / Notification helpers ---- */
@@ -613,12 +617,14 @@ void read_pico_ble_stop(void) {
     if (!s_running) return;
 
     uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    bool synced = false;
     portENTER_CRITICAL(&s_lock);
     s_stopping = true;
     conn_handle = s_conn_handle;
+    synced = s_synced;
     portEXIT_CRITICAL(&s_lock);
 
-    if (ble_gap_adv_active()) (void)ble_gap_adv_stop();
+    if (synced && ble_gap_adv_active()) (void)ble_gap_adv_stop();
     if (conn_handle != BLE_HS_CONN_HANDLE_NONE) {
         (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
         vTaskDelay(pdMS_TO_TICKS(50));
@@ -628,9 +634,16 @@ void read_pico_ble_stop(void) {
     if (rc == 0 && s_host_stopped_sem) {
         if (xSemaphoreTake(s_host_stopped_sem, pdMS_TO_TICKS(3000)) != pdTRUE) {
             ESP_LOGW(TAG, "timed out waiting for NimBLE host task exit");
+        } else {
+            // 留出时间让宿主任务执行 vTaskDelete(NULL) 并由 Idle 任务回收内部栈内存。
+            // Yield briefly so the host task completes vTaskDelete(NULL) and idle reclaims its internal stack.
+            vTaskDelay(pdMS_TO_TICKS(20));
         }
     }
-    (void)nimble_port_deinit();
+    esp_err_t deinit_err = nimble_port_deinit();
+    if (deinit_err != ESP_OK) {
+        ESP_LOGW(TAG, "nimble_port_deinit returned %s", esp_err_to_name(deinit_err));
+    }
 
     if (s_rx_buf) {
         free(s_rx_buf);
@@ -650,7 +663,9 @@ void read_pico_ble_stop(void) {
     s_status.rsp_notify_enabled = false;
     s_status.battery_notify_enabled = false;
     portEXIT_CRITICAL(&s_lock);
-    ESP_LOGI(TAG, "BLE stopped");
+    ESP_LOGI(TAG, "BLE stopped internal_free=%u internal_largest=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 }
 
 bool read_pico_ble_is_running(void) {

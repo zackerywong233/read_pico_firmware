@@ -46,6 +46,7 @@
 
 extern const app_desc_t app_pico_home;
 extern const app_desc_t app_book;
+extern const app_desc_t app_feeds;
 extern const app_desc_t app_sketch;
 extern const app_desc_t app_agent;
 extern const app_desc_t app_settings;
@@ -199,7 +200,7 @@ static bool ota_is_busy(void) {
 }
 
 static bool is_wifi_page(const app_desc_t *page) {
-    return page == &app_transfer || page == &app_web || page == &app_agent;
+    return page == &app_transfer || page == &app_web || page == &app_feeds || page == &app_agent;
 }
 
 static bool wifi_is_busy(const app_desc_t *current) {
@@ -234,6 +235,7 @@ static const char *active_page_key(const app_desc_t *current) {
     if (current == &app_book) return "books";
     if (current == &app_transfer) return "transfer";
     if (current == &app_web) return "web";
+    if (current == &app_feeds) return "feeds";
     if (current == &app_sketch) return "sketch";
     if (current == &app_focus) return "focus";
     if (current == &app_agent) return "agent";
@@ -1671,9 +1673,11 @@ void app_ble_wifi_hold(bool hold) {
     if (!s_initialized) return;
     if (hold) {
         stop_ble_internal();
-    } else if (!s_suspended && app_settings_ble_enabled()) {
-        start_ble_internal();
     }
+    // 释放射频时不在 on_exit 里同步拉起 NimBLE，交由下一拍 app_ble_poll 恢复，
+    // 避免离页卡顿及在两个 Wi-Fi 页间直跳时反复启停 BLE。
+    // Do not restart NimBLE synchronously inside on_exit; let the next app_ble_poll tick resume BLE,
+    // avoiding exit stalls and BLE start/stop thrash when switching between Wi-Fi pages.
 }
 
 void app_ble_yield_to_ota(void) {

@@ -110,6 +110,8 @@ static inline int update_display_white(void* p) {(void)p;return 0;}
 static inline int update_display_full(void* p) {(void)p;return 0;}
 static inline void guard_draw_result(void* p,int e) {(void)p;(void)e;}
 static inline size_t heap_caps_get_free_size(int cap) {(void)cap;return 1000000;}
+#define MALLOC_CAP_SPIRAM 4
+static inline void* heap_caps_calloc(size_t n, size_t sz, int cap) {(void)cap;return calloc(n, sz);}
 typedef struct {char path[160];bool is_flash;} book_store_root_t;
 static inline uint64_t book_store_free_bytes(void* r) {(void)r;return 1000000;}
 static inline int book_store_upload_root(book_store_root_t* r) {strcpy(r->path,"/flash/books");return 0;}

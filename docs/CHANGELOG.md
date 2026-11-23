@@ -1,5 +1,16 @@
 # 版本变更 / Changelog
 
+## v1.0.4 · 2026-11-23
+
+- 修复局域网与设备热点无法连接及联网应用进页缓慢问题：
+  1. 消除传书网页加载 `GET /feeds` 触发的 HTTPD 栈溢出（原回调栈累计约 21 KB 超过 16 KB 栈上限）：将 `feeds_store`、`web_bookmarks`、`app_transfer` 回调数组及 `read_pico_transfer` 大型请求缓冲全部迁至 PSRAM；
+  2. 回收约 27 KB 内部 DRAM 并减轻碎片：将 `app_feeds` 订阅源/导航表（~10.2 KB）与 `app_web` 收藏表（~6.4 KB）改为进页分配 PSRAM、离页释放，HTTPD 栈降至 12 KB、主任务栈调整为 18 KB、`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` 调整为 `512`，并在 `read_pico_transfer_start()` 增加阶段与内部堆诊断日志；
+  3. 消除进页 3 秒卡顿与阻塞扫描：修复 `read_pico_ble` 中 `nimble_host_task()` 在 `nimble_port_freertos_deinit()`（内部 `vTaskDelete(NULL)` 不返回）之后才释放 `s_host_stopped_sem` 导致的每次停 BLE 必卡满 3 秒超时；将 `app_web` / `app_feeds` / `app_agent` 的 `network_start()` 延后至首帧渲染后的 `on_tick()`；单网络已保存时跳过 `choose_saved_network()` 全信道扫描；将 `app_feeds` 纳入 Wi-Fi 页管理并延后离页 BLE 恢复以避免直跳反复启停。
+  Fix LAN / SoftAP connection failures and slow opening of Wi-Fi apps:
+  1. Fix the ~21 KB HTTPD task stack overflow triggered when the transfer page loads `GET /feeds` by moving `feeds_store`, `web_bookmarks`, `app_transfer` list buffers, and large `read_pico_transfer` request buffers to PSRAM;
+  2. Reclaim ~27 KB internal DRAM and reduce fragmentation by allocating `app_feeds` source/nav tables (~10.2 KB) and `app_web` bookmarks (~6.4 KB) in PSRAM only while active, lowering HTTPD stack to 12 KB, main task stack to 18 KB, and `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` to `512`, plus stage/heap diagnostics in `read_pico_transfer_start()`;
+  3. Eliminate the 3-second stall when entering Wi-Fi apps by signaling `s_host_stopped_sem` before `nimble_port_freertos_deinit()` (which calls `vTaskDelete(NULL)` and never returns), deferring `network_start()` out of `on_enter()` to `on_tick()` in `app_web`/`app_feeds`/`app_agent`, skipping the blocking Wi-Fi scan in `choose_saved_network()` when only one network is saved, tracking `app_feeds` in `ble_service`, and deferring BLE resume on page exit to `app_ble_poll()`.
+
 ## v1.0.3 · 2026-11-23
 
 - 修复图书「纯净」刷新档位静置约 1 分钟后背景逐渐泛黑、透出前几页文字残影的问题：在 `display` 新增 `update_display_full_with()`，将图书阅读的 `GC16` 翻页（纯净模式每页、均衡/极速周期清屏与切章）及全刷路径改用原厂完整 48 相直流平衡波形 `E0470_FULL_WAVEFORM`，消除裁剪版 `GC16` 连续触发时白底（`15→15`）累积 `+6` 相直流偏置导致的电荷回弹与前页透字，并补充主机显示与波形直流平衡回归测试。

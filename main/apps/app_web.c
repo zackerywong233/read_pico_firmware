@@ -105,6 +105,7 @@ static web_view_t s_view;
 static book_store_root_t s_root;
 static read_pico_transfer_status_t s_net;
 static bool s_net_started;
+static bool s_start_pending;
 static bool s_net_start_pending;
 static bool s_net_ready;
 static bool s_storage_changed;
@@ -122,7 +123,9 @@ static volatile bool s_fetch_running;
 static volatile bool s_fetch_cancel;
 static TaskHandle_t s_fetch_task;
 static bool s_article_truncated;
-static web_bookmark_t s_bookmarks[WEB_BOOKMARK_MAX];
+// 收藏表约 6.4 KB，进页时放 PSRAM、离页释放，避免常驻内部 DRAM 挤压 Wi-Fi。
+// Keep the ~6.4 KB bookmark table in PSRAM while active so internal DRAM stays free for Wi-Fi.
+static web_bookmark_t *s_bookmarks;
 static size_t s_bookmark_count;
 static size_t s_bookmark_page;
 
@@ -189,19 +192,23 @@ static void free_article(void) {
 }
 
 static void load_bookmarks(void) {
+    if (!s_bookmarks) { s_bookmark_count = 0; return; }
     web_bookmarks_load(s_bookmarks, &s_bookmark_count);
 }
 
 static void save_bookmarks(void) {
+    if (!s_bookmarks) return;
     (void)web_bookmarks_save(s_bookmarks, s_bookmark_count);
 }
 
 static bool bookmark_index(const char *url, size_t *index) {
+    if (!s_bookmarks) { if (index) *index = WEB_BOOKMARK_MAX; return false; }
     *index = web_bookmark_find(s_bookmarks, s_bookmark_count, url);
     return *index != WEB_BOOKMARK_MAX;
 }
 
 static void toggle_bookmark(void) {
+    if (!s_bookmarks) return;
     size_t index;
     if (bookmark_index(s_url, &index)) {
         (void)web_bookmark_remove(s_bookmarks, &s_bookmark_count, s_url);
@@ -435,6 +442,7 @@ static void prepare_qr(void) {
 }
 
 static void network_start(void) {
+    s_net_start_pending = false;
     if (!ttf_font_ready()) {
         s_view = WEB_ERROR;
         snprintf(s_notice, sizeof(s_notice), "内置字体不可用，无法显示网页阅读页面");
@@ -479,6 +487,7 @@ static void network_start(void) {
 }
 
 static void network_stop(void) {
+    s_start_pending = false;
     s_net_start_pending = false;
     if (!s_net_started) return;
     read_pico_transfer_stop();
@@ -613,7 +622,7 @@ static void draw_bookmarks(uint8_t *fb) {
         ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 48, UI_PX_BODY, "还没有收藏网页", EPD_DRAW_ALIGN_LEFT, false);
     }
     size_t first = s_bookmark_page * 6;
-    for (size_t row = 0; row < 6 && first + row < s_bookmark_count; ++row) {
+    for (size_t row = 0; s_bookmarks && row < 6 && first + row < s_bookmark_count; ++row) {
         web_bookmark_t *item = &s_bookmarks[first + row];
         EpdRect rect = ui_grid_rect(0, 1, (int)row, UI_CONTENT_TOP, 104);
         ui_draw_round_rect(fb, rect, UI_BTN_RADIUS, UI_GRAY_BLACK);
@@ -638,11 +647,16 @@ static void on_enter(app_ctx_t *ctx) {
     // 先关 BLE 再联网。/ Stop BLE before networking.
     app_ble_wifi_hold(true);
     if (!s_result_queue) s_result_queue = xQueueCreate(1, sizeof(web_result_t *));
+    if (!s_bookmarks) {
+        s_bookmarks = heap_caps_calloc(WEB_BOOKMARK_MAX, sizeof(*s_bookmarks), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_bookmarks) s_bookmarks = calloc(WEB_BOOKMARK_MAX, sizeof(*s_bookmarks));
+    }
     s_storage_changed = false;
     load_bookmarks();
     (void)ttf_font_suspend_sd(true);
     display_set_bulk_io(true);
     s_net_started = false;
+    s_start_pending = false;
     s_net_start_pending = false;
     s_net_ready = false;
     s_net_poll_ms = 0;
@@ -655,7 +669,12 @@ static void on_enter(app_ctx_t *ctx) {
         snprintf(s_notice, sizeof(s_notice), "内存不足");
         return;
     }
-    network_start();
+    // 首帧先绘制界面，再在下一拍 on_tick 启动 Wi-Fi，避免切页卡顿。
+    // Render the page first, then start Wi-Fi on the next tick so entering the app stays instant.
+    s_view = WEB_HOME;
+    s_start_pending = true;
+    s_net_start_pending = true;
+    snprintf(s_notice, sizeof(s_notice), "正在连接已有 WiFi…");
 }
 
 static void web_on_exit(app_ctx_t *ctx) {
@@ -666,6 +685,9 @@ static void web_on_exit(app_ctx_t *ctx) {
     while (s_result_queue && xQueueReceive(s_result_queue, &result, 0) == pdTRUE) free_result(result);
     network_stop();
     free_article();
+    free(s_bookmarks);
+    s_bookmarks = NULL;
+    s_bookmark_count = 0;
     app_ble_wifi_hold(false);
     if (s_storage_changed) book_store_notify_changed();
     if (s_result_queue) { vQueueDelete(s_result_queue); s_result_queue = NULL; }
@@ -685,6 +707,11 @@ static void on_media_lost(app_ctx_t *ctx) {
 }
 
 static app_redraw_t on_tick(app_ctx_t *ctx) {
+    if (s_start_pending && !ctx->consumed) {
+        s_start_pending = false;
+        network_start();
+        return APP_REDRAW_PAGE;
+    }
     web_result_t *result = NULL;
     if (s_result_queue && xQueueReceive(s_result_queue, &result, 0) == pdTRUE) {
         accept_result(result);
@@ -832,7 +859,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
             else if (ui_rect_hit(ui_bar_rect(2, 3), event->x, event->y) && (s_bookmark_page + 1) * 6 < s_bookmark_count) { ++s_bookmark_page; changed = true; }
             else {
                 size_t first = s_bookmark_page * 6;
-                for (size_t row = 0; row < 6 && first + row < s_bookmark_count; ++row) {
+                for (size_t row = 0; s_bookmarks && row < 6 && first + row < s_bookmark_count; ++row) {
                     EpdRect rect = ui_grid_rect(0, 1, (int)row, UI_CONTENT_TOP, 104);
                     if (!ui_rect_hit(rect, event->x, event->y)) continue;
                     snprintf(s_draft, sizeof(s_draft), "%.*s",

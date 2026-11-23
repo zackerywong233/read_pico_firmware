@@ -860,6 +860,7 @@ static void stop_mdns(void) {
 }
 
 static uint8_t choose_saved_network(const transfer_credentials_t *saved) {
+    if (!saved || saved->count <= 1) return (saved && saved->recent < saved->count) ? saved->recent : 0;
     uint8_t best_index = saved->recent;
     int8_t best_rssi = INT8_MIN;
     bool loop_owned = false, initialized = false, started = false;
@@ -896,6 +897,7 @@ done:
     return best_index;
 }
 static transfer_connection_t s_connection;
+static void *transfer_alloc(size_t size);
 extern const char upload_start[] asm("_binary_upload_html_start");
 extern const char upload_end[] asm("_binary_upload_html_end");
 
@@ -1854,14 +1856,18 @@ static esp_err_t ambient_config_handler(httpd_req_t *req) {
         strncasecmp(content_type, "application/json", 16) ||
         (content_type[16] && content_type[16] != ';' && content_type[16] != ' ')) return respond_error(req, 400);
     if (!req->content_len || req->content_len > 4096) return respond_error(req, req->content_len > 4096 ? 413 : 400);
-    char body[4097] = {0};
+    char *body = transfer_alloc(4097);
+    if (!body) return ESP_ERR_NO_MEM;
     size_t received = 0;
     while (received < req->content_len) {
         int n = receive_http(req, body + received, req->content_len - received);
-        if (n <= 0) return respond_error(req, 400);
+        if (n <= 0) { clear_secret(body, 4097); free(body); return respond_error(req, 400); }
         received += (size_t)n;
     }
+    body[received] = 0;
     cJSON *json = cJSON_ParseWithLength(body, received);
+    clear_secret(body, 4097);
+    free(body);
     cJSON *enabled_item = json ? cJSON_GetObjectItemCaseSensitive(json, "enabled") : NULL;
     cJSON *interval_item = json ? cJSON_GetObjectItemCaseSensitive(json, "interval_min") : NULL;
     cJSON *start_item = json ? cJSON_GetObjectItemCaseSensitive(json, "quiet_start_h") : NULL;
@@ -1907,7 +1913,6 @@ static esp_err_t ambient_config_handler(httpd_req_t *req) {
     }
     cJSON_Delete(json);
     memset(auth, 0, sizeof(auth));
-    memset(body, 0, sizeof(body));
     return wifi_response(req, err == ESP_OK ? "200 OK" : valid ? "507 Insufficient Storage" : "400 Bad Request",
         err == ESP_OK ? "{\"ok\":true}" : valid ? "{\"error\":\"配置保存失败\"}" : "{\"error\":\"定时看板配置无效\"}");
 }
@@ -1942,7 +1947,6 @@ static esp_err_t file_response(httpd_req_t *req, file_result_t result, bool dele
 
 static esp_err_t stream_binary_file(httpd_req_t *req, const char *path,
                                     const char *content_type, const char *disposition);
-static void *transfer_alloc(size_t size);
 static esp_err_t send_json_error(httpd_req_t *req, const char *status, const char *message);
 
 static const char *book_mime_type(const char *name) {
@@ -2423,7 +2427,8 @@ static esp_err_t ota_upload_handler(httpd_req_t *req) {
     }
     if (err == ESP_OK) err = esp_ota_begin(partition, OTA_WITH_SEQUENTIAL_WRITES, &handle);
     bool ota_begun = err == ESP_OK;
-    uint8_t buffer[4096];
+    uint8_t *buffer = transfer_alloc(4096);
+    if (!buffer && err == ESP_OK) err = ESP_ERR_NO_MEM;
     uint8_t image_header[sizeof(esp_image_header_t)];
     size_t header_bytes = 0;
     size_t received = 0;
@@ -2431,7 +2436,7 @@ static esp_err_t ota_upload_handler(httpd_req_t *req) {
     bool sha_mismatch = false;
     while (err == ESP_OK && received < (size_t)req->content_len) {
         size_t want = (size_t)req->content_len - received;
-        if (want > sizeof(buffer)) want = sizeof(buffer);
+        if (want > 4096U) want = 4096U;
         int n = receive_http(req, (char *)buffer, want);
         if (n <= 0) { err = ESP_FAIL; break; }
         if (sha_active && psa_hash_update(&sha, buffer, (size_t)n) != PSA_SUCCESS) {
@@ -2458,6 +2463,7 @@ static esp_err_t ota_upload_handler(httpd_req_t *req) {
         received += (size_t)n;
         upload_progress(received);
     }
+    free(buffer);
     if (err == ESP_OK && !header_checked) err = ESP_ERR_INVALID_SIZE;
     if (err == ESP_OK && sha_active) {
         uint8_t digest[32];
@@ -3109,7 +3115,13 @@ static esp_err_t settings_handler(httpd_req_t *req) {
     bool admitted = admission_begin(s_stopping, &s_upload_active);
     portEXIT_CRITICAL(&s_lock);
     if (!admitted) return wifi_response(req, "503 Service Unavailable", "{\"error\":\"设备正在处理其他请求，请稍后重试\"}");
-    char body[2049] = {0};
+    char *body = transfer_alloc(2049);
+    if (!body) {
+        portENTER_CRITICAL(&s_lock);
+        s_upload_active = false;
+        portEXIT_CRITICAL(&s_lock);
+        return ESP_ERR_NO_MEM;
+    }
     size_t received = 0;
     esp_err_t err = ESP_OK;
     while (received < req->content_len) {
@@ -3122,6 +3134,7 @@ static esp_err_t settings_handler(httpd_req_t *req) {
     const char *err_msg = NULL;
     bool loaded = err == ESP_OK && s_cfg.settings_get_cb(&next, s_cfg.settings_ctx);
     bool valid = loaded && companion_settings_patch_json(&next, body, received, &err_msg);
+    free(body);
     esp_err_t save_err = valid ? s_cfg.settings_set_cb(&next, s_cfg.settings_ctx) : ESP_FAIL;
     portENTER_CRITICAL(&s_lock);
     if (valid && save_err == ESP_OK) {
@@ -3419,23 +3432,28 @@ static esp_err_t webmarks_handler(httpd_req_t *req) {
         if (!s_cfg.webmarks_delete_cb)
             return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持删除网页收藏\"}");
         char url[256] = {0};
-        char query[900] = {0}, encoded[768] = {0};
         if (httpd_req_get_url_query_len(req)) {
-            if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
-                httpd_query_key_value(query, "url", encoded, sizeof(encoded)) != ESP_OK ||
-                !decode_url_query_value(encoded, url, sizeof(url))) {
-                return send_json_error(req, "400 Bad Request", "请提供有效的 url 参数");
-            }
+            char *query = transfer_alloc(900);
+            char *encoded = transfer_alloc(768);
+            if (!query || !encoded) { free(query); free(encoded); return ESP_ERR_NO_MEM; }
+            bool ok = httpd_req_get_url_query_str(req, query, 900) == ESP_OK &&
+                httpd_query_key_value(query, "url", encoded, 768) == ESP_OK &&
+                decode_url_query_value(encoded, url, sizeof(url));
+            free(query);
+            free(encoded);
+            if (!ok) return send_json_error(req, "400 Bad Request", "请提供有效的 url 参数");
         } else if (req->content_len > 0 && req->content_len <= 512) {
-            char body[513] = {0};
+            char *body = transfer_alloc(513);
+            if (!body) return ESP_ERR_NO_MEM;
             size_t got = 0;
             while (got < req->content_len) {
                 int n = receive_http(req, body + got, req->content_len - got);
-                if (n <= 0) return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400);
+                if (n <= 0) { free(body); return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400); }
                 got += (size_t)n;
             }
             body[got] = '\0';
             cJSON *root = companion_parse_strict_json(body, got);
+            free(body);
             const cJSON *u = root ? cJSON_GetObjectItemCaseSensitive(root, "url") : NULL;
             bool ok = cJSON_IsString(u) && u->valuestring && strlen(u->valuestring) < sizeof(url);
             if (ok) snprintf(url, sizeof(url), "%s", u->valuestring);
@@ -3459,15 +3477,17 @@ static esp_err_t webmarks_handler(httpd_req_t *req) {
         return send_json_error(req, "400 Bad Request", "仅接受 application/json");
     if (!req->content_len || req->content_len > 512)
         return respond_error(req, req->content_len > 512 ? 413 : 400);
-    char body[513] = {0};
+    char *body = transfer_alloc(513);
+    if (!body) return ESP_ERR_NO_MEM;
     size_t got = 0;
     while (got < req->content_len) {
         int n = receive_http(req, body + got, req->content_len - got);
-        if (n <= 0) return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400);
+        if (n <= 0) { free(body); return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400); }
         got += (size_t)n;
     }
     body[got] = '\0';
     cJSON *root = companion_parse_strict_json(body, got);
+    free(body);
     if (!root || !cJSON_IsObject(root)) { cJSON_Delete(root); return send_json_error(req, "400 Bad Request", "无效的 JSON"); }
     const cJSON *u = cJSON_GetObjectItemCaseSensitive(root, "url");
     const cJSON *t = cJSON_GetObjectItemCaseSensitive(root, "title");
@@ -3517,23 +3537,28 @@ static esp_err_t feeds_handler(httpd_req_t *req) {
         if (!s_cfg.feeds_delete_cb)
             return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持删除订阅源\"}");
         char url[256] = {0};
-        char query[900] = {0}, encoded[768] = {0};
         if (httpd_req_get_url_query_len(req)) {
-            if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
-                httpd_query_key_value(query, "url", encoded, sizeof(encoded)) != ESP_OK ||
-                !decode_url_query_value(encoded, url, sizeof(url))) {
-                return send_json_error(req, "400 Bad Request", "请提供有效的 url 参数");
-            }
+            char *query = transfer_alloc(900);
+            char *encoded = transfer_alloc(768);
+            if (!query || !encoded) { free(query); free(encoded); return ESP_ERR_NO_MEM; }
+            bool ok = httpd_req_get_url_query_str(req, query, 900) == ESP_OK &&
+                httpd_query_key_value(query, "url", encoded, 768) == ESP_OK &&
+                decode_url_query_value(encoded, url, sizeof(url));
+            free(query);
+            free(encoded);
+            if (!ok) return send_json_error(req, "400 Bad Request", "请提供有效的 url 参数");
         } else if (req->content_len > 0 && req->content_len <= 512) {
-            char body[513] = {0};
+            char *body = transfer_alloc(513);
+            if (!body) return ESP_ERR_NO_MEM;
             size_t got = 0;
             while (got < req->content_len) {
                 int n = receive_http(req, body + got, req->content_len - got);
-                if (n <= 0) return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400);
+                if (n <= 0) { free(body); return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400); }
                 got += (size_t)n;
             }
             body[got] = '\0';
             cJSON *root = companion_parse_strict_json(body, got);
+            free(body);
             const cJSON *u = root ? cJSON_GetObjectItemCaseSensitive(root, "url") : NULL;
             bool ok = cJSON_IsString(u) && u->valuestring && strlen(u->valuestring) < sizeof(url);
             if (ok) snprintf(url, sizeof(url), "%s", u->valuestring);
@@ -3557,16 +3582,18 @@ static esp_err_t feeds_handler(httpd_req_t *req) {
         return send_json_error(req, "400 Bad Request", "仅接受 application/json");
     if (!req->content_len || req->content_len > 1024)
         return respond_error(req, req->content_len > 1024 ? 413 : 400);
-    char body[1025] = {0};
+    char *body = transfer_alloc(1025);
+    if (!body) return ESP_ERR_NO_MEM;
     size_t got = 0;
     while (got < req->content_len) {
         int n = receive_http(req, body + got, req->content_len - got);
-        if (n <= 0) return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400);
+        if (n <= 0) { clear_secret(body, 1025); free(body); return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400); }
         got += (size_t)n;
     }
     body[got] = '\0';
     cJSON *root = companion_parse_strict_json(body, got);
-    clear_secret(body, sizeof(body));
+    clear_secret(body, 1025);
+    free(body);
     if (!root || !cJSON_IsObject(root)) { cJSON_Delete(root); return send_json_error(req, "400 Bad Request", "无效的 JSON"); }
     const cJSON *u = cJSON_GetObjectItemCaseSensitive(root, "url");
     const cJSON *nm = cJSON_GetObjectItemCaseSensitive(root, "name");
@@ -3796,6 +3823,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     portEXIT_CRITICAL(&s_lock);
     renew_clip_token();
     renew_session_pin(cfg->pin_required);
+    const char *stage = "credentials";
     transfer_credentials_t saved = {0};
     wifi_config_t wifi = {0};
     esp_err_t err = load_credentials(&saved);
@@ -3803,9 +3831,11 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     publish_credentials(&saved);
     if (cfg->mode == READ_PICO_TRANSFER_MODE_STA && (saved.version != 2 || !saved.count)) { err = ESP_ERR_NOT_FOUND; goto fail; }
     if (cfg->mode == READ_PICO_TRANSFER_MODE_STA) {
+        stage = "choose_network";
         s_connect_index = choose_saved_network(&saved);
         saved.recent = s_connect_index;
     }
+    stage = "storage";
     struct stat st;
     if (stat(cfg->root_dir, &st) || !S_ISDIR(st.st_mode)) { err = ESP_ERR_NOT_FOUND; goto fail; }
     unsigned removed = 0, restored = 0;
@@ -3825,18 +3855,23 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
             (void)remove(stale_part);
     }
     if (removed || restored) ESP_LOGI("transfer", "cleanup removed=%u restored=%u", removed, restored);
+    stage = "netif_init";
     err = esp_netif_init();
     if (err != ESP_OK) goto fail;
+    stage = "event_loop";
     err = esp_event_loop_create_default();
     if (err == ESP_OK) s_loop_owned = true;
     else if (err != ESP_ERR_INVALID_STATE) goto fail;
+    stage = "netif_create";
     s_netif = cfg->mode == READ_PICO_TRANSFER_MODE_AP ? esp_netif_create_default_wifi_ap() : esp_netif_create_default_wifi_sta();
     if (!s_netif) { err = ESP_ERR_NO_MEM; goto fail; }
+    stage = "wifi_init";
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     err = esp_wifi_init(&init); if (err != ESP_OK) goto fail;
     s_wifi = true;
     if (cfg->mode == READ_PICO_TRANSFER_MODE_AP) {
         uint8_t mac[6];
+        stage = "read_mac";
         err = esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP); if (err != ESP_OK) goto fail;
         snprintf((char *)wifi.ap.ssid, sizeof(wifi.ap.ssid), "ReadPico-%02X%02X", mac[4], mac[5]);
         strcpy((char *)wifi.ap.password, READ_PICO_TRANSFER_PASSWORD);
@@ -3851,24 +3886,32 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         wifi.sta.pmf_cfg.capable = true;
         wifi.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     }
+    stage = "wifi_events";
     err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event, NULL, &s_events);
     if (err != ESP_OK) goto fail;
     if (cfg->mode == READ_PICO_TRANSFER_MODE_STA) {
         err = esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, ip_event, NULL, &s_ip_events);
         if (err != ESP_OK) goto fail;
     }
+    stage = "wifi_config";
     err = esp_wifi_set_storage(WIFI_STORAGE_RAM); if (err != ESP_OK) goto fail;
     err = esp_wifi_set_mode(cfg->mode == READ_PICO_TRANSFER_MODE_AP ? WIFI_MODE_AP : WIFI_MODE_STA); if (err != ESP_OK) goto fail;
     err = esp_wifi_set_config(cfg->mode == READ_PICO_TRANSFER_MODE_AP ? WIFI_IF_AP : WIFI_IF_STA, &wifi); if (err != ESP_OK) goto fail;
     clear_secret(&wifi, sizeof(wifi)); clear_secret(&saved, sizeof(saved));
+    stage = "buffer";
     s_buffer = heap_caps_malloc(16384, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_buffer) { err = ESP_ERR_NO_MEM; goto fail; }
+    stage = "wifi_start";
     err = esp_wifi_start(); if (err != ESP_OK) goto fail;
     s_started = true;
+    stage = "httpd_start";
     httpd_config_t http = HTTPD_DEFAULT_CONFIG();
-    http.stack_size = 16384; http.max_uri_handlers = 56; http.recv_wait_timeout = 5;
+    // 大型请求缓冲与回调数组已迁至 PSRAM，12 KB 栈可腾出 4 KB 连续内部内存给 Wi-Fi/SoftAP。
+    // Large request buffers and callback tables live in PSRAM; 12 KB stack frees 4 KB contiguous internal RAM for Wi-Fi/SoftAP.
+    http.stack_size = 12288; http.max_uri_handlers = 56; http.recv_wait_timeout = 5;
     http.lru_purge_enable = true;
     err = httpd_start(&s_http, &http); if (err != ESP_OK) goto fail;
+    stage = "httpd_routes";
     const httpd_uri_t routes[] = {
         { .uri = "/", .method = HTTP_GET, .handler = index_handler },
         { .uri = "/info", .method = HTTP_GET, .handler = info_handler },
@@ -3930,8 +3973,16 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         portENTER_CRITICAL(&s_lock); connection_begin(&s_connection, now); portEXIT_CRITICAL(&s_lock);
         read_pico_transfer_service_poll();
     }
+    ESP_LOGI("transfer", "start ok mode=%s internal_free=%u internal_largest=%u",
+             cfg->mode == READ_PICO_TRANSFER_MODE_AP ? "ap" : "sta",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     return ESP_OK;
 fail:
+    ESP_LOGW("transfer", "start failed mode=%s stage=%s err=%s internal_free=%u internal_largest=%u",
+             cfg->mode == READ_PICO_TRANSFER_MODE_AP ? "ap" : "sta", stage, esp_err_to_name(err),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     clear_secret(&wifi, sizeof(wifi)); clear_secret(&saved, sizeof(saved));
     read_pico_transfer_stop(); set_error(err); return err;
 }

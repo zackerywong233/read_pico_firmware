@@ -84,6 +84,7 @@ static book_store_root_t s_root;
 static read_pico_transfer_status_t s_net;
 static read_pico_agent_config_t s_config;
 static bool s_net_started;
+static bool s_start_pending;
 static bool s_mqtt_started;
 static bool s_connected;
 static bool s_subscribed;
@@ -588,10 +589,13 @@ static void on_enter(app_ctx_t *ctx) {
     snprintf(s_notice, sizeof(s_notice), "正在启动 Agent 收件…");
     (void)ttf_font_suspend_sd(true); display_set_bulk_io(true);
     if (!s_messages || !s_image_results) { snprintf(s_notice, sizeof(s_notice), "内存不足"); return; }
-    network_start();
+    // 首帧先绘制界面，下一拍 on_tick 再启动 Wi-Fi，避免进页卡顿。
+    // Render the page first, then start Wi-Fi on the next tick so entry stays fast.
+    s_start_pending = true;
 }
 
 static void network_stop(void) {
+    s_start_pending = false;
     mqtt_stop();
     if (s_net_started) {
         read_pico_transfer_stop();
@@ -646,7 +650,11 @@ static void agent_on_exit(app_ctx_t *ctx) {
 static void on_media_lost(app_ctx_t *ctx) { (void)ctx; cleanup(); display_set_bulk_io(false); (void)ttf_font_suspend_sd(false); snprintf(s_notice, sizeof(s_notice), "TF 卡已移除，网络和图片任务已停止"); }
 
 static app_redraw_t on_tick(app_ctx_t *ctx) {
-    (void)ctx;
+    if (s_start_pending && (!ctx || !ctx->consumed)) {
+        s_start_pending = false;
+        network_start();
+        return APP_REDRAW_PAGE;
+    }
     if (s_beep_pending) {
         s_beep_pending = false;
         if (!app_settings_muted() && !read_pico_buzzer_score_busy()) {

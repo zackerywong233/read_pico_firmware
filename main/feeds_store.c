@@ -240,7 +240,10 @@ bool feeds_store_upsert(const char *name, const char *url, feed_kind_t kind,
     if (!feeds_url_valid(url)) return false;
     if (kind != FEED_KIND_RSS && kind != FEED_KIND_OPDS) return false;
 
-    feed_source_t list[FEEDS_MAX_SOURCES];
+    // 避免在 HTTPD 或主任务栈上分配 ~8 KB 源表导致栈溢出。
+    // Allocate the ~8 KB source table off-stack to prevent HTTPD / main-task stack overflow.
+    feed_source_t *list = feeds_alloc(sizeof(*list) * FEEDS_MAX_SOURCES);
+    if (!list) return false;
     size_t count = 0;
     (void)feeds_store_load(list, FEEDS_MAX_SOURCES, &count);
 
@@ -254,6 +257,8 @@ bool feeds_store_upsert(const char *name, const char *url, feed_kind_t kind,
     if (idx == count) {
         if (count >= FEEDS_MAX_SOURCES) {
             if (out_full) *out_full = true;
+            memset(list, 0, sizeof(*list) * FEEDS_MAX_SOURCES);
+            free(list);
             return false;
         }
         memset(&list[idx], 0, sizeof(list[idx]));
@@ -280,16 +285,22 @@ bool feeds_store_upsert(const char *name, const char *url, feed_kind_t kind,
         }
     }
     bool ok = feeds_store_save(list, count);
-    memset(list, 0, sizeof(list));
+    memset(list, 0, sizeof(*list) * FEEDS_MAX_SOURCES);
+    free(list);
     return ok;
 }
 
 bool feeds_store_delete(const char *url, bool *out_found) {
     if (out_found) *out_found = false;
     if (!url || !url[0]) return false;
-    feed_source_t list[FEEDS_MAX_SOURCES];
+    feed_source_t *list = feeds_alloc(sizeof(*list) * FEEDS_MAX_SOURCES);
+    if (!list) return false;
     size_t count = 0;
-    if (!feeds_store_load(list, FEEDS_MAX_SOURCES, &count)) return false;
+    if (!feeds_store_load(list, FEEDS_MAX_SOURCES, &count)) {
+        memset(list, 0, sizeof(*list) * FEEDS_MAX_SOURCES);
+        free(list);
+        return false;
+    }
     size_t found = count;
     for (size_t i = 0; i < count; ++i) {
         if (strcmp(list[i].url, url) == 0) {
@@ -298,7 +309,8 @@ bool feeds_store_delete(const char *url, bool *out_found) {
         }
     }
     if (found == count) {
-        memset(list, 0, sizeof(list));
+        memset(list, 0, sizeof(*list) * FEEDS_MAX_SOURCES);
+        free(list);
         return true;
     }
     if (out_found) *out_found = true;
@@ -307,20 +319,27 @@ bool feeds_store_delete(const char *url, bool *out_found) {
     }
     count--;
     bool ok = feeds_store_save(list, count);
-    memset(list, 0, sizeof(list));
+    memset(list, 0, sizeof(*list) * FEEDS_MAX_SOURCES);
+    free(list);
     return ok;
 }
 
 size_t feeds_store_list_public(feed_public_source_t *out, size_t max_items) {
     if (!out || max_items == 0) return 0;
-    feed_source_t list[FEEDS_MAX_SOURCES];
+    feed_source_t *list = feeds_alloc(sizeof(*list) * FEEDS_MAX_SOURCES);
+    if (!list) return 0;
     size_t count = 0;
-    if (!feeds_store_load(list, FEEDS_MAX_SOURCES, &count)) return 0;
+    if (!feeds_store_load(list, FEEDS_MAX_SOURCES, &count)) {
+        memset(list, 0, sizeof(*list) * FEEDS_MAX_SOURCES);
+        free(list);
+        return 0;
+    }
     size_t n = count < max_items ? count : max_items;
     for (size_t i = 0; i < n; ++i) {
         feeds_source_redact(&list[i], &out[i]);
     }
-    memset(list, 0, sizeof(list));
+    memset(list, 0, sizeof(*list) * FEEDS_MAX_SOURCES);
+    free(list);
     return n;
 }
 

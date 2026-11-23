@@ -97,13 +97,15 @@ typedef struct {
 
 static feeds_view_t s_view;
 static feeds_view_t s_prev_view;
-static feed_source_t s_sources[FEEDS_MAX_SOURCES];
+// 订阅源表(~8.2 KB)与导航栈(~2 KB)进页时放 PSRAM、离页释放，避免常驻内部 DRAM。
+// Keep feed sources (~8.2 KB) and nav URLs (~2 KB) in PSRAM while active to preserve internal DRAM.
+static feed_source_t *s_sources;
 static size_t s_source_count;
 static int s_active_source = -1;
 static int s_source_page;
 static bool s_delete_mode;
 
-static char s_nav_urls[FEEDS_NAV_DEPTH][FEEDS_URL_MAX];
+static char (*s_nav_urls)[FEEDS_URL_MAX];
 static int s_nav_depth;
 static feed_parsed_t s_parsed;
 static int s_entry_page;
@@ -117,6 +119,7 @@ static char s_article_title[160];
 static book_store_root_t s_root;
 static read_pico_transfer_status_t s_net;
 static bool s_net_started;
+static bool s_start_pending;
 static bool s_net_ready;
 static int64_t s_net_poll_ms;
 static bool s_storage_changed;
@@ -178,9 +181,11 @@ static void free_job_res(feeds_job_res_t *res) {
 }
 
 static void reload_sources(void) {
-    memset(s_sources, 0, sizeof(s_sources));
     s_source_count = 0;
-    (void)feeds_store_load(s_sources, FEEDS_MAX_SOURCES, &s_source_count);
+    if (s_sources) {
+        memset(s_sources, 0, sizeof(*s_sources) * FEEDS_MAX_SOURCES);
+        (void)feeds_store_load(s_sources, FEEDS_MAX_SOURCES, &s_source_count);
+    }
     int pages = (int)((s_source_count + FEEDS_PER_PAGE - 1) / FEEDS_PER_PAGE);
     if (pages <= 0) pages = 1;
     if (s_source_page >= pages) s_source_page = pages - 1;
@@ -465,7 +470,7 @@ static bool start_xml_fetch(const char *url) {
     if (!req) return false;
     req->kind = FEEDS_JOB_FETCH_XML;
     snprintf(req->url, sizeof(req->url), "%s", url);
-    if (s_active_source >= 0 && (size_t)s_active_source < s_source_count) {
+    if (s_sources && s_active_source >= 0 && (size_t)s_active_source < s_source_count) {
         const feed_source_t *src = &s_sources[s_active_source];
         (void)feeds_build_basic_auth(src->auth_user, src->auth_pass, req->auth_hdr, sizeof(req->auth_hdr));
     }
@@ -499,7 +504,7 @@ static bool start_book_download(const feed_item_t *item, bool open_after) {
     snprintf(req->save_dir, sizeof(req->save_dir), "%s", s_root.path);
     snprintf(req->file_title, sizeof(req->file_title), "%.*s", (int)(sizeof(req->file_title) - 1), item->title);
     snprintf(req->file_ext, sizeof(req->file_ext), "%s", item->acq_ext);
-    if (s_active_source >= 0 && (size_t)s_active_source < s_source_count) {
+    if (s_sources && s_active_source >= 0 && (size_t)s_active_source < s_source_count) {
         const feed_source_t *src = &s_sources[s_active_source];
         (void)feeds_build_basic_auth(src->auth_user, src->auth_pass, req->auth_hdr, sizeof(req->auth_hdr));
     }
@@ -551,6 +556,7 @@ static void network_start(void) {
 }
 
 static void network_stop(void) {
+    s_start_pending = false;
     if (!s_net_started) return;
     read_pico_transfer_stop();
     s_net_started = false;
@@ -618,7 +624,7 @@ static bool save_article_txt(void) {
 static void render_sources(uint8_t *fb) {
     char sub[96];
     snprintf(sub, sizeof(sub), "%s · 共 %u 个源",
-             s_net_ready ? "Wi-Fi 已连接" : (s_net_started ? "连接中…" : "离线模式"),
+             s_net_ready ? "Wi-Fi 已连接" : ((s_net_started || s_start_pending) ? "连接中…" : "离线模式"),
              (unsigned)s_source_count);
     ui_draw_header(fb, "订阅书库", sub);
 
@@ -627,7 +633,7 @@ static void render_sources(uint8_t *fb) {
     }
 
     int list_y = UI_CONTENT_TOP + 40;
-    if (s_source_count == 0) {
+    if (s_source_count == 0 || !s_sources) {
         ui_text_vc(fb, epd_rotated_display_width() / 2, list_y + 180, UI_PX_BODY,
                    "暂无订阅源", EPD_DRAW_ALIGN_CENTER, false);
         ui_text_vc(fb, epd_rotated_display_width() / 2, list_y + 236, UI_PX_CAPTION,
@@ -772,6 +778,14 @@ static void on_enter(app_ctx_t *ctx) {
     (void)ctx;
     app_ble_wifi_hold(true);
     if (!s_res_queue) s_res_queue = xQueueCreate(1, sizeof(feeds_job_res_t *));
+    if (!s_sources) {
+        s_sources = heap_caps_calloc(FEEDS_MAX_SOURCES, sizeof(*s_sources), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_sources) s_sources = calloc(FEEDS_MAX_SOURCES, sizeof(*s_sources));
+    }
+    if (!s_nav_urls) {
+        s_nav_urls = heap_caps_calloc(FEEDS_NAV_DEPTH, sizeof(*s_nav_urls), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_nav_urls) s_nav_urls = calloc(FEEDS_NAV_DEPTH, sizeof(*s_nav_urls));
+    }
     (void)ttf_font_suspend_sd(true);
     display_set_bulk_io(true);
     s_view = FEEDS_VIEW_SOURCES;
@@ -785,13 +799,17 @@ static void on_enter(app_ctx_t *ctx) {
     s_last_saved_path[0] = '\0';
     s_storage_changed = false;
     s_net_started = false;
+    s_start_pending = false;
     s_net_ready = false;
     s_net_poll_ms = 0;
     s_notice[0] = '\0';
     feeds_parsed_free(&s_parsed);
     free_article();
     reload_sources();
-    network_start();
+    // 首帧先渲染订阅源列表，下一拍 on_tick 再启动 Wi-Fi，避免进页卡顿。
+    // Paint the source list first and start Wi-Fi on the next tick so entry stays fast.
+    s_start_pending = true;
+    snprintf(s_notice, sizeof(s_notice), "正在连接已保存 Wi-Fi…");
 }
 
 static void feeds_on_exit(app_ctx_t *ctx) {
@@ -800,7 +818,15 @@ static void feeds_on_exit(app_ctx_t *ctx) {
     network_stop();
     feeds_parsed_free(&s_parsed);
     free_article();
-    memset(s_sources, 0, sizeof(s_sources));
+    if (s_sources) {
+        memset(s_sources, 0, sizeof(*s_sources) * FEEDS_MAX_SOURCES);
+        free(s_sources);
+        s_sources = NULL;
+    }
+    s_source_count = 0;
+    free(s_nav_urls);
+    s_nav_urls = NULL;
+    s_nav_depth = 0;
     app_ble_wifi_hold(false);
     if (s_storage_changed) book_store_notify_changed();
     if (s_res_queue) { vQueueDelete(s_res_queue); s_res_queue = NULL; }
@@ -820,6 +846,11 @@ static void feeds_on_media_lost(app_ctx_t *ctx) {
 }
 
 static app_redraw_t on_tick(app_ctx_t *ctx) {
+    if (s_start_pending && !ctx->consumed) {
+        s_start_pending = false;
+        network_start();
+        return APP_REDRAW_PAGE;
+    }
     feeds_job_res_t *res = NULL;
     if (s_res_queue && xQueueReceive(s_res_queue, &res, 0) == pdTRUE) {
         if (res->kind == FEEDS_JOB_FETCH_XML) {
@@ -905,7 +936,7 @@ static bool navigate_back(void) {
         return true;
     }
     if (s_view == FEEDS_VIEW_ENTRIES) {
-        if (s_nav_depth > 1) {
+        if (s_nav_urls && s_nav_depth > 1) {
             s_nav_depth--;
             (void)start_xml_fetch(s_nav_urls[s_nav_depth - 1]);
             return true;
@@ -971,7 +1002,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         }
         int list_y = UI_CONTENT_TOP + 40;
         size_t start = (size_t)s_source_page * FEEDS_PER_PAGE;
-        for (int row = 0; row < FEEDS_PER_PAGE && start + (size_t)row < s_source_count; ++row) {
+        for (int row = 0; s_sources && row < FEEDS_PER_PAGE && start + (size_t)row < s_source_count; ++row) {
             if (!ui_rect_hit(ui_grid_rect(0, 1, row, list_y, 112), x, y)) continue;
             size_t idx = start + (size_t)row;
             if (s_delete_mode) {
@@ -982,9 +1013,10 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
                 snprintf(s_notice, sizeof(s_notice), "%s", found ? "已删除订阅源" : "删除失败");
                 return APP_REDRAW_PAGE;
             }
+            if (!s_nav_urls) return APP_REDRAW_NONE;
             s_active_source = (int)idx;
             s_nav_depth = 1;
-            snprintf(s_nav_urls[0], sizeof(s_nav_urls[0]), "%s", s_sources[idx].url);
+            snprintf(s_nav_urls[0], FEEDS_URL_MAX, "%s", s_sources[idx].url);
             (void)start_xml_fetch(s_nav_urls[0]);
             return APP_REDRAW_PAGE;
         }
@@ -995,7 +1027,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         int pages = (int)((s_parsed.count + FEEDS_PER_PAGE - 1) / FEEDS_PER_PAGE);
         if (pages <= 0) pages = 1;
         if (ui_rect_hit(ui_bar_rect(0, 4), x, y)) { navigate_back(); return APP_REDRAW_PAGE; }
-        if (ui_rect_hit(ui_bar_rect(1, 4), x, y) && s_nav_depth > 0) {
+        if (ui_rect_hit(ui_bar_rect(1, 4), x, y) && s_nav_urls && s_nav_depth > 0) {
             (void)start_xml_fetch(s_nav_urls[s_nav_depth - 1]);
             return APP_REDRAW_PAGE;
         }
@@ -1005,11 +1037,11 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         }
         if (ui_rect_hit(ui_bar_rect(3, 4), x, y)) {
             if (s_entry_page + 1 < pages) { s_entry_page++; return APP_REDRAW_PAGE; }
-            if (s_parsed.next_url[0]) {
+            if (s_nav_urls && s_parsed.next_url[0]) {
                 if (s_nav_depth < FEEDS_NAV_DEPTH) {
-                    snprintf(s_nav_urls[s_nav_depth++], sizeof(s_nav_urls[0]), "%s", s_parsed.next_url);
+                    snprintf(s_nav_urls[s_nav_depth++], FEEDS_URL_MAX, "%s", s_parsed.next_url);
                 } else {
-                    snprintf(s_nav_urls[FEEDS_NAV_DEPTH - 1], sizeof(s_nav_urls[0]), "%s", s_parsed.next_url);
+                    snprintf(s_nav_urls[FEEDS_NAV_DEPTH - 1], FEEDS_URL_MAX, "%s", s_parsed.next_url);
                 }
                 (void)start_xml_fetch(s_nav_urls[s_nav_depth - 1]);
                 return APP_REDRAW_PAGE;
@@ -1029,11 +1061,11 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
                 s_view = FEEDS_VIEW_DETAIL;
                 return APP_REDRAW_PAGE;
             }
-            if (it->is_nav && it->link[0]) {
+            if (it->is_nav && it->link[0] && s_nav_urls) {
                 if (s_nav_depth < FEEDS_NAV_DEPTH) {
-                    snprintf(s_nav_urls[s_nav_depth++], sizeof(s_nav_urls[0]), "%s", it->link);
+                    snprintf(s_nav_urls[s_nav_depth++], FEEDS_URL_MAX, "%s", it->link);
                 } else {
-                    snprintf(s_nav_urls[FEEDS_NAV_DEPTH - 1], sizeof(s_nav_urls[0]), "%s", it->link);
+                    snprintf(s_nav_urls[FEEDS_NAV_DEPTH - 1], FEEDS_URL_MAX, "%s", it->link);
                 }
                 (void)start_xml_fetch(s_nav_urls[s_nav_depth - 1]);
                 return APP_REDRAW_PAGE;
@@ -1094,11 +1126,11 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
         if (key == UI_KEY_3) {
             ctx->key_handled = true;
             if (s_entry_page + 1 < pages) { s_entry_page++; return APP_REDRAW_PAGE; }
-            if (s_parsed.next_url[0]) {
+            if (s_nav_urls && s_parsed.next_url[0]) {
                 if (s_nav_depth < FEEDS_NAV_DEPTH) {
-                    snprintf(s_nav_urls[s_nav_depth++], sizeof(s_nav_urls[0]), "%s", s_parsed.next_url);
+                    snprintf(s_nav_urls[s_nav_depth++], FEEDS_URL_MAX, "%s", s_parsed.next_url);
                 } else {
-                    snprintf(s_nav_urls[FEEDS_NAV_DEPTH - 1], sizeof(s_nav_urls[0]), "%s", s_parsed.next_url);
+                    snprintf(s_nav_urls[FEEDS_NAV_DEPTH - 1], FEEDS_URL_MAX, "%s", s_parsed.next_url);
                 }
                 (void)start_xml_fetch(s_nav_urls[s_nav_depth - 1]);
                 return APP_REDRAW_PAGE;

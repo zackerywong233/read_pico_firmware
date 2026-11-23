@@ -9,11 +9,23 @@
 #include "web_bookmarks.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
+#ifdef ESP_PLATFORM
+#include "esp_heap_caps.h"
+#endif
 #include "nvs.h"
 
 #define WEB_NVS_NS "read_pico"
+
+static void *web_bookmarks_alloc(size_t n) {
+#ifdef ESP_PLATFORM
+    void *p = heap_caps_calloc(1, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (p) return p;
+#endif
+    return calloc(1, n);
+}
 
 static bool valid_bookmark_url(const char *url) {
     if (!url || !url[0]) return false;
@@ -84,7 +96,8 @@ esp_err_t web_bookmarks_save(const web_bookmark_t items[WEB_BOOKMARK_MAX], size_
 
 esp_err_t web_bookmarks_upsert(const char *title, const char *url) {
     if (!valid_bookmark_url(url)) return ESP_ERR_INVALID_ARG;
-    web_bookmark_t items[WEB_BOOKMARK_MAX];
+    web_bookmark_t *items = web_bookmarks_alloc(sizeof(*items) * WEB_BOOKMARK_MAX);
+    if (!items) return ESP_ERR_NO_MEM;
     size_t count = 0;
     web_bookmarks_load(items, &count);
 
@@ -97,17 +110,27 @@ esp_err_t web_bookmarks_upsert(const char *title, const char *url) {
                  (int)(sizeof(items[idx].title) - 1), clean_title);
     } else {
         if (!web_bookmark_add(items, &count, clean_title, url)) {
-            return count >= WEB_BOOKMARK_MAX ? ESP_ERR_NO_MEM : ESP_ERR_INVALID_ARG;
+            esp_err_t err = count >= WEB_BOOKMARK_MAX ? ESP_ERR_NO_MEM : ESP_ERR_INVALID_ARG;
+            free(items);
+            return err;
         }
     }
-    return web_bookmarks_save(items, count);
+    esp_err_t err = web_bookmarks_save(items, count);
+    free(items);
+    return err;
 }
 
 esp_err_t web_bookmarks_delete(const char *url) {
     if (!url || !url[0] || strlen(url) >= WEB_BOOKMARK_URL_MAX) return ESP_ERR_INVALID_ARG;
-    web_bookmark_t items[WEB_BOOKMARK_MAX];
+    web_bookmark_t *items = web_bookmarks_alloc(sizeof(*items) * WEB_BOOKMARK_MAX);
+    if (!items) return ESP_ERR_NO_MEM;
     size_t count = 0;
     web_bookmarks_load(items, &count);
-    if (!web_bookmark_remove(items, &count, url)) return ESP_ERR_NOT_FOUND;
-    return web_bookmarks_save(items, count);
+    if (!web_bookmark_remove(items, &count, url)) {
+        free(items);
+        return ESP_ERR_NOT_FOUND;
+    }
+    esp_err_t err = web_bookmarks_save(items, count);
+    free(items);
+    return err;
 }

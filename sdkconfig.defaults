@@ -24,15 +24,16 @@ CONFIG_SPI_FLASH_HPM_DC_DISABLE=y
 CONFIG_SPIRAM_SPEED_120M=y
 CONFIG_SPIRAM_TIMING_TUNING_POINT_VIA_TEMPERATURE_SENSOR=n
 CONFIG_SPIRAM_USE_MALLOC=y
-# 4 KB 以上通用分配直接走 PSRAM，并保留 64 KB 内部 DMA 内存供 Wi-Fi/BLE 共存与显示使用。
-# Route general allocations > 4 KB to PSRAM and reserve 64 KB internal DMA RAM for Wi-Fi/BLE coex and display.
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+# 512 B 以上通用分配优先走 PSRAM，并保留 64 KB 内部 DMA 内存供 Wi-Fi/SoftAP/BLE 与显示使用。
+# Route general allocations >= 512 B to PSRAM and reserve 64 KB internal DMA RAM for Wi-Fi/SoftAP/BLE and display.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=512
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 # 渲染线程逐行流式读 PSRAM 里的 framebuffer，cache 越大预取越不容易失效
 CONFIG_ESP32S3_DATA_CACHE_64KB=y
-# PNG/封面解码与书架渲染需要充足主任务栈空间。/ PNG/cover decoding and shelf rendering need ample main task stack.
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=24576
+# 封面/EPUB/订阅表缓冲已迁至 PSRAM，18 KB 主栈兼顾安全余量与 Wi-Fi 内部内存。
+# Cover/EPUB/feed buffers live in PSRAM; 18 KB main stack balances headroom with Wi-Fi internal RAM.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=18432
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
