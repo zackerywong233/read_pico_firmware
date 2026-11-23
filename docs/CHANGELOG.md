@@ -1,5 +1,10 @@
 # 版本变更 / Changelog
 
+## v1.0.3 · 2026-11-23
+
+- 修复图书「纯净」刷新档位静置约 1 分钟后背景逐渐泛黑、透出前几页文字残影的问题：在 `display` 新增 `update_display_full_with()`，将图书阅读的 `GC16` 翻页（纯净模式每页、均衡/极速周期清屏与切章）及全刷路径改用原厂完整 48 相直流平衡波形 `E0470_FULL_WAVEFORM`，消除裁剪版 `GC16` 连续触发时白底（`15→15`）累积 `+6` 相直流偏置导致的电荷回弹与前页透字，并补充主机显示与波形直流平衡回归测试。
+  Fix book reader background darkening and prior-page ghost bleed after ~1 minute idle in Clean refresh mode: add `update_display_full_with()` in `display` and route book `GC16` page turns (Clean every turn, Balanced/Fast periodic clean, chapter turns) and full refreshes through the unmodified 48-phase DC-balanced `E0470_FULL_WAVEFORM` instead of the asymmetrically trimmed `GC16` LUT (+6 net white phases on `15→15`), with host display and DC-balance regression tests.
+
 ## v1.0.2 · 2026-11-23
 
 - 图书书架排版与分页交互修复：修复顶部扫描告警（如「部分目录或文件不可读，请检查后重扫」）与首行书籍及「最近阅读」卡片重叠的问题；在 `ui_kit` 新增禁用态按钮原语 `ui_draw_button_disabled()`，书架/目录/管理页首末页（含仅有一页时）的「上一页」「下一页」自动置灰且不可点击、不再触发无效刷屏。

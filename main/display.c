@@ -138,12 +138,21 @@ bool display_take_white_exit(void) {
     return hold;
 }
 
-enum EpdDrawError update_display_full(EpdiyHighlevelState* hl) {
-    use_scan_for(&E0470_WAVEFORM, MODE_GC16);
+enum EpdDrawError update_display_full_with(
+    EpdiyHighlevelState* hl, const EpdWaveform* waveform
+) {
+    if (waveform == NULL) waveform = &E0470_WAVEFORM;
+    use_scan_for(waveform, MODE_GC16);
     epd_poweron();
-    enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, MODE_GC16, true, NULL);
+    epd_hl_waveform(hl, waveform);
+    enum EpdDrawError result = hl_update(hl, waveform, MODE_GC16, true, NULL);
+    epd_hl_waveform(hl, &E0470_WAVEFORM);
     rails_keepalive();
     return result;
+}
+
+enum EpdDrawError update_display_full(EpdiyHighlevelState* hl) {
+    return update_display_full_with(hl, &E0470_WAVEFORM);
 }
 
 // 指定波形整屏刷一次，刷完把默认波形装回去。用来 A/B 两条灰阶表。

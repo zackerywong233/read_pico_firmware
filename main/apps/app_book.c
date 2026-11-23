@@ -1381,13 +1381,15 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     if (s_view == READING && (s_text || s_cbz_mode) && !s_image_open) reader_rotation_begin();
     else reader_rotation_end();
     if (s_page_turn) {
-        if (s_page_turn_mode == MODE_GC16) err = update_display_full(ctx->hl);
+        // 完整 48 相 GC16 保持直流平衡，避免纯净模式连续翻页后静置返黑与前页透字。
+        // Full 48-phase GC16 preserves DC balance, preventing idle darkening and prior-page bleed in clean mode.
+        if (s_page_turn_mode == MODE_GC16) err = update_display_full_with(ctx->hl, &E0470_FULL_WAVEFORM);
         else err = update_display_with(ctx->hl, &E0470_WAVEFORM, s_page_turn_mode);
         s_page_turn = false;
     }
     else if (redraw == APP_REDRAW_FULL || s_full) {
         s_pages_since_clean = 0;
-        err = update_display_full(ctx->hl);
+        err = update_display_full_with(ctx->hl, &E0470_FULL_WAVEFORM);
     }
     else if (redraw == APP_REDRAW_AREA) {
         err = update_display_area_with(ctx->hl, &E0470_WAVEFORM, s_mode, s_area);

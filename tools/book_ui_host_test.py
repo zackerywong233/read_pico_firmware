@@ -644,3 +644,24 @@ int main(void) {
     home_c.write_text(home_unit, encoding="utf-8")
     subprocess.run(["gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined", str(home_c), "-o", str(home_exe)], check=True)
     subprocess.run([str(home_exe)], check=True)
+
+    # 验证图书 GC16 翻页与全刷均使用原厂完整直流平衡波形 E0470_FULL_WAVEFORM。
+    # Verify book GC16 page turns and full refreshes use the DC-balanced E0470_FULL_WAVEFORM.
+    present_fn = function("present")
+    assert "update_display_full_with(ctx->hl, &E0470_FULL_WAVEFORM)" in present_fn
+    assert "update_display_full(ctx->hl)" not in present_fn
+    gc16_src = (Path(__file__).resolve().parents[1] / "components/e0470_epaper_waveform/waveforms/gc16.h").read_text(encoding="utf-8")
+    gm = re.search(r"\[[^\]]+\]\[16\]\[4\]\s*=\s*\{(.*?)\};", gc16_src, re.S)
+    assert gm, "gc16 LUT"
+    gvals = [int(x, 0) for x in re.findall(r"0x[0-9a-fA-F]+", gm.group(1))]
+    gframes = len(gvals) // 64
+    def gc16_dc(fr, to):
+        b = w = 0
+        for f in range(gframes):
+            act = (gvals[(f * 16 + to) * 4 + fr // 4] >> (6 - 2 * (fr % 4))) & 3
+            if act == 1: b += 1
+            elif act == 2: w += 1
+        return w - b
+    assert abs(gc16_dc(15, 15)) <= 1, f"full GC16 15->15 DC imbalance: {gc16_dc(15, 15)}"
+    assert gc16_dc(15, 0) + gc16_dc(0, 15) == 0, "full GC16 15->0->15 DC imbalance"
+    print("book_gc16_full_waveform_test: PASS")
