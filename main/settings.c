@@ -39,7 +39,6 @@
 #define NVS_KEY_BOOK_ROTATION "bk_rot"
 #define NVS_KEY_BOOK_TOP "bk_top"
 #define NVS_KEY_BOOK_BOT "bk_bot"
-#define NVS_KEY_BOOK_ANIM "bk_anim"
 #define NVS_KEY_BOOK_PARA "bk_para"
 #define NVS_KEY_BOOK_INDENT "bk_ind"
 #define NVS_KEY_BOOK_SHELF "bk_shelf"
@@ -90,7 +89,6 @@ static uint16_t s_book_weight;
 static uint8_t s_book_rotation;
 static bool s_book_top = true;
 static bool s_book_bot = true;
-static uint8_t s_book_anim = 1;
 static uint8_t s_book_para = 1;
 static uint8_t s_book_indent;
 static uint8_t s_book_shelf;
@@ -192,7 +190,6 @@ void app_settings_init(void) {
     uint8_t bk_u8 = 0;
     if (nvs_get_u8(h, NVS_KEY_BOOK_TOP, &bk_u8) == ESP_OK) s_book_top = bk_u8 != 0;
     if (nvs_get_u8(h, NVS_KEY_BOOK_BOT, &bk_u8) == ESP_OK) s_book_bot = bk_u8 != 0;
-    if (nvs_get_u8(h, NVS_KEY_BOOK_ANIM, &bk_u8) == ESP_OK && bk_u8 <= 2) s_book_anim = bk_u8;
     if (nvs_get_u8(h, NVS_KEY_BOOK_PARA, &bk_u8) == ESP_OK && bk_u8 <= 2) s_book_para = bk_u8;
     if (nvs_get_u8(h, NVS_KEY_BOOK_INDENT, &bk_u8) == ESP_OK && bk_u8 <= 1) s_book_indent = bk_u8;
     if (nvs_get_u8(h, NVS_KEY_BOOK_SHELF, &bk_u8) == ESP_OK && bk_u8 <= 1) s_book_shelf = bk_u8;
@@ -503,12 +500,6 @@ void app_settings_set_book_bottom_bar(bool on) {
     if (s_book_bot == on) return;
     s_book_bot = on;
     nvs_put_u8(NVS_KEY_BOOK_BOT, on ? 1 : 0);
-}
-uint8_t app_settings_book_anim(void) { return s_book_anim; }
-void app_settings_set_book_anim(uint8_t mode) {
-    if (mode > 2 || s_book_anim == mode) return;
-    s_book_anim = mode;
-    nvs_put_u8(NVS_KEY_BOOK_ANIM, mode);
 }
 uint8_t app_settings_book_para_gap(void) { return s_book_para; }
 void app_settings_set_book_para_gap(uint8_t preset) {

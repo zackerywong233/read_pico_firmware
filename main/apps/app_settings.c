@@ -284,22 +284,18 @@ static void render_display(uint8_t *fb) {
     snprintf(detail, sizeof(detail), "%s", margin_name(app_settings_book_margin()));
     draw_kv_btn(fb, row_rect(5), "阅读页边距", detail, s_pressed == 6);
 
-    static const char *anim_names[3] = { "关闭", "波前极速", "波前+润色" };
-    snprintf(detail, sizeof(detail), "%s", anim_names[app_settings_book_anim() % 3]);
-    draw_kv_btn(fb, row_rect(6), "翻页效果", detail, s_pressed == 7);
+    int y6 = UI_CONTENT_TOP + 6 * (UI_BTN_H + UI_GAP);
+    draw_action_btn(fb, ui_row_rect(0, 2, y6, UI_BTN_H),
+                    app_settings_book_top_bar() ? "顶部状态栏 开" : "顶部状态栏 关", s_pressed == 7);
+    draw_action_btn(fb, ui_row_rect(1, 2, y6, UI_BTN_H),
+                    app_settings_book_bottom_bar() ? "底部信息栏 开" : "底部信息栏 关", s_pressed == 8);
 
     int y7 = UI_CONTENT_TOP + 7 * (UI_BTN_H + UI_GAP);
-    draw_action_btn(fb, ui_row_rect(0, 2, y7, UI_BTN_H),
-                    app_settings_book_top_bar() ? "顶部状态栏 开" : "顶部状态栏 关", s_pressed == 8);
-    draw_action_btn(fb, ui_row_rect(1, 2, y7, UI_BTN_H),
-                    app_settings_book_bottom_bar() ? "底部信息栏 开" : "底部信息栏 关", s_pressed == 9);
-
-    int y8 = UI_CONTENT_TOP + 8 * (UI_BTN_H + UI_GAP);
     static const char *para_names[3] = { "段距 无", "段距 半行", "段距 一行" };
-    draw_action_btn(fb, ui_row_rect(0, 2, y8, UI_BTN_H),
-                    para_names[app_settings_book_para_gap() % 3], s_pressed == 10);
-    draw_action_btn(fb, ui_row_rect(1, 2, y8, UI_BTN_H),
-                    app_settings_book_indent() ? "缩进 强制两格" : "缩进 跟随原文", s_pressed == 11);
+    draw_action_btn(fb, ui_row_rect(0, 2, y7, UI_BTN_H),
+                    para_names[app_settings_book_para_gap() % 3], s_pressed == 9);
+    draw_action_btn(fb, ui_row_rect(1, 2, y7, UI_BTN_H),
+                    app_settings_book_indent() ? "缩进 强制两格" : "缩进 跟随原文", s_pressed == 10);
 
     draw_action_btn(fb, ui_bar_rect(0, 1), "返回设置", s_pressed == CTRL_BACK);
 }
@@ -462,9 +458,9 @@ static int hit_control(uint16_t x, uint16_t y, EpdRect *out_rect) {
 
     if (s_view == SETTINGS_VIEW_DISPLAY) {
         int y1 = UI_CONTENT_TOP + (UI_BTN_H + UI_GAP);
+        int y6 = UI_CONTENT_TOP + 6 * (UI_BTN_H + UI_GAP);
         int y7 = UI_CONTENT_TOP + 7 * (UI_BTN_H + UI_GAP);
-        int y8 = UI_CONTENT_TOP + 8 * (UI_BTN_H + UI_GAP);
-        EpdRect rects[12] = {
+        EpdRect rects[11] = {
             row_rect(0),
             ui_row_rect(0, 2, y1, UI_BTN_H),
             ui_row_rect(1, 2, y1, UI_BTN_H),
@@ -472,13 +468,12 @@ static int hit_control(uint16_t x, uint16_t y, EpdRect *out_rect) {
             row_rect(3),
             row_rect(4),
             row_rect(5),
-            row_rect(6),
+            ui_row_rect(0, 2, y6, UI_BTN_H),
+            ui_row_rect(1, 2, y6, UI_BTN_H),
             ui_row_rect(0, 2, y7, UI_BTN_H),
             ui_row_rect(1, 2, y7, UI_BTN_H),
-            ui_row_rect(0, 2, y8, UI_BTN_H),
-            ui_row_rect(1, 2, y8, UI_BTN_H),
         };
-        for (int i = 0; i < 12; ++i) {
+        for (int i = 0; i < 11; ++i) {
             if (ui_rect_hit(rects[i], x, y)) {
                 if (out_rect) *out_rect = rects[i];
                 return i;
@@ -667,14 +662,12 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
         } else if (hit == 6) {
             app_settings_set_book_margin((uint8_t)((app_settings_book_margin() + 1) % 3));
         } else if (hit == 7) {
-            app_settings_set_book_anim((uint8_t)((app_settings_book_anim() + 1) % 3));
-        } else if (hit == 8) {
             app_settings_set_book_top_bar(!app_settings_book_top_bar());
-        } else if (hit == 9) {
+        } else if (hit == 8) {
             app_settings_set_book_bottom_bar(!app_settings_book_bottom_bar());
-        } else if (hit == 10) {
+        } else if (hit == 9) {
             app_settings_set_book_para_gap((uint8_t)((app_settings_book_para_gap() + 1) % 3));
-        } else if (hit == 11) {
+        } else if (hit == 10) {
             app_settings_set_book_indent((uint8_t)((app_settings_book_indent() + 1) % 2));
         }
         return APP_REDRAW_PAGE;

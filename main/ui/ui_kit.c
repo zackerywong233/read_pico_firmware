@@ -512,6 +512,21 @@ void ui_draw_button(
     );
 }
 
+void ui_draw_button_disabled(
+    uint8_t* framebuffer, EpdRect rect, const char* label
+) {
+    ui_draw_round_rect(framebuffer, rect, UI_BTN_RADIUS, UI_GRAY_LIGHT);
+    int above = 0;
+    int below = 0;
+    ttf_measure_line_px(UI_PX_BTN, label, &above, &below);
+    ttf_draw_text_px(
+        framebuffer, rect.x + rect.width / 2,
+        rect.y + rect.height / 2 + (above - below) / 2,
+        UI_PX_BTN, label, EPD_DRAW_ALIGN_CENTER,
+        UI_INK_MUTED, UI_INK_WHITE
+    );
+}
+
 void ui_draw_chip(
     uint8_t* framebuffer, EpdRect rect, const char* label, bool on
 ) {

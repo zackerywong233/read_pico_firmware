@@ -139,11 +139,9 @@ static void draw_page_dots(uint8_t* fb, int page) {
     for (int i = 0; i < HOME_PAGES; i++) {
         const int cx = start_x + i * gap;
         if (i == page) {
-            epd_fill_rect((EpdRect){ .x = cx - 7, .y = HOME_DOTS_Y - 7, .width = 14, .height = 14 },
-                          UI_GRAY_BLACK, fb);
+            epd_fill_circle(cx, HOME_DOTS_Y, 7, UI_GRAY_BLACK, fb);
         } else {
-            ui_draw_round_rect(fb, (EpdRect){ .x = cx - 6, .y = HOME_DOTS_Y - 6, .width = 12, .height = 12 },
-                               6, UI_GRAY_BLACK);
+            epd_draw_circle(cx, HOME_DOTS_Y, 6, UI_GRAY_BLACK, fb);
         }
     }
 }

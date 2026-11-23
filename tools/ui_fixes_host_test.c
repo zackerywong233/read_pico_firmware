@@ -200,7 +200,6 @@ static uint8_t s_book_lh = 1;
 static uint8_t s_book_margin = 1;
 static bool s_book_top = true;
 static bool s_book_bot = true;
-static uint8_t s_book_anim = 1;
 static uint8_t s_book_para = 1;
 static uint8_t s_book_ind = 0;
 static app_sleep_mode_t s_sleep_mode = APP_SLEEP_DEEP;
@@ -230,8 +229,6 @@ bool app_settings_book_top_bar(void) { return s_book_top; }
 void app_settings_set_book_top_bar(bool v) { s_book_top = v; }
 bool app_settings_book_bottom_bar(void) { return s_book_bot; }
 void app_settings_set_book_bottom_bar(bool v) { s_book_bot = v; }
-uint8_t app_settings_book_anim(void) { return s_book_anim; }
-void app_settings_set_book_anim(uint8_t v) { s_book_anim = v; }
 uint8_t app_settings_book_para_gap(void) { return s_book_para; }
 void app_settings_set_book_para_gap(uint8_t v) { s_book_para = v; }
 uint8_t app_settings_book_indent(void) { return s_book_ind; }
@@ -498,19 +495,28 @@ static void test_settings_real_loop_navigation(void) {
     if (!setjmp(s_loop_exit)) app_loop_run(&cfg);
     assert(strcmp(s_last_header, "网络与时间") == 0);
 
-    // 场景 2：进入设置 -> 点按“显示与阅读” -> 点按“字号 +” -> 字号从 48 变为 52 -> 返回设置。
-    // Scenario 2: Settings -> Display & Reading -> tap Size + -> size changes 48->52 -> return to root.
+    // 场景 2：进入设置 -> 点按“显示与阅读” -> 点按“字号 +”与“顶部状态栏” -> 验证不含已删“翻页效果” -> 返回设置。
+    // Scenario 2: Settings -> Display & Reading -> tap Size + and Top Bar -> verify removed turn animation is absent -> return to root.
     s_book_px = 48;
+    s_book_top = true;
+    s_book_ind = 0;
     reset_steps();
     push_idle();
     push_tap(300, UI_CONTENT_TOP + (UI_BTN_H + UI_GAP) + 40); // Row 1: 显示与阅读
     EpdRect size_plus = ui_row_rect(1, 2, UI_CONTENT_TOP + (UI_BTN_H + UI_GAP), UI_BTN_H);
     push_tap(size_plus.x + 40, size_plus.y + 40); // 字号 +
+    EpdRect top_bar_btn = ui_row_rect(0, 2, UI_CONTENT_TOP + 6 * (UI_BTN_H + UI_GAP), UI_BTN_H);
+    push_tap(top_bar_btn.x + 40, top_bar_btn.y + 40); // 顶部状态栏
+    EpdRect indent_btn = ui_row_rect(1, 2, UI_CONTENT_TOP + 7 * (UI_BTN_H + UI_GAP), UI_BTN_H);
+    push_tap(indent_btn.x + 40, indent_btn.y + 40); // 缩进
     EpdRect back_btn = ui_bar_rect(0, 1);
     push_tap(back_btn.x + 40, back_btn.y + 40); // 返回设置
     push_idle();
     if (!setjmp(s_loop_exit)) app_loop_run(&cfg);
     assert(s_book_px == 52);
+    assert(s_book_top == false);
+    assert(s_book_ind == 1);
+    assert(!ui_saw_text("翻页效果"));
     assert(strcmp(s_last_header, "设置") == 0);
 
     // 场景 3：进入设置 -> 点按“电源与提示” -> 点按“全局蜂鸣静音” -> 静音状态反转。

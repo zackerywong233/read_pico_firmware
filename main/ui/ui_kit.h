@@ -98,6 +98,7 @@ extern "C" {
 #define UI_GRAY_LIGHT 0xB0
 #define UI_GRAY_BLACK 0x00
 #define UI_INK_WHITE 15
+#define UI_INK_MUTED 10
 #define UI_INK_BLACK 0
 
 /// 文字按「行的上沿」定位，基线由字号推出，调用处不用再算 ascender。
@@ -215,6 +216,11 @@ int ui_draw_hero(
 );
 void ui_draw_button(
     uint8_t* framebuffer, EpdRect rect, const char* label, bool on
+);
+/// 禁用态按钮：浅灰边框与灰字，提示控件当前不可点击。
+/// Disabled button: light-gray border and muted text for inactive controls.
+void ui_draw_button_disabled(
+    uint8_t* framebuffer, EpdRect rect, const char* label
 );
 /// 状态位小方块：置位内圈加粗，未置位只留浅边。
 /// Status chip: inset ring when set, light outline when clear.

@@ -1,5 +1,12 @@
 # 版本变更 / Changelog
 
+## v1.0.2 · 2026-11-23
+
+- 图书书架排版与分页交互修复：修复顶部扫描告警（如「部分目录或文件不可读，请检查后重扫」）与首行书籍及「最近阅读」卡片重叠的问题；在 `ui_kit` 新增禁用态按钮原语 `ui_draw_button_disabled()`，书架/目录/管理页首末页（含仅有一页时）的「上一页」「下一页」自动置灰且不可点击、不再触发无效刷屏。
+  Fix Books shelf notice layout and inactive pagination buttons: reserve top notice space so scan warnings never overlap the first book row or Recent Reading card; add `ui_draw_button_disabled()` in `ui_kit` so inactive Prev/Next buttons on single-page or boundary pages render grayed out and ignore presses/taps without triggering redraws.
+- 首页页码指示与阅读翻页精简：首页底部当前页指示由黑色实心方块改为黑色实心圆圈（非当前页同步为同心空心圆）；移除易残留黑色竖条纹的波前翻页动效及其「排版与显示」「设置 → 显示与阅读」中的相关选项，阅读翻页统一按刷新档位直走标准 `GC16` / `GL16` / `DU`。
+  Home indicator and reader page-turn cleanup: draw the active home page dot as a filled black circle (with concentric hollow circles for inactive pages) instead of a square; remove the wavefront page-turn animation that left vertical black stripes along with its Typography and Display Settings toggles so reader turns always use clean `GC16` / `GL16` / `DU` refreshes.
+
 ## v1.0.1 · 2026-11-23
 
 - 修复点击「图书」在提示“初始化内置存储…”后闪退回桌面（主任务栈溢出重启）：将书架封面绘制 `draw_book_cover_box()` 中 14 KB 缩略图缓冲及 EPUB 封面提取 `book_epub_extract_cover()` 的路径与 XML 缓冲从主任务栈移至 PSRAM 复用/分配，并将 `CONFIG_ESP_MAIN_TASK_STACK_SIZE` 提升至 `24576`，同时补充主机栈帧门禁与 EPUB 封面提取回归测试。

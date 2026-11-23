@@ -401,3 +401,246 @@ with tempfile.TemporaryDirectory() as tmp:
     frame_c = Path(tmp) / "frame_check.c"
     frame_c.write_text(frame_unit, encoding="utf-8")
     subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-Wframe-larger-than=1024", "-c", str(frame_c), "-o", str(obj)], check=True)
+
+    # 验证书架提示条不与书籍/最近阅读卡片重合，且单页/首末页翻页按钮不可点击、不触发重刷。
+    # Verify shelf notices never overlap books/recent card and inactive paging buttons are non-clickable without redraw.
+    import re
+    src_text = source.read_text(encoding="utf-8")
+    shelf_defines = "\n".join(re.findall(r"^#define (?:SHELF_[A-Z0-9_]+|BOOK_TYPO_COUNT) [0-9]+$", src_text, re.M))
+    assert "SHELF_NOTICE_Y" in shelf_defines and "BOOK_TYPO_COUNT" in shelf_defines
+    assert "run_wavefront_turn" not in src_text and "app_settings_book_anim" not in src_text
+    shelf_unit = r'''
+#include <assert.h>
+#include <limits.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#define UI_MARGIN 40
+#define UI_GAP 12
+#define UI_BTN_H 84
+#define UI_PX_CAPTION 28
+#define UI_CONTENT_TOP 176
+#define UI_CONTENT_BOTTOM 1056
+#define UI_BAR_TOP 1072
+#define UI_BAR_H 84
+#define BOOK_ROWS 7
+#define BOOK_GRID_ROWS 6
+#define BOOK_TOC_ROWS 10
+#define BOOK_NOTE_ROWS 8
+#define BOOK_TOOL_COUNT 12
+#define BOOK_SEARCH_RESULTS 7
+#define BOOK_STORE_PATH_MAX 288
+#define BOOK_KIND_CBZ 3
+#define MODE_DU 1
+#define MODE_GL16 2
+typedef struct { int x, y, width, height; } EpdRect;
+typedef struct { int leaf; bool request_menu; bool key_handled; int64_t now_ms; } app_ctx_t;
+typedef enum { APP_REDRAW_PAGE, APP_REDRAW_AREA, APP_REDRAW_NONE, APP_REDRAW_FULL } app_redraw_t;
+typedef enum { SHELF, READING, TOC, MANAGE, BULK, SEARCH, BOOKMARKS, EXCERPTS, TYPOGRAPHY, CHAPTER_RESULTS } book_view_t;
+typedef enum { UI_GESTURE_PRESS, UI_GESTURE_TAP, UI_GESTURE_LONG_PRESS, UI_GESTURE_SWIPE_L, UI_GESTURE_SWIPE_R, UI_GESTURE_SWIPE_U, UI_GESTURE_SWIPE_D, UI_GESTURE_CANCEL } ui_gesture_type_t;
+typedef struct { ui_gesture_type_t type; uint16_t x0, y0, x, y; } ui_gesture_event_t;
+typedef struct { char name[256], path[BOOK_STORE_PATH_MAX]; uint32_t size; bool is_flash, has_progress; uint8_t pct; uint32_t recent; bool selected, removed, search_match; } shelf_entry_t;
+typedef struct { size_t bookmark_count, excerpt_count; } book_notes_t;
+static int ui_content_width(void) { return 684 - 2 * UI_MARGIN; }
+static EpdRect ui_grid_rect(int col, int cols, int row, int y0, int h) {
+    int w = (ui_content_width() - (cols - 1) * UI_GAP) / cols;
+    return (EpdRect){ UI_MARGIN + col * (w + UI_GAP), y0 + row * (h + UI_GAP), w, h };
+}
+static EpdRect ui_row_rect(int col, int cols, int y0, int h) { return ui_grid_rect(col, cols, 0, y0, h); }
+static EpdRect ui_bar_rect(int col, int cols) {
+    int w = (ui_content_width() - (cols - 1) * UI_GAP) / cols;
+    return (EpdRect){ UI_MARGIN + col * (w + UI_GAP), UI_BAR_TOP, w, UI_BAR_H };
+}
+static int ui_bar_hit(uint16_t x, uint16_t y, int cols) {
+    for (int i = 0; i < cols; ++i) {
+        EpdRect r = ui_bar_rect(i, cols);
+        if ((int)x >= r.x && (int)x < r.x + r.width && (int)y >= r.y && (int)y < r.y + r.height) return i;
+    }
+    return -1;
+}
+static bool ui_rect_hit(EpdRect r, uint16_t x, uint16_t y) {
+    return (int)x >= r.x && (int)x < r.x + r.width && (int)y >= r.y && (int)y < r.y + r.height;
+}
+static book_view_t s_view;
+static shelf_entry_t s_entries[16];
+static shelf_entry_t* s_shelf = s_entries;
+static shelf_entry_t s_managed;
+static int s_count, s_visible_count, s_recent_index = -1, s_pressed_control = -1;
+static char s_message[128], s_shelf_warning[128], s_query[65], s_resume_path[BOOK_STORE_PATH_MAX], s_manage_message[128];
+static bool s_batch_confirm, s_note_delete_confirm, s_clear_confirm, s_delete_confirm, s_file_removed, s_toolbar, s_save_failed;
+static bool s_image_open, s_scan_pending, s_selecting;
+static size_t s_chapter_match_count, s_page, s_text_len, s_sel_start, s_sel_end;
+static int s_sel_line_y;
+static char* s_text;
+static book_notes_t s_notes;
+static uint8_t test_shelf_view;
+static unsigned test_paint_calls, test_action_calls;
+static uint8_t app_settings_book_shelf_view(void) { return test_shelf_view; }
+static size_t book_chapter_count(void) { return 1; }
+static EpdRect search_rect(int i) { (void)i; return (EpdRect){0}; }
+static EpdRect note_delete_rect(int i) { (void)i; return (EpdRect){0}; }
+static EpdRect note_action_rect(int i) { (void)i; return (EpdRect){0}; }
+static EpdRect batch_rect(int i) { (void)i; return (EpdRect){0}; }
+static EpdRect manage_rect(int i, int c) { (void)i; (void)c; return (EpdRect){0}; }
+static EpdRect tool_rect(int i) { (void)i; return (EpdRect){0}; }
+static EpdRect body_rect(void) { return (EpdRect){40, 24, 604, 1000}; }
+static void lock_draw(void) {}
+static void unlock_draw(void) {}
+static size_t book_layout_image_at(size_t p, EpdRect r, uint16_t x, uint16_t y, EpdRect* out) { (void)p; (void)r; (void)x; (void)y; (void)out; return SIZE_MAX; }
+static app_redraw_t close_image(app_ctx_t* ctx) { (void)ctx; return APP_REDRAW_PAGE; }
+static void reader_touch_map(uint16_t* x, uint16_t* y) { (void)x; (void)y; }
+static int book_kind(void) { return 0; }
+static bool book_layout_hit_text(size_t p, EpdRect r, uint16_t x, uint16_t y, size_t* o, int* ly) { (void)p; (void)r; (void)x; (void)y; (void)o; (void)ly; return false; }
+static size_t book_layout_page_start_offset(size_t p) { (void)p; return 0; }
+static size_t book_layout_page_count(void) { return 1; }
+static bool book_layout_sentence_bounds(const char* t, size_t l, size_t o, size_t a, size_t b, size_t* s, size_t* e) { (void)t; (void)l; (void)o; (void)a; (void)b; (void)s; (void)e; return false; }
+static void invalidate_prep(void) {}
+static app_redraw_t paint_reading(app_ctx_t* ctx, int m) { (void)ctx; (void)m; return APP_REDRAW_AREA; }
+static app_redraw_t turn_page(app_ctx_t* ctx, int d) { (void)ctx; (void)d; return APP_REDRAW_PAGE; }
+static app_redraw_t paint_control(app_ctx_t* ctx, EpdRect rect) { (void)ctx; (void)rect; ++test_paint_calls; return APP_REDRAW_AREA; }
+static app_redraw_t shelf_nav_action(app_ctx_t* ctx, int nav);
+static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
+    ++test_action_calls;
+    int nav = ui_bar_hit(x, y, 3);
+    if (nav == 0 || nav == 2) return shelf_nav_action(ctx, nav);
+    return APP_REDRAW_NONE;
+}
+static void copy_text(char* dst, size_t cap, const char* src) { snprintf(dst, cap, "%s", src); }
+''' + shelf_defines + "\n"
+    for name in ("row_rect", "typo_rect", "shelf_has_notice", "shelf_is_grid", "shelf_has_recent_card",
+                 "recent_card_rect", "shelf_grid_rect", "shelf_list_rect", "shelf_per_page",
+                 "leaves", "can_prev_leaf", "can_next_leaf", "shelf_nav_action",
+                 "control_at", "gesture_event"):
+        shelf_unit += function(name) + "\n"
+    shelf_unit += r'''
+int main(void) {
+    app_ctx_t ctx = {0};
+    s_view = SHELF;
+    s_count = s_visible_count = 3;
+    test_shelf_view = 0; // 网格模式 / Grid mode
+    int notice_bottom = SHELF_NOTICE_Y + UI_PX_CAPTION;
+    int footer_top = UI_CONTENT_BOTTOM - UI_PX_CAPTION;
+
+    // 1. 无警告时保持原排版位置。/ Preserve normal layout coordinates without warnings.
+    s_shelf_warning[0] = 0;
+    s_message[0] = 0;
+    assert(!shelf_has_notice());
+    assert(recent_card_rect().y == SHELF_CONTENT_Y_PLAIN);
+    assert(shelf_grid_rect(0, false).y == SHELF_GRID_Y_PLAIN);
+    assert(shelf_grid_rect(0, true).y == 424);
+
+    // 2. 存在扫描不可读警告时，首行网格/最近阅读卡片与警告文字不重合且不越过底栏说明。
+    // With unreadable warning, first grid row and recent card stay below notice text and above footer hint.
+    strcpy(s_shelf_warning, "部分目录或文件不可读，请检查后重扫");
+    assert(shelf_has_notice());
+    EpdRect g0 = shelf_grid_rect(0, false);
+    EpdRect g5 = shelf_grid_rect(5, false);
+    assert(g0.y >= notice_bottom + 12);
+    assert(g5.y + g5.height <= footer_top - 12);
+
+    s_recent_index = 0;
+    assert(shelf_has_recent_card(&ctx));
+    EpdRect rc = recent_card_rect();
+    EpdRect gr0 = shelf_grid_rect(0, true);
+    EpdRect gr5 = shelf_grid_rect(5, true);
+    assert(rc.y >= notice_bottom + 12);
+    assert(gr0.y >= rc.y + rc.height + UI_GAP);
+    assert(gr5.y + gr5.height <= footer_top - 12);
+
+    // 列表模式（含/不含最近阅读）同样不重合。/ List mode with or without recent card also stays clear.
+    test_shelf_view = 1;
+    EpdRect lr0 = shelf_list_rect(0, false, true);
+    EpdRect lr4 = shelf_list_rect(4, false, true);
+    assert(lr0.y >= rc.y + rc.height + UI_GAP);
+    assert(lr4.y + lr4.height <= footer_top - 12);
+    EpdRect ln0 = shelf_list_rect(0, false, false);
+    assert(ln0.y >= notice_bottom + 12);
+    test_shelf_view = 0;
+
+    // 3. 单页书架：上一页与下一页均禁用，按下和点按都不触发重刷。
+    // Single-page shelf: both prev and next are disabled; press and tap trigger zero redraws.
+    assert(leaves() == 1 && !can_prev_leaf(&ctx) && !can_next_leaf(&ctx));
+    EpdRect prev_btn = ui_bar_rect(0, 3);
+    EpdRect mid_btn = ui_bar_rect(1, 3);
+    EpdRect next_btn = ui_bar_rect(2, 3);
+    EpdRect hit_r = {0};
+    assert(control_at(&ctx, (uint16_t)(prev_btn.x + 10), (uint16_t)(prev_btn.y + 10), &hit_r) == -1);
+    assert(control_at(&ctx, (uint16_t)(next_btn.x + 10), (uint16_t)(next_btn.y + 10), &hit_r) == -1);
+    assert(control_at(&ctx, (uint16_t)(mid_btn.x + 10), (uint16_t)(mid_btn.y + 10), &hit_r) == 101);
+    ui_gesture_event_t ev = { .type = UI_GESTURE_PRESS, .x0 = (uint16_t)(next_btn.x + 10), .y0 = (uint16_t)(next_btn.y + 10),
+                              .x = (uint16_t)(next_btn.x + 10), .y = (uint16_t)(next_btn.y + 10) };
+    assert(gesture_event(&ctx, &ev) == APP_REDRAW_NONE);
+    ev.type = UI_GESTURE_TAP;
+    assert(gesture_event(&ctx, &ev) == APP_REDRAW_NONE);
+    assert(test_paint_calls == 0 && test_action_calls == 0 && ctx.leaf == 0);
+    assert(shelf_nav_action(&ctx, 0) == APP_REDRAW_NONE && ctx.leaf == 0);
+    assert(shelf_nav_action(&ctx, 2) == APP_REDRAW_NONE && ctx.leaf == 0);
+
+    // 4. 多页书架：首页仅下一页可用，末页仅上一页可用。
+    // Multi-page shelf: first page enables only next; last page enables only prev.
+    s_count = s_visible_count = 8;
+    assert(leaves() == 2 && !can_prev_leaf(&ctx) && can_next_leaf(&ctx));
+    assert(control_at(&ctx, (uint16_t)(prev_btn.x + 10), (uint16_t)(prev_btn.y + 10), &hit_r) == -1);
+    assert(control_at(&ctx, (uint16_t)(next_btn.x + 10), (uint16_t)(next_btn.y + 10), &hit_r) == 102);
+    ev.type = UI_GESTURE_PRESS;
+    assert(gesture_event(&ctx, &ev) == APP_REDRAW_AREA && test_paint_calls == 1);
+    ev.type = UI_GESTURE_TAP;
+    assert(gesture_event(&ctx, &ev) == APP_REDRAW_PAGE && ctx.leaf == 1);
+    assert(can_prev_leaf(&ctx) && !can_next_leaf(&ctx));
+    // 末页再点下一页不触发重刷。/ Clicking next on the last page triggers no redraw.
+    test_paint_calls = 0; test_action_calls = 0;
+    ev.type = UI_GESTURE_PRESS;
+    assert(gesture_event(&ctx, &ev) == APP_REDRAW_NONE);
+    ev.type = UI_GESTURE_TAP;
+    assert(gesture_event(&ctx, &ev) == APP_REDRAW_NONE);
+    assert(test_paint_calls == 0 && test_action_calls == 0 && ctx.leaf == 1);
+    // 末页点上一页回到首页。/ Clicking prev on the last page returns to page 0.
+    ev.x0 = ev.x = (uint16_t)(prev_btn.x + 10);
+    ev.y0 = ev.y = (uint16_t)(prev_btn.y + 10);
+    ev.type = UI_GESTURE_TAP;
+    assert(gesture_event(&ctx, &ev) == APP_REDRAW_PAGE && ctx.leaf == 0);
+
+    // 5. 排版与显示页共 7 项（已移除翻页动效），字重占满底行。
+    // Typography page has 7 controls (turn animation removed), with weight spanning full width.
+    s_view = TYPOGRAPHY;
+    assert(BOOK_TYPO_COUNT == 7);
+    EpdRect wrect = typo_rect(6);
+    assert(wrect.width == ui_content_width());
+    assert(control_at(&ctx, (uint16_t)(wrect.x + 20), (uint16_t)(wrect.y + 20), &hit_r) == 906);
+
+    puts("book_ui_shelf_layout_and_paging_test: PASS");
+}
+'''
+    shelf_c = Path(tmp) / "shelf_check.c"
+    shelf_exe = Path(tmp) / "shelf_check"
+    shelf_c.write_text(shelf_unit, encoding="utf-8")
+    subprocess.run(["gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-variable", "-fsanitize=address,undefined", str(shelf_c), "-o", str(shelf_exe)], check=True)
+    subprocess.run([str(shelf_exe)], check=True)
+
+    # 验证首页页码指示当前页使用实心圆而非实心方块。
+    # Verify home page indicator draws a filled black circle (not a square) for the current page.
+    home_src = (Path(__file__).resolve().parents[1] / "main/apps/app_pico_home.c").read_text(encoding="utf-8")
+    m = re.search(r"^static void draw_page_dots\([^\n]*\) \{", home_src, re.M)
+    assert m, "draw_page_dots"
+    at, depth = m.end(), 1
+    while depth:
+        if home_src[at] == "{": depth += 1
+        elif home_src[at] == "}": depth -= 1
+        at += 1
+    dots_fn = home_src[m.start():at]
+    home_unit = (
+        "#include <assert.h>\n#include <stdint.h>\n#include <stdio.h>\n"
+        "#define HOME_PAGES 3\n#define HOME_DOTS_Y 1076\n#define UI_GRAY_BLACK 0x00\n"
+        "static int fill_circles, draw_circles, fill_x, fill_r;\n"
+        "static int epd_rotated_display_width(void) { return 684; }\n"
+        "static void epd_fill_circle(int x, int y, int r, uint8_t c, uint8_t* fb) { (void)fb; assert(y == HOME_DOTS_Y && c == UI_GRAY_BLACK); fill_circles++; fill_x = x; fill_r = r; }\n"
+        "static void epd_draw_circle(int x, int y, int r, uint8_t c, uint8_t* fb) { (void)x; (void)fb; assert(y == HOME_DOTS_Y && r == 6 && c == UI_GRAY_BLACK); draw_circles++; }\n"
+        + dots_fn
+        + "\nint main(void) { draw_page_dots(NULL, 1); assert(fill_circles == 1 && draw_circles == 2 && fill_x == 342 && fill_r == 7); puts(\"home_page_dots_test: PASS\"); }\n"
+    )
+    home_c = Path(tmp) / "home_dots.c"
+    home_exe = Path(tmp) / "home_dots"
+    home_c.write_text(home_unit, encoding="utf-8")
+    subprocess.run(["gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined", str(home_c), "-o", str(home_exe)], check=True)
+    subprocess.run([str(home_exe)], check=True)

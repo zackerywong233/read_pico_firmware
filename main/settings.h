@@ -105,9 +105,6 @@ void app_settings_set_book_top_bar(bool on);
 /// 阅读底部信息栏（章节 + 进度），默认开启。/ Reader bottom info bar, default on.
 bool app_settings_book_bottom_bar(void);
 void app_settings_set_book_bottom_bar(bool on);
-/// 翻页融合刷新模式：0 关闭、1 波前极速（默认）、2 波前+润色。/ Page-turn animation: 0 off, 1 fast wavefront (default), 2 wavefront+polish.
-uint8_t app_settings_book_anim(void);
-void app_settings_set_book_anim(uint8_t mode);
 /// 阅读段间距：0 无、1 半行（默认）、2 一行。/ Paragraph gap: 0 none, 1 half-line (default), 2 full-line.
 uint8_t app_settings_book_para_gap(void);
 void app_settings_set_book_para_gap(uint8_t preset);
