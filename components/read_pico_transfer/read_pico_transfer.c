@@ -1495,7 +1495,11 @@ static esp_err_t info_handler(httpd_req_t *req) {
     cJSON_AddBoolToObject(json, "font_manage_enabled", s_font_root[0] != 0 && s_cfg.font_select_cb != NULL);
     cJSON_AddBoolToObject(json, "book_download_enabled", true);
     cJSON_AddBoolToObject(json, "book_progress_enabled", s_cfg.book_progress_cb != NULL);
+    cJSON_AddBoolToObject(json, "book_progress_write_enabled", s_cfg.book_progress_set_cb != NULL);
     cJSON_AddBoolToObject(json, "notes_json_enabled", true);
+    cJSON_AddBoolToObject(json, "notes_write_enabled", s_cfg.book_notes_set_cb != NULL);
+    cJSON_AddBoolToObject(json, "stats_enabled", s_cfg.dashboard_stats_cb != NULL);
+    cJSON_AddBoolToObject(json, "stats_write_enabled", s_cfg.dashboard_stats_set_cb != NULL);
     cJSON_AddBoolToObject(json, "webmarks_enabled", s_cfg.webmarks_list_cb != NULL);
     cJSON_AddBoolToObject(json, "feeds_enabled", s_cfg.feeds_list_cb != NULL);
     cJSON_AddBoolToObject(json, "focus_enabled", s_cfg.focus_get_cb != NULL);
@@ -1968,6 +1972,7 @@ static void append_book_progress(cJSON *item, const char *full_path, uint64_t si
         cJSON_AddNumberToObject(item, "percent", prog.percent);
         cJSON_AddNumberToObject(item, "chapter", prog.chapter);
         cJSON_AddNumberToObject(item, "byte_off", (double)prog.byte_off);
+        if (prog.px) cJSON_AddNumberToObject(item, "px", prog.px);
         cJSON_AddNumberToObject(item, "order", (double)prog.order);
     }
 }
@@ -2053,6 +2058,131 @@ static esp_err_t books_handler(httpd_req_t *req) {
     s_webopen_url[0] = 0;
     portEXIT_CRITICAL(&s_lock);
     return file_response(req, result, true, path);
+}
+
+static esp_err_t book_progress_handler(httpd_req_t *req) {
+    if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
+    if (!s_cfg.book_progress_set_cb)
+        return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持恢复阅读进度\"}");
+    if (check_pin_or_respond(req) != ESP_OK) return ESP_FAIL;
+
+    char content_type[80];
+    if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) != ESP_OK ||
+        strncasecmp(content_type, "application/json", 16) ||
+        (content_type[16] && content_type[16] != ';' && content_type[16] != ' '))
+        return send_json_error(req, "400 Bad Request", "仅接受 application/json");
+    if (!req->content_len || req->content_len > 512)
+        return respond_error(req, req->content_len > 512 ? 413 : 400);
+
+    char *query = transfer_alloc(1024);
+    char *encoded = transfer_alloc(766);
+    char *name = transfer_alloc(256);
+    char *path = transfer_alloc(448);
+    char *body = transfer_alloc(req->content_len + 1);
+    if (!query || !encoded || !name || !path || !body) {
+        free(query); free(encoded); free(name); free(path); free(body);
+        return ESP_ERR_NO_MEM;
+    }
+
+    esp_err_t resp_err = ESP_OK;
+    if (httpd_req_get_url_query_str(req, query, 1024) != ESP_OK ||
+        httpd_query_key_value(query, "name", encoded, 766) != ESP_OK ||
+        !decode_name_limit(encoded, name, 256)) {
+        free(query); free(encoded); free(name); free(path); free(body);
+        return respond_error(req, 400);
+    }
+    int resolved = resolve_mutation_path(s_root, name, path, 448);
+    if (resolved) {
+        free(query); free(encoded); free(name); free(path); free(body);
+        return respond_error(req, resolved);
+    }
+
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        int err_no = errno;
+        free(query); free(encoded); free(name); free(path); free(body);
+        if (err_no == ENOENT) return wifi_response(req, "404 Not Found", "{\"error\":\"图书不存在\"}");
+        return respond_error(req, 507);
+    }
+    if (!S_ISREG(st.st_mode) || st.st_size < 0 || (uint64_t)st.st_size > UINT32_MAX) {
+        free(query); free(encoded); free(name); free(path); free(body);
+        return respond_error(req, 400);
+    }
+
+    size_t received = 0;
+    while (received < req->content_len) {
+        int n = receive_http(req, body + received, req->content_len - received);
+        if (n <= 0) {
+            free(query); free(encoded); free(name); free(path); free(body);
+            return respond_error(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400);
+        }
+        received += (size_t)n;
+    }
+    body[received] = 0;
+
+    read_pico_book_progress_restore_t parsed = {0};
+    const char *parse_err = NULL;
+    if (!companion_parse_book_progress_restore(body, received, &parsed, &parse_err)) {
+        free(query); free(encoded); free(name); free(path); free(body);
+        return send_json_error(req, "400 Bad Request", parse_err ? parse_err : "无效的阅读进度参数");
+    }
+    if (parsed.has_file_size && parsed.file_size != (uint32_t)st.st_size) {
+        free(query); free(encoded); free(name); free(path); free(body);
+        return send_json_error(req, "409 Conflict", "文件大小不一致，无法恢复阅读进度");
+    }
+
+    portENTER_CRITICAL(&s_lock);
+    bool admitted = admission_begin(s_stopping, &s_upload_active);
+    portEXIT_CRITICAL(&s_lock);
+    if (!admitted) {
+        free(query); free(encoded); free(name); free(path); free(body);
+        return wifi_response(req, "409 Conflict", "{\"error\":\"正在上传或切换网络，请稍后重试\"}");
+    }
+
+    read_pico_book_progress_t in = {
+        .has_progress = true,
+        .percent = parsed.percent,
+        .chapter = parsed.chapter,
+        .byte_off = parsed.byte_off,
+        .px = parsed.has_px ? parsed.px : 0,
+        .order = 0,
+    };
+    read_pico_book_progress_t saved = {0};
+    esp_err_t err = s_cfg.book_progress_set_cb(path, (uint32_t)st.st_size, &in, parsed.set_last,
+                                               &saved, s_cfg.book_progress_ctx);
+    portENTER_CRITICAL(&s_lock);
+    if (err == ESP_OK) ++s_status.changed_count;
+    s_upload_active = false;
+    portEXIT_CRITICAL(&s_lock);
+
+    const char *actual_name = strrchr(path, '/');
+    actual_name = actual_name ? actual_name + 1 : name;
+
+    if (err == ESP_ERR_INVALID_STATE) {
+        resp_err = send_json_error(req, "409 Conflict", "阅读进度记录冲突，拒绝覆盖");
+    } else if (err == ESP_ERR_INVALID_ARG) {
+        resp_err = send_json_error(req, "400 Bad Request", "阅读进度参数无效");
+    } else if (err != ESP_OK) {
+        resp_err = send_json_error(req, "500 Internal Server Error", "写入阅读进度失败");
+    } else {
+        cJSON *json = cJSON_CreateObject();
+        if (!json) {
+            resp_err = ESP_ERR_NO_MEM;
+        } else {
+            cJSON_AddBoolToObject(json, "ok", true);
+            cJSON_AddStringToObject(json, "name", actual_name);
+            cJSON_AddNumberToObject(json, "file_size", (double)(uint32_t)st.st_size);
+            cJSON_AddNumberToObject(json, "percent", saved.percent);
+            cJSON_AddNumberToObject(json, "chapter", saved.chapter);
+            cJSON_AddNumberToObject(json, "byte_off", (double)saved.byte_off);
+            if (saved.px) cJSON_AddNumberToObject(json, "px", saved.px);
+            cJSON_AddNumberToObject(json, "order", (double)saved.order);
+            cJSON_AddBoolToObject(json, "set_last", parsed.set_last);
+            resp_err = send_json(req, json);
+        }
+    }
+    free(query); free(encoded); free(name); free(path); free(body);
+    return resp_err;
 }
 
 static bool markdown_write_position(FILE *out, bool excerpt, uint16_t chapter, uint32_t offset,
@@ -2334,6 +2464,140 @@ static esp_err_t notes_download_handler(httpd_req_t *req) {
     }
     fclose(out);
     return httpd_resp_send_chunk(req, NULL, 0);
+}
+
+static esp_err_t notes_restore_handler(httpd_req_t *req) {
+    if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
+    if (!s_cfg.book_notes_set_cb)
+        return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持恢复书签与摘录\"}");
+    if (check_pin_or_respond(req) != ESP_OK) return ESP_FAIL;
+
+    char content_type[80];
+    if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) != ESP_OK ||
+        strncasecmp(content_type, "application/json", 16) ||
+        (content_type[16] && content_type[16] != ';' && content_type[16] != ' '))
+        return send_json_error(req, "400 Bad Request", "仅接受 application/json");
+    if (!req->content_len || req->content_len > TRANSFER_NOTES_BODY_MAX)
+        return respond_error(req, req->content_len > TRANSFER_NOTES_BODY_MAX ? 413 : 400);
+
+    char *query = transfer_alloc(1024);
+    char *encoded = transfer_alloc(766);
+    char *name = transfer_alloc(256);
+    char *book_path = transfer_alloc(448);
+    if (!query || !encoded || !name || !book_path) {
+        free(query); free(encoded); free(name); free(book_path);
+        return ESP_ERR_NO_MEM;
+    }
+
+    if (httpd_req_get_url_query_str(req, query, 1024) != ESP_OK ||
+        httpd_query_key_value(query, "name", encoded, 766) != ESP_OK ||
+        !decode_name_limit(encoded, name, 256)) {
+        free(query); free(encoded); free(name); free(book_path);
+        return respond_error(req, 400);
+    }
+    int resolved = resolve_mutation_path(s_root, name, book_path, 448);
+    if (resolved) {
+        free(query); free(encoded); free(name); free(book_path);
+        return respond_error(req, resolved);
+    }
+
+    struct stat st;
+    if (stat(book_path, &st) != 0) {
+        int err_no = errno;
+        free(query); free(encoded); free(name); free(book_path);
+        if (err_no == ENOENT) return wifi_response(req, "404 Not Found", "{\"error\":\"图书不存在\"}");
+        return respond_error(req, 507);
+    }
+    if (!S_ISREG(st.st_mode) || st.st_size < 0 || (uint64_t)st.st_size > UINT32_MAX) {
+        free(query); free(encoded); free(name); free(book_path);
+        return respond_error(req, 400);
+    }
+
+    portENTER_CRITICAL(&s_lock);
+    bool admitted = admission_begin(s_stopping, &s_upload_active);
+    portEXIT_CRITICAL(&s_lock);
+    if (!admitted) {
+        free(query); free(encoded); free(name); free(book_path);
+        return wifi_response(req, "409 Conflict", "{\"error\":\"正在上传或切换网络，请稍后重试\"}");
+    }
+
+    char *body = transfer_alloc(req->content_len + 1);
+    if (!body) {
+        portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
+        free(query); free(encoded); free(name); free(book_path);
+        return ESP_ERR_NO_MEM;
+    }
+
+    size_t received = 0;
+    int rx_status = 0;
+    while (received < req->content_len) {
+        int n = receive_http(req, body + received, req->content_len - received);
+        if (n <= 0) { rx_status = n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400; break; }
+        received += (size_t)n;
+    }
+    body[received] = 0;
+
+    bool has_file_size = false;
+    uint32_t expected_size = 0;
+    cJSON *parsed_root = NULL;
+    read_pico_book_note_item_t *items = NULL;
+    size_t count = 0;
+    const char *parse_err = NULL;
+
+    esp_err_t resp_err = ESP_OK;
+    if (rx_status) {
+        portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
+        resp_err = respond_error(req, rx_status);
+    } else if (!companion_parse_book_notes_restore(body, received, &has_file_size, &expected_size,
+                                                   &parsed_root, &items, &count, &parse_err)) {
+        portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
+        resp_err = send_json_error(req, "400 Bad Request", parse_err ? parse_err : "无效的笔记恢复 JSON");
+    } else if (has_file_size && expected_size != (uint32_t)st.st_size) {
+        portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
+        resp_err = send_json_error(req, "409 Conflict", "文件大小不一致，无法恢复书签与摘录");
+    } else {
+        esp_err_t err = s_cfg.book_notes_set_cb(book_path, (uint32_t)st.st_size, items, count, s_cfg.book_notes_ctx);
+        portENTER_CRITICAL(&s_lock);
+        if (err == ESP_OK) ++s_status.changed_count;
+        s_upload_active = false;
+        portEXIT_CRITICAL(&s_lock);
+
+        if (err == ESP_ERR_INVALID_STATE) {
+            resp_err = send_json_error(req, "409 Conflict", "笔记存储记录冲突，拒绝覆盖");
+        } else if (err == ESP_ERR_INVALID_ARG) {
+            resp_err = send_json_error(req, "400 Bad Request", "笔记条目参数无效");
+        } else if (err == ESP_ERR_NO_MEM) {
+            resp_err = ESP_ERR_NO_MEM;
+        } else if (err != ESP_OK) {
+            resp_err = respond_error(req, 507);
+        } else {
+            size_t bookmarks = 0, excerpts = 0;
+            for (size_t i = 0; i < count; ++i) {
+                if (items[i].is_excerpt) ++excerpts;
+                else ++bookmarks;
+            }
+            const char *actual_name = strrchr(book_path, '/');
+            actual_name = actual_name ? actual_name + 1 : name;
+            cJSON *json = cJSON_CreateObject();
+            if (!json) {
+                resp_err = ESP_ERR_NO_MEM;
+            } else {
+                cJSON_AddBoolToObject(json, "ok", true);
+                cJSON_AddStringToObject(json, "book", actual_name);
+                cJSON_AddNumberToObject(json, "file_size", (double)(uint32_t)st.st_size);
+                cJSON_AddNumberToObject(json, "bookmarks", (double)bookmarks);
+                cJSON_AddNumberToObject(json, "excerpts", (double)excerpts);
+                cJSON_AddNumberToObject(json, "count", (double)count);
+                resp_err = send_json(req, json);
+            }
+        }
+    }
+
+    free(items);
+    cJSON_Delete(parsed_root);
+    free(body);
+    free(query); free(encoded); free(name); free(book_path);
+    return resp_err;
 }
 
 static esp_err_t upload_handler(httpd_req_t *req) {
@@ -3272,6 +3536,120 @@ static esp_err_t time_handler(httpd_req_t *req) {
     return send_json(req, json);
 }
 
+static void append_stats_fields(cJSON *json, const read_pico_dashboard_stats_t *stats) {
+    if (!json || !stats) return;
+    cJSON_AddNumberToObject(json, "total_reading_sec", (double)stats->total_reading_sec);
+    if (stats->has_last_book) {
+        cJSON *lb = cJSON_AddObjectToObject(json, "last_book");
+        if (lb) {
+            cJSON_AddStringToObject(lb, "title", stats->last_book_title);
+            cJSON_AddNumberToObject(lb, "percent", stats->last_book_percent);
+        }
+    }
+    if (stats->has_excerpt) {
+        cJSON *ex = cJSON_AddObjectToObject(json, "excerpt");
+        if (ex) {
+            cJSON_AddStringToObject(ex, "title", stats->excerpt_title);
+            cJSON_AddStringToObject(ex, "text", stats->excerpt_text);
+        }
+    }
+    if (stats->has_last_book_path && stats->last_book_path[0]) {
+        cJSON_AddStringToObject(json, "last_book_path", stats->last_book_path);
+    }
+}
+
+static esp_err_t stats_handler(httpd_req_t *req) {
+    if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
+    if (req->method == HTTP_GET) {
+        if (!s_cfg.dashboard_stats_cb)
+            return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持读取阅读统计\"}");
+        if (req->content_len) return respond_error(req, 400);
+        read_pico_dashboard_stats_t *stats = transfer_alloc(sizeof(*stats));
+        if (!stats) return ESP_ERR_NO_MEM;
+        memset(stats, 0, sizeof(*stats));
+        bool ok = s_cfg.dashboard_stats_cb(stats, s_cfg.dashboard_ctx);
+        if (!ok) {
+            free(stats);
+            return send_json_error(req, "500 Internal Server Error", "读取阅读统计失败");
+        }
+        cJSON *json = cJSON_CreateObject();
+        if (!json) { free(stats); return ESP_ERR_NO_MEM; }
+        append_stats_fields(json, stats);
+        free(stats);
+        return send_json(req, json);
+    }
+
+    if (!s_cfg.dashboard_stats_set_cb)
+        return wifi_response(req, "501 Not Implemented", "{\"error\":\"当前页面不支持恢复阅读统计\"}");
+    if (check_pin_or_respond(req) != ESP_OK) return ESP_FAIL;
+
+    char content_type[80];
+    if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) != ESP_OK ||
+        strncasecmp(content_type, "application/json", 16) ||
+        (content_type[16] && content_type[16] != ';' && content_type[16] != ' '))
+        return send_json_error(req, "400 Bad Request", "仅接受 application/json");
+    if (!req->content_len || req->content_len > 2048)
+        return respond_error(req, req->content_len > 2048 ? 413 : 400);
+
+    portENTER_CRITICAL(&s_lock);
+    bool admitted = admission_begin(s_stopping, &s_upload_active);
+    portEXIT_CRITICAL(&s_lock);
+    if (!admitted) return send_json_error(req, "503 Service Unavailable", "设备正忙，请稍后重试");
+
+    char *body = transfer_alloc(req->content_len + 1);
+    read_pico_stats_restore_t *restore = transfer_alloc(sizeof(*restore));
+    read_pico_dashboard_stats_t *updated = transfer_alloc(sizeof(*updated));
+    if (!body || !restore || !updated) {
+        free(body); free(restore); free(updated);
+        portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
+        return ESP_ERR_NO_MEM;
+    }
+
+    size_t received = 0;
+    int rx_status = 0;
+    while (received < req->content_len) {
+        int n = receive_http(req, body + received, req->content_len - received);
+        if (n <= 0) { rx_status = n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400; break; }
+        received += (size_t)n;
+    }
+    body[received] = 0;
+
+    const char *parse_err = NULL;
+    esp_err_t resp_err = ESP_OK;
+    if (rx_status) {
+        portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
+        resp_err = respond_error(req, rx_status);
+    } else if (!companion_parse_stats_restore(body, received, restore, &parse_err)) {
+        portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
+        resp_err = send_json_error(req, "400 Bad Request", parse_err ? parse_err : "无效的阅读统计参数");
+    } else {
+        memset(updated, 0, sizeof(*updated));
+        esp_err_t err = s_cfg.dashboard_stats_set_cb(restore, updated, s_cfg.dashboard_ctx);
+        portENTER_CRITICAL(&s_lock);
+        if (err == ESP_OK) ++s_status.changed_count;
+        s_upload_active = false;
+        portEXIT_CRITICAL(&s_lock);
+        if (err == ESP_ERR_INVALID_ARG) {
+            resp_err = send_json_error(req, "400 Bad Request", "阅读统计参数无效");
+        } else if (err != ESP_OK) {
+            resp_err = send_json_error(req, "500 Internal Server Error", "保存阅读统计失败");
+        } else {
+            cJSON *json = cJSON_CreateObject();
+            if (!json) {
+                resp_err = ESP_ERR_NO_MEM;
+            } else {
+                cJSON_AddBoolToObject(json, "ok", true);
+                cJSON_AddStringToObject(json, "mode", restore->merge ? "merge" : "replace");
+                append_stats_fields(json, updated);
+                resp_err = send_json(req, json);
+            }
+        }
+    }
+
+    free(body); free(restore); free(updated);
+    return resp_err;
+}
+
 static esp_err_t dashboard_handler(httpd_req_t *req) {
     if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
     if (req->method == HTTP_GET) {
@@ -3293,24 +3671,13 @@ static esp_err_t dashboard_handler(httpd_req_t *req) {
             cJSON_AddStringToObject(json, "note", "");
         }
         if (s_cfg.dashboard_stats_cb) {
-            read_pico_dashboard_stats_t stats = {0};
-            if (s_cfg.dashboard_stats_cb(&stats, s_cfg.dashboard_ctx)) {
-                cJSON_AddNumberToObject(json, "total_reading_sec", (double)stats.total_reading_sec);
-                if (stats.has_last_book) {
-                    cJSON *lb = cJSON_AddObjectToObject(json, "last_book");
-                    if (lb) {
-                        cJSON_AddStringToObject(lb, "title", stats.last_book_title);
-                        cJSON_AddNumberToObject(lb, "percent", stats.last_book_percent);
-                    }
-                }
-                if (stats.has_excerpt) {
-                    cJSON *ex = cJSON_AddObjectToObject(json, "excerpt");
-                    if (ex) {
-                        cJSON_AddStringToObject(ex, "title", stats.excerpt_title);
-                        cJSON_AddStringToObject(ex, "text", stats.excerpt_text);
-                    }
-                }
+            read_pico_dashboard_stats_t *stats = transfer_alloc(sizeof(*stats));
+            if (!stats) { cJSON_Delete(json); return ESP_ERR_NO_MEM; }
+            memset(stats, 0, sizeof(*stats));
+            if (s_cfg.dashboard_stats_cb(stats, s_cfg.dashboard_ctx)) {
+                append_stats_fields(json, stats);
             }
+            free(stats);
         }
         return send_json(req, json);
     }
@@ -3908,7 +4275,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     httpd_config_t http = HTTPD_DEFAULT_CONFIG();
     // 大型请求缓冲与回调数组已迁至 PSRAM，12 KB 栈可腾出 4 KB 连续内部内存给 Wi-Fi/SoftAP。
     // Large request buffers and callback tables live in PSRAM; 12 KB stack frees 4 KB contiguous internal RAM for Wi-Fi/SoftAP.
-    http.stack_size = 12288; http.max_uri_handlers = 56; http.recv_wait_timeout = 5;
+    http.stack_size = 12288; http.max_uri_handlers = 60; http.recv_wait_timeout = 5;
     http.lru_purge_enable = true;
     err = httpd_start(&s_http, &http); if (err != ESP_OK) goto fail;
     stage = "httpd_routes";
@@ -3932,8 +4299,12 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         { .uri = "/books", .method = HTTP_GET, .handler = books_handler },
         { .uri = "/books", .method = HTTP_DELETE, .handler = books_handler },
         { .uri = "/books", .method = HTTP_POST, .handler = books_handler },
+        { .uri = "/books/progress", .method = HTTP_PUT, .handler = book_progress_handler },
         { .uri = "/notes", .method = HTTP_GET, .handler = notes_download_handler },
+        { .uri = "/notes", .method = HTTP_PUT, .handler = notes_restore_handler },
         { .uri = "/notes", .method = HTTP_DELETE, .handler = notes_download_handler },
+        { .uri = "/stats", .method = HTTP_GET, .handler = stats_handler },
+        { .uri = "/stats", .method = HTTP_PUT, .handler = stats_handler },
         { .uri = "/webmarks", .method = HTTP_GET, .handler = webmarks_handler },
         { .uri = "/webmarks", .method = HTTP_POST, .handler = webmarks_handler },
         { .uri = "/webmarks", .method = HTTP_DELETE, .handler = webmarks_handler },

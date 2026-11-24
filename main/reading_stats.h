@@ -10,10 +10,17 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#include "esp_err.h"
 
 uint32_t reading_stats_total_seconds(void);
 void reading_stats_add_seconds(uint32_t seconds);
+/// 覆盖写入累计阅读秒数，用于备份恢复。/ Overwrite cumulative reading seconds for backup restore.
+esp_err_t reading_stats_set_total_seconds(uint32_t seconds);
 void reading_stats_save_excerpt(const char* title, const char* text);
+/// 写入或清空最近摘录（text 为空串或 NULL 表示清空）。/ Set or clear the saved excerpt (empty/NULL text clears it).
+esp_err_t reading_stats_set_excerpt_checked(const char* title, const char* text);
 bool reading_stats_get_excerpt(char* title, uint32_t title_cap, char* text, uint32_t text_cap);
 void reading_stats_set_last_book(const char* title, uint8_t percent);
+/// 写入或清空最近阅读图书（title 为空串或 NULL 表示清空）。/ Set or clear recent book progress (empty/NULL title clears it).
+esp_err_t reading_stats_set_last_book_checked(const char* title, uint8_t percent);
 bool reading_stats_get_last_book(char* title, uint32_t title_cap, uint8_t* percent);

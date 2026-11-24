@@ -61,6 +61,12 @@ void book_progress_watch_destroy(book_progress_watch_t* watch) {
     if (*p) { *p = watch->next; free(watch); }
 }
 
+void book_progress_invalidate_watch(const char* path) {
+    if (!path_valid(path)) return;
+    for (book_progress_watch_t* watch = s_watches; watch; watch = watch->next)
+        if (!strcmp(watch->path, path)) atomic_store(&watch->invalidated, true);
+}
+
 static void make_key(const char* path, char key[11]) {
     uint32_t hash = UINT32_C(2166136261);
     for (const unsigned char* p = (const unsigned char*)path; *p; ++p) {
@@ -178,8 +184,7 @@ esp_err_t book_progress_clear(const char* path) {
 
 esp_err_t book_progress_forget(const char* path) {
     if (!path_valid(path)) return ESP_ERR_INVALID_ARG;
-    for (book_progress_watch_t* watch = s_watches; watch; watch = watch->next)
-        if (!strcmp(watch->path, path)) atomic_store(&watch->invalidated, true);
+    book_progress_invalidate_watch(path);
     char key[11];
     make_key(path, key);
     nvs_handle_t h;

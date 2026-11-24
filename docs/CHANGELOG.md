@@ -1,5 +1,16 @@
 # 版本变更 / Changelog
 
+## v1.0.6 · 2026-11-25
+
+- 配套客户端阅读数据备份与恢复接口（逐书进度、书签/摘录与累计阅读统计）：
+  1. 逐书阅读进度备份与恢复：`GET /books` 在阅读进度中补齐逐书字号 `px`；新增 `PUT /books/progress?name=<urlenc>`（PIN 鉴权），按实际文件大小严格校验并写回 NVS 进度、可选设为最近自动续读图书（`set_last`），写入前通过 `book_progress_invalidate_watch()` 自动失效阅读页旧待保存缓存；
+  2. 书签与摘录原子恢复：新增 `PUT /notes?name=<urlenc>`（PIN 鉴权），兼容直接回传 `GET /notes?...&format=json` 导出的结构化 JSON，按文件大小校验后通过 `book_notes_save()` 原子写回隐藏 sidecar（传入空数组 `[]` 清空该书笔记）；
+  3. 累计阅读统计备份与恢复：新增不依赖 TF 卡的 `GET /stats` 与 `PUT /stats`（PIN 鉴权），支持 `replace`（覆盖/传 `null` 清除）与 `merge`（累计时长取较大值、空项补全）两种恢复模式，并在 `GET /stats` 与 `GET /dashboard` 中补齐 `last_book_path`；`GET /info` 同步暴露 `book_progress_write_enabled`、`notes_write_enabled`、`stats_enabled`、`stats_write_enabled` 能力开关。
+  Companion reading-data backup & restore APIs (per-book progress, bookmarks/excerpts, and cumulative stats):
+  1. Per-book reading progress: include per-book font size `px` in `GET /books` and add PIN-protected `PUT /books/progress?name=<urlenc>` with strict file-size verification, optional `set_last` auto-resume update, and `book_progress_invalidate_watch()` to prevent stale reader caches from overwriting restored progress;
+  2. Atomic bookmarks & excerpts restore: add PIN-protected `PUT /notes?name=<urlenc>` accepting the structured JSON exported by `GET /notes?...&format=json` with file-size validation, atomic `book_notes_save()` writes, and empty-array clearing;
+  3. Cumulative reading stats: add SD-independent `GET /stats` and PIN-protected `PUT /stats` supporting `replace` (overwrite / `null` clear) and `merge` (keep larger total and fill empty fields), expose `last_book_path` on `GET /stats` and `GET /dashboard`, and advertise `book_progress_write_enabled`, `notes_write_enabled`, `stats_enabled`, and `stats_write_enabled` in `GET /info`.
+
 ## v1.0.5 · 2026-11-24
 
 - 阅读页底部进度条防误触优化：正文阅读态下（工具栏关闭且底部信息栏开启时）点按底部栏区域不再直接触控跳转进度或触发翻页/工具栏，避免阅读过程中误触；打开阅读工具栏后仍可点按底部进度条跳转进度，并补充宿主回归测试与文档说明。

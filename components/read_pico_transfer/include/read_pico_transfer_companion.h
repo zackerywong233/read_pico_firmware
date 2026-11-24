@@ -12,6 +12,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define READ_PICO_TRANSFER_API_VERSION 2U
@@ -59,16 +60,53 @@ typedef struct {
     uint8_t last_book_percent;  ///< 最近阅读进度 0..100 / Recent book progress 0..100
     bool has_excerpt;           ///< 是否有最近摘录 / Whether recent excerpt exists
     char excerpt_title[128];    ///< 最近摘录书名 / Recent excerpt book title
-    char excerpt_text[256];     ///< 最近摘录正文 / Recent excerpt text
+    char excerpt_text[304];     ///< 最近摘录正文（≤300 字节 UTF-8）/ Recent excerpt text (up to 300 UTF-8 bytes)
+    bool has_last_book_path;    ///< 是否有自动续读路径 / Whether auto-resume last book path exists
+    char last_book_path[288];   ///< 最近打开图书完整路径 / Full path of the last opened book
 } read_pico_dashboard_stats_t;
+
+typedef struct {
+    bool merge;                 ///< false=覆盖恢复，true=合并（时长取大、空项补全）/ false=replace, true=merge
+    bool has_total_reading_sec; ///< 是否恢复累计阅读秒数 / Whether to update total_reading_sec
+    uint32_t total_reading_sec; ///< 目标累计阅读秒数 / Target total reading seconds
+    bool has_last_book;         ///< 是否恢复或清除最近阅读 / Whether to update or clear last_book
+    bool clear_last_book;       ///< true 表示清除最近阅读 / True to clear last_book
+    char last_book_title[128];  ///< 最近阅读书名 / Recent book title
+    uint8_t last_book_percent;  ///< 最近阅读进度 0..100 / Recent book progress 0..100
+    bool has_excerpt;           ///< 是否恢复或清除最近摘录 / Whether to update or clear excerpt
+    bool clear_excerpt;         ///< true 表示清除最近摘录 / True to clear excerpt
+    char excerpt_title[128];    ///< 最近摘录书名 / Excerpt book title
+    char excerpt_text[304];     ///< 最近摘录正文 / Excerpt text
+} read_pico_stats_restore_t;
 
 typedef struct {
     bool has_progress;  ///< 是否存在匹配路径与大小的阅读进度 / Whether valid progress exists for path+size
     uint8_t percent;    ///< 全书阅读百分比 0..100 / Whole-book progress percent 0..100
     uint16_t chapter;   ///< 当前章节索引 / Active chapter index
     uint32_t byte_off;  ///< 章节内 UTF-8 字节偏移 / UTF-8 byte offset inside chapter
+    uint8_t px;         ///< 逐书阅读字号 36..72（步长 4），0 表示未指定 / Book font size 36..72 step 4; 0 means unspecified
     uint32_t order;     ///< 最近阅读单调序号 / Monotonic recency sequence
 } read_pico_book_progress_t;
+
+typedef struct {
+    uint8_t percent;    ///< 全书阅读百分比 0..100 / Whole-book progress percent 0..100
+    uint16_t chapter;   ///< 当前章节索引 / Active chapter index
+    uint32_t byte_off;  ///< 章节内 UTF-8 字节偏移 / UTF-8 byte offset inside chapter
+    bool has_px;        ///< 是否显式指定字号 / Whether px was explicitly supplied
+    uint8_t px;         ///< 字号 36..72 步长 4 / Font size 36..72 step 4
+    bool has_file_size; ///< 是否携带文件大小校验 / Whether expected file_size was supplied
+    uint32_t file_size; ///< 期望图书字节大小 / Expected book size in bytes
+    bool set_last;      ///< 是否设为上次阅读入口 / Also set as last-opened resume book
+} read_pico_book_progress_restore_t;
+
+typedef struct {
+    bool is_excerpt;   ///< false=书签，true=摘录 / false=bookmark, true=excerpt
+    uint16_t chapter;  ///< 章节索引 / Chapter index
+    uint32_t byte_off; ///< 章节内 UTF-8 字节偏移 / UTF-8 byte offset inside chapter
+    uint8_t percent;   ///< 全书百分比 0..100 / Whole-book progress percent 0..100
+    const char *text;  ///< 摘录 UTF-8 正文（书签为 NULL）/ Excerpt UTF-8 text (NULL for bookmark)
+    size_t text_len;   ///< 摘录字节长度 / Excerpt byte length
+} read_pico_book_note_item_t;
 
 #define READ_PICO_WEBMARKS_MAX 20U
 

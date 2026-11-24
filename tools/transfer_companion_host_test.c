@@ -226,11 +226,122 @@ static void test_time_font_dashboard_pin_sha(void) {
     assert(!companion_normalize_sha256("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", sha));
 }
 
+static void test_progress_notes_stats_restore_codecs(void) {
+    // 1) 逐书阅读进度恢复解析 / Per-book progress restore parser.
+    read_pico_book_progress_restore_t pr = {0};
+    const char *err = NULL;
+    const char *p1 = "{\"percent\":42,\"chapter\":5,\"byte_off\":12040,\"px\":52,\"file_size\":654321,\"set_last\":true}";
+    assert(companion_parse_book_progress_restore(p1, strlen(p1), &pr, &err));
+    assert(pr.percent == 42 && pr.chapter == 5 && pr.byte_off == 12040U);
+    assert(pr.has_px && pr.px == 52 && pr.has_file_size && pr.file_size == 654321U && pr.set_last);
+
+    const char *p2 = "{\"percent\":0,\"chapter\":0,\"byte_off\":0}";
+    assert(companion_parse_book_progress_restore(p2, strlen(p2), &pr, &err));
+    assert(pr.percent == 0 && !pr.has_px && !pr.has_file_size && !pr.set_last);
+
+    const char *bad_progress[] = {
+        "{}",
+        "{\"percent\":42,\"chapter\":1}",
+        "{\"percent\":101,\"chapter\":1,\"byte_off\":0}",
+        "{\"percent\":10,\"chapter\":70000,\"byte_off\":0}",
+        "{\"percent\":10,\"chapter\":1,\"byte_off\":-1}",
+        "{\"percent\":10,\"chapter\":1,\"byte_off\":0,\"px\":50}",
+        "{\"percent\":10,\"chapter\":1,\"byte_off\":0,\"set_last\":1}",
+        "{\"percent\":10,\"chapter\":1,\"byte_off\":0,\"unknown\":1}",
+        "{\"percent\":10,\"percent\":20,\"chapter\":1,\"byte_off\":0}",
+    };
+    for (size_t i = 0; i < sizeof(bad_progress) / sizeof(bad_progress[0]); ++i) {
+        assert(!companion_parse_book_progress_restore(bad_progress[i], strlen(bad_progress[i]), &pr, &err));
+        assert(err && err[0]);
+    }
+
+    // 2) 书签与摘录恢复解析（含 GET /notes?format=json 原样回传与空数组清空）
+    // Bookmarks & excerpts restore parser (including GET round-trip fields and empty clear).
+    bool has_size = false;
+    uint32_t file_size = 0;
+    cJSON *root = NULL;
+    read_pico_book_note_item_t *items = NULL;
+    size_t count = 0;
+    const char *n_ok =
+        "{\"book\":\"三体.epub\",\"file_size\":98765,\"count\":2,\"items\":["
+        "{\"index\":0,\"kind\":\"bookmark\",\"chapter\":1,\"offset\":512,\"percent\":15},"
+        "{\"index\":1,\"kind\":\"excerpt\",\"chapter\":2,\"offset\":1024,\"percent\":30,\"text\":\"给岁月以文明\\n而不是给文明以岁月\",\"truncated\":false}"
+        "]}";
+    assert(companion_parse_book_notes_restore(n_ok, strlen(n_ok), &has_size, &file_size, &root, &items, &count, &err));
+    assert(has_size && file_size == 98765U && count == 2 && items != NULL && root != NULL);
+    assert(!items[0].is_excerpt && items[0].chapter == 1 && items[0].byte_off == 512U && items[0].percent == 15 && !items[0].text);
+    assert(items[1].is_excerpt && items[1].chapter == 2 && items[1].byte_off == 1024U && items[1].percent == 30);
+    assert(items[1].text && !strcmp(items[1].text, "给岁月以文明\n而不是给文明以岁月"));
+    free(items);
+    cJSON_Delete(root);
+
+    const char *n_empty = "{\"items\":[]}";
+    assert(companion_parse_book_notes_restore(n_empty, strlen(n_empty), &has_size, &file_size, &root, &items, &count, &err));
+    assert(!has_size && count == 0 && items == NULL && root != NULL);
+    cJSON_Delete(root);
+
+    const char *bad_notes[] = {
+        "{}",
+        "{\"items\":{},\"count\":0}",
+        "{\"items\":[],\"count\":1}",
+        "{\"items\":[{\"kind\":\"bookmark\",\"chapter\":0,\"offset\":0,\"percent\":10,\"text\":\"nope\"}]}",
+        "{\"items\":[{\"kind\":\"excerpt\",\"chapter\":0,\"offset\":0,\"percent\":10}]}",
+        "{\"items\":[{\"kind\":\"excerpt\",\"chapter\":0,\"offset\":0,\"percent\":10,\"text\":\"\"}]}",
+        "{\"items\":[{\"kind\":\"note\",\"chapter\":0,\"offset\":0,\"percent\":10}]}",
+        "{\"items\":[{\"kind\":\"bookmark\",\"chapter\":0,\"offset\":0,\"percent\":101}]}",
+        "{\"items\":[{\"kind\":\"bookmark\",\"chapter\":0,\"offset\":0,\"percent\":10,\"extra\":1}]}",
+        "{\"items\":[],\"extra\":1}",
+    };
+    for (size_t i = 0; i < sizeof(bad_notes) / sizeof(bad_notes[0]); ++i) {
+        root = NULL; items = NULL; count = 0;
+        assert(!companion_parse_book_notes_restore(bad_notes[i], strlen(bad_notes[i]), &has_size, &file_size, &root, &items, &count, &err));
+        assert(root == NULL && items == NULL && err && err[0]);
+    }
+
+    // 3) 累计阅读统计恢复解析（replace / merge / null 清除 / 只读 last_book_path 兼容）
+    // Cumulative reading stats restore parser (replace, merge, null clear, read-only last_book_path).
+    read_pico_stats_restore_t sr = {0};
+    const char *s1 =
+        "{\"mode\":\"merge\",\"total_reading_sec\":7200,"
+        "\"last_book\":{\"title\":\"三体.epub\",\"percent\":88},"
+        "\"excerpt\":{\"title\":\"三体.epub\",\"text\":\"弱小和无知不是生存的障碍\"},"
+        "\"last_book_path\":\"/sdcard/books/三体.epub\"}";
+    assert(companion_parse_stats_restore(s1, strlen(s1), &sr, &err));
+    assert(sr.merge && sr.has_total_reading_sec && sr.total_reading_sec == 7200U);
+    assert(sr.has_last_book && !sr.clear_last_book && !strcmp(sr.last_book_title, "三体.epub") && sr.last_book_percent == 88);
+    assert(sr.has_excerpt && !sr.clear_excerpt && !strcmp(sr.excerpt_title, "三体.epub") &&
+           !strcmp(sr.excerpt_text, "弱小和无知不是生存的障碍"));
+
+    const char *s_clear = "{\"last_book\":null,\"excerpt\":null}";
+    assert(companion_parse_stats_restore(s_clear, strlen(s_clear), &sr, &err));
+    assert(!sr.merge && !sr.has_total_reading_sec && sr.has_last_book && sr.clear_last_book &&
+           sr.has_excerpt && sr.clear_excerpt);
+
+    const char *bad_stats[] = {
+        "{}",
+        "{\"mode\":\"replace\"}",
+        "{\"mode\":\"overwrite\",\"total_reading_sec\":10}",
+        "{\"total_reading_sec\":-1}",
+        "{\"last_book\":{\"title\":\"\",\"percent\":10}}",
+        "{\"last_book\":{\"title\":\"a\\nb\",\"percent\":10}}",
+        "{\"last_book\":{\"title\":\"a\",\"percent\":101}}",
+        "{\"last_book\":{\"title\":\"a\",\"percent\":10,\"extra\":1}}",
+        "{\"excerpt\":{\"title\":\"a\",\"text\":\"\"}}",
+        "{\"excerpt\":{\"title\":\"a\"}}",
+        "{\"unknown\":1,\"total_reading_sec\":10}",
+    };
+    for (size_t i = 0; i < sizeof(bad_stats) / sizeof(bad_stats[0]); ++i) {
+        assert(!companion_parse_stats_restore(bad_stats[i], strlen(bad_stats[i]), &sr, &err));
+        assert(err && err[0]);
+    }
+}
+
 int main(void) {
     test_settings_codec();
     test_storage_target();
     test_image_and_sketch_validation();
     test_time_font_dashboard_pin_sha();
+    test_progress_notes_stats_restore_codecs();
     puts("transfer_companion_host_test: PASS");
     return 0;
 }

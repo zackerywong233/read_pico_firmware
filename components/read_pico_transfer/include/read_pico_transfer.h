@@ -61,9 +61,13 @@ typedef struct {
     esp_err_t (*font_select_cb)(const char *path, void *ctx); ///< 可选：切换当前字体路径，空串表示内置字体 / Optional: select active font path; empty selects built-in
     void *font_ctx; ///< 字体回调上下文 / Context for font callbacks
     bool (*dashboard_stats_cb)(read_pico_dashboard_stats_t *out, void *ctx); ///< 可选：读取累计阅读时长、最近图书与摘录 / Optional: read reading stats, recent book and excerpt
+    esp_err_t (*dashboard_stats_set_cb)(const read_pico_stats_restore_t *in, read_pico_dashboard_stats_t *out, void *ctx); ///< 可选：恢复累计阅读统计、最近图书与摘录 / Optional: restore cumulative reading stats, recent book and excerpt
     void *dashboard_ctx; ///< 看板回调上下文 / Context for dashboard callbacks
     bool (*book_progress_cb)(const char *path, uint32_t size, read_pico_book_progress_t *out, void *ctx); ///< 可选：查询单本图书阅读进度 / Optional: query reading progress for one book
+    esp_err_t (*book_progress_set_cb)(const char *path, uint32_t size, const read_pico_book_progress_t *in, bool set_last, read_pico_book_progress_t *out, void *ctx); ///< 可选：恢复单本图书阅读进度 / Optional: restore reading progress for one book
     void *book_progress_ctx; ///< 进度回调上下文 / Context for book progress callback
+    esp_err_t (*book_notes_set_cb)(const char *path, uint32_t size, const read_pico_book_note_item_t *items, size_t count, void *ctx); ///< 可选：原子覆盖恢复单本图书书签与摘录 / Optional: atomically restore bookmarks and excerpts for one book
+    void *book_notes_ctx; ///< 笔记回调上下文 / Context for book notes callback
     size_t (*webmarks_list_cb)(read_pico_webmark_t *out, size_t cap, void *ctx); ///< 可选：列出网页收藏 / Optional: list web bookmarks
     esp_err_t (*webmarks_upsert_cb)(const char *title, const char *url, void *ctx); ///< 可选：添加或更新网页收藏 / Optional: upsert one web bookmark
     esp_err_t (*webmarks_delete_cb)(const char *url, void *ctx); ///< 可选：删除网页收藏 / Optional: delete one web bookmark

@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include "cJSON.h"
 #include "read_pico_transfer_companion.h"
@@ -24,6 +25,11 @@
 #define TRANSFER_TIME_MIN_VALID 946684800U
 #define TRANSFER_TIME_MAX_VALID 4102444799U
 #define TRANSFER_FONT_LIST_MAX 64U
+#define TRANSFER_NOTES_BODY_MAX 131072U
+#define TRANSFER_NOTES_ITEMS_MAX 512U
+#define TRANSFER_NOTE_TEXT_MAX 4096U
+#define TRANSFER_STATS_TITLE_MAX 127U
+#define TRANSFER_STATS_EXCERPT_MAX 300U
 
 static inline bool companion_json_int_range(const cJSON *item, int min_v, int max_v, int *out) {
     if (!item || !cJSON_IsNumber(item)) return false;
@@ -419,5 +425,406 @@ static inline bool companion_normalize_sha256(const char *raw, char out[65]) {
     }
     if (raw[64] != '\0') { out[0] = 0; return false; }
     out[64] = '\0';
+    return true;
+}
+
+static inline bool companion_valid_utf8_text(const char *s, size_t n, bool allow_newlines) {
+    if (!s) return false;
+    for (size_t i = 0; i < n;) {
+        unsigned char c = (unsigned char)s[i++];
+        if (c < 128) {
+            if (c < 32) {
+                if (!allow_newlines || (c != '\n' && c != '\r' && c != '\t')) return false;
+            }
+            if (c == 127) return false;
+            continue;
+        }
+        uint32_t cp;
+        unsigned more;
+        if (c >= 0xc2 && c <= 0xdf) { cp = c & 31; more = 1; }
+        else if (c >= 0xe0 && c <= 0xef) { cp = c & 15; more = 2; }
+        else if (c >= 0xf0 && c <= 0xf4) { cp = c & 7; more = 3; }
+        else return false;
+        unsigned width = more;
+        while (more--) {
+            if (i == n || ((unsigned char)s[i] & 0xc0) != 0x80) return false;
+            cp = (cp << 6) | ((unsigned char)s[i++] & 63);
+        }
+        if ((width == 2 && cp < 0x800) || (width == 3 && cp < 0x10000) ||
+            (cp >= 0xd800 && cp <= 0xdfff) || cp > 0x10ffff) return false;
+    }
+    return true;
+}
+
+static inline bool companion_parse_book_progress_restore(const char *body, size_t len,
+                                                         read_pico_book_progress_restore_t *out,
+                                                         const char **err_out) {
+    if (err_out) *err_out = "无效的进度 JSON";
+    if (!body || !len || !out) return false;
+    memset(out, 0, sizeof(*out));
+    cJSON *root = companion_parse_strict_json(body, len);
+    if (!root || !cJSON_IsObject(root) || !root->child) {
+        cJSON_Delete(root);
+        return false;
+    }
+
+    read_pico_book_progress_restore_t parsed = {0};
+    bool has_percent = false, has_chapter = false, has_byte_off = false, has_set_last = false;
+    bool ok = true;
+    const char *err = "无效的阅读进度参数";
+
+    for (const cJSON *item = root->child; item && ok; item = item->next) {
+        if (!item->string) { ok = false; break; }
+        int iv = 0;
+        uint32_t uv = 0;
+        if (!strcmp(item->string, "percent")) {
+            ok = !has_percent && companion_json_int_range(item, 0, 100, &iv);
+            if (ok) { parsed.percent = (uint8_t)iv; has_percent = true; }
+            else err = "percent 须为 0..100 的整数";
+        } else if (!strcmp(item->string, "chapter")) {
+            ok = !has_chapter && companion_json_int_range(item, 0, 65535, &iv);
+            if (ok) { parsed.chapter = (uint16_t)iv; has_chapter = true; }
+            else err = "chapter 须为 0..65535 的整数";
+        } else if (!strcmp(item->string, "byte_off")) {
+            ok = !has_byte_off && companion_json_u32_range(item, 0, UINT32_MAX, &uv);
+            if (ok) { parsed.byte_off = uv; has_byte_off = true; }
+            else err = "byte_off 须为无符号 32 位整数";
+        } else if (!strcmp(item->string, "px")) {
+            ok = !parsed.has_px && companion_json_int_range(item, 36, 72, &iv) && ((iv - 36) % 4 == 0);
+            if (ok) { parsed.px = (uint8_t)iv; parsed.has_px = true; }
+            else err = "px 须为 36..72 且步长为 4";
+        } else if (!strcmp(item->string, "file_size")) {
+            ok = !parsed.has_file_size && companion_json_u32_range(item, 0, UINT32_MAX, &uv);
+            if (ok) { parsed.file_size = uv; parsed.has_file_size = true; }
+            else err = "file_size 须为无符号 32 位整数";
+        } else if (!strcmp(item->string, "set_last")) {
+            ok = !has_set_last && cJSON_IsBool(item);
+            if (ok) { parsed.set_last = cJSON_IsTrue(item); has_set_last = true; }
+            else err = "set_last 须为布尔值";
+        } else {
+            ok = false;
+            err = "包含未知的进度字段";
+        }
+    }
+    cJSON_Delete(root);
+    if (ok && (!has_percent || !has_chapter || !has_byte_off)) {
+        ok = false;
+        err = "缺少必填字段 percent / chapter / byte_off";
+    }
+    if (!ok) {
+        if (err_out) *err_out = err;
+        return false;
+    }
+    *out = parsed;
+    return true;
+}
+
+static inline bool companion_parse_book_notes_restore(const char *body, size_t len,
+                                                      bool *has_file_size_out, uint32_t *file_size_out,
+                                                      cJSON **root_out,
+                                                      read_pico_book_note_item_t **items_out,
+                                                      size_t *count_out,
+                                                      const char **err_out) {
+    if (err_out) *err_out = "无效的笔记 JSON";
+    if (has_file_size_out) *has_file_size_out = false;
+    if (file_size_out) *file_size_out = 0;
+    if (root_out) *root_out = NULL;
+    if (items_out) *items_out = NULL;
+    if (count_out) *count_out = 0;
+    if (!body || !len || !root_out || !items_out || !count_out) return false;
+
+    cJSON *root = companion_parse_strict_json(body, len);
+    if (!root || !cJSON_IsObject(root) || !root->child) {
+        cJSON_Delete(root);
+        return false;
+    }
+
+    const cJSON *items_arr = NULL;
+    bool has_file_size = false, has_book = false, has_count = false;
+    uint32_t file_size = 0;
+    int expected_count = 0;
+    bool ok = true;
+    const char *err = "无效的笔记恢复参数";
+
+    for (const cJSON *field = root->child; field && ok; field = field->next) {
+        if (!field->string) { ok = false; break; }
+        if (!strcmp(field->string, "items")) {
+            ok = !items_arr && cJSON_IsArray(field);
+            if (ok) items_arr = field;
+            else err = "items 须为数组";
+        } else if (!strcmp(field->string, "file_size")) {
+            ok = !has_file_size && companion_json_u32_range(field, 0, UINT32_MAX, &file_size);
+            if (ok) has_file_size = true;
+            else err = "file_size 须为无符号 32 位整数";
+        } else if (!strcmp(field->string, "book")) {
+            ok = !has_book && cJSON_IsString(field) && field->valuestring != NULL;
+            if (ok) has_book = true;
+            else err = "book 须为字符串";
+        } else if (!strcmp(field->string, "count")) {
+            ok = !has_count && companion_json_int_range(field, 0, (int)TRANSFER_NOTES_ITEMS_MAX, &expected_count);
+            if (ok) has_count = true;
+            else err = "count 须为有效非负整数";
+        } else {
+            ok = false;
+            err = "包含未知的笔记顶层字段";
+        }
+    }
+
+    if (ok && !items_arr) {
+        ok = false;
+        err = "缺少必填数组 items";
+    }
+    size_t count = ok ? (size_t)cJSON_GetArraySize(items_arr) : 0;
+    if (ok && count > TRANSFER_NOTES_ITEMS_MAX) {
+        ok = false;
+        err = "单书笔记条数超出上限";
+    }
+    if (ok && has_count && (size_t)expected_count != count) {
+        ok = false;
+        err = "count 与 items 实际条数不一致";
+    }
+
+    read_pico_book_note_item_t *parsed = NULL;
+    if (ok && count > 0) {
+        parsed = (read_pico_book_note_item_t *)calloc(count, sizeof(*parsed));
+        if (!parsed) {
+            cJSON_Delete(root);
+            if (err_out) *err_out = "内存不足";
+            return false;
+        }
+    }
+
+    size_t idx = 0;
+    for (const cJSON *entry = ok ? items_arr->child : NULL; entry && ok; entry = entry->next, ++idx) {
+        if (!cJSON_IsObject(entry) || !entry->child) {
+            ok = false;
+            err = "items 元素须为非空对象";
+            break;
+        }
+        bool has_kind = false, has_chapter = false, has_offset = false, has_percent = false;
+        bool has_text = false, has_index = false, has_truncated = false;
+        read_pico_book_note_item_t item = {0};
+
+        for (const cJSON *f = entry->child; f && ok; f = f->next) {
+            if (!f->string) { ok = false; break; }
+            int iv = 0;
+            uint32_t uv = 0;
+            if (!strcmp(f->string, "kind")) {
+                ok = !has_kind && cJSON_IsString(f) && f->valuestring &&
+                     (!strcmp(f->valuestring, "bookmark") || !strcmp(f->valuestring, "excerpt"));
+                if (ok) {
+                    item.is_excerpt = !strcmp(f->valuestring, "excerpt");
+                    has_kind = true;
+                } else {
+                    err = "kind 须为 bookmark 或 excerpt";
+                }
+            } else if (!strcmp(f->string, "chapter")) {
+                ok = !has_chapter && companion_json_int_range(f, 0, 65535, &iv);
+                if (ok) { item.chapter = (uint16_t)iv; has_chapter = true; }
+                else err = "chapter 须为 0..65535 的整数";
+            } else if (!strcmp(f->string, "offset")) {
+                ok = !has_offset && companion_json_u32_range(f, 0, UINT32_MAX, &uv);
+                if (ok) { item.byte_off = uv; has_offset = true; }
+                else err = "offset 须为无符号 32 位整数";
+            } else if (!strcmp(f->string, "percent")) {
+                ok = !has_percent && companion_json_int_range(f, 0, 100, &iv);
+                if (ok) { item.percent = (uint8_t)iv; has_percent = true; }
+                else err = "percent 须为 0..100 的整数";
+            } else if (!strcmp(f->string, "text")) {
+                if (has_text) { ok = false; err = "重复的 text 字段"; break; }
+                has_text = true;
+                if (cJSON_IsNull(f)) {
+                    item.text = NULL;
+                    item.text_len = 0;
+                } else if (cJSON_IsString(f) && f->valuestring) {
+                    size_t tlen = strlen(f->valuestring);
+                    if (tlen == 0 || tlen > TRANSFER_NOTE_TEXT_MAX ||
+                        !companion_valid_utf8_text(f->valuestring, tlen, true)) {
+                        ok = false;
+                        err = "摘录 text 须为 1..4096 字节的合法 UTF-8";
+                    } else {
+                        item.text = f->valuestring;
+                        item.text_len = tlen;
+                    }
+                } else {
+                    ok = false;
+                    err = "text 须为字符串或 null";
+                }
+            } else if (!strcmp(f->string, "index")) {
+                ok = !has_index && companion_json_u32_range(f, 0, UINT32_MAX, &uv);
+                if (ok) has_index = true;
+                else err = "index 须为非负整数";
+            } else if (!strcmp(f->string, "truncated")) {
+                ok = !has_truncated && cJSON_IsBool(f);
+                if (ok) has_truncated = true;
+                else err = "truncated 须为布尔值";
+            } else {
+                ok = false;
+                err = "笔记条目包含未知字段";
+            }
+        }
+        if (ok && (!has_kind || !has_chapter || !has_offset || !has_percent)) {
+            ok = false;
+            err = "笔记条目缺少必填字段 kind / chapter / offset / percent";
+        }
+        if (ok) {
+            if (item.is_excerpt) {
+                if (!item.text || !item.text_len) {
+                    ok = false;
+                    err = "摘录条目缺少非空 text";
+                }
+            } else if (item.text != NULL) {
+                ok = false;
+                err = "书签条目不得包含 text";
+            }
+        }
+        if (ok) parsed[idx] = item;
+    }
+
+    if (!ok) {
+        free(parsed);
+        cJSON_Delete(root);
+        if (err_out) *err_out = err;
+        return false;
+    }
+    if (has_file_size_out) *has_file_size_out = has_file_size;
+    if (file_size_out) *file_size_out = file_size;
+    *root_out = root;
+    *items_out = parsed;
+    *count_out = count;
+    return true;
+}
+
+static inline bool companion_parse_stats_restore(const char *body, size_t len,
+                                                 read_pico_stats_restore_t *out,
+                                                 const char **err_out) {
+    if (err_out) *err_out = "无效的阅读统计 JSON";
+    if (!body || !len || !out) return false;
+    memset(out, 0, sizeof(*out));
+    cJSON *root = companion_parse_strict_json(body, len);
+    if (!root || !cJSON_IsObject(root) || !root->child) {
+        cJSON_Delete(root);
+        return false;
+    }
+
+    read_pico_stats_restore_t parsed = {0};
+    bool has_mode = false, has_last_path = false;
+    bool ok = true;
+    const char *err = "无效的阅读统计参数";
+
+    for (const cJSON *item = root->child; item && ok; item = item->next) {
+        if (!item->string) { ok = false; break; }
+        if (!strcmp(item->string, "mode")) {
+            if (has_mode || !cJSON_IsString(item) || !item->valuestring) {
+                ok = false; err = "mode 须为 replace 或 merge";
+            } else if (!strcmp(item->valuestring, "replace")) {
+                parsed.merge = false; has_mode = true;
+            } else if (!strcmp(item->valuestring, "merge")) {
+                parsed.merge = true; has_mode = true;
+            } else {
+                ok = false; err = "mode 须为 replace 或 merge";
+            }
+        } else if (!strcmp(item->string, "total_reading_sec")) {
+            uint32_t sec = 0;
+            ok = !parsed.has_total_reading_sec && companion_json_u32_range(item, 0, UINT32_MAX, &sec);
+            if (ok) { parsed.total_reading_sec = sec; parsed.has_total_reading_sec = true; }
+            else err = "total_reading_sec 须为无符号 32 位整数";
+        } else if (!strcmp(item->string, "last_book")) {
+            if (parsed.has_last_book) { ok = false; err = "重复的 last_book 字段"; break; }
+            parsed.has_last_book = true;
+            if (cJSON_IsNull(item)) {
+                parsed.clear_last_book = true;
+            } else if (cJSON_IsObject(item) && item->child) {
+                bool got_title = false, got_pct = false;
+                for (const cJSON *f = item->child; f && ok; f = f->next) {
+                    if (!f->string) { ok = false; break; }
+                    if (!strcmp(f->string, "title")) {
+                        if (got_title || !cJSON_IsString(f) || !f->valuestring) {
+                            ok = false; err = "last_book.title 须为非空字符串"; break;
+                        }
+                        size_t tlen = strlen(f->valuestring);
+                        if (!tlen || tlen > TRANSFER_STATS_TITLE_MAX ||
+                            !companion_valid_utf8_text(f->valuestring, tlen, false)) {
+                            ok = false; err = "last_book.title 须为 1..127 字节的单行合法 UTF-8"; break;
+                        }
+                        memcpy(parsed.last_book_title, f->valuestring, tlen + 1);
+                        got_title = true;
+                    } else if (!strcmp(f->string, "percent")) {
+                        int iv = 0;
+                        ok = !got_pct && companion_json_int_range(f, 0, 100, &iv);
+                        if (ok) { parsed.last_book_percent = (uint8_t)iv; got_pct = true; }
+                        else err = "last_book.percent 须为 0..100 的整数";
+                    } else {
+                        ok = false; err = "last_book 包含未知字段";
+                    }
+                }
+                if (ok && (!got_title || !got_pct)) {
+                    ok = false; err = "last_book 缺少必填字段 title / percent";
+                }
+            } else {
+                ok = false; err = "last_book 须为对象或 null";
+            }
+        } else if (!strcmp(item->string, "excerpt")) {
+            if (parsed.has_excerpt) { ok = false; err = "重复的 excerpt 字段"; break; }
+            parsed.has_excerpt = true;
+            if (cJSON_IsNull(item)) {
+                parsed.clear_excerpt = true;
+            } else if (cJSON_IsObject(item) && item->child) {
+                bool got_title = false, got_text = false;
+                for (const cJSON *f = item->child; f && ok; f = f->next) {
+                    if (!f->string) { ok = false; break; }
+                    if (!strcmp(f->string, "title")) {
+                        if (got_title || !cJSON_IsString(f) || !f->valuestring) {
+                            ok = false; err = "excerpt.title 须为非空字符串"; break;
+                        }
+                        size_t tlen = strlen(f->valuestring);
+                        if (!tlen || tlen > TRANSFER_STATS_TITLE_MAX ||
+                            !companion_valid_utf8_text(f->valuestring, tlen, false)) {
+                            ok = false; err = "excerpt.title 须为 1..127 字节的单行合法 UTF-8"; break;
+                        }
+                        memcpy(parsed.excerpt_title, f->valuestring, tlen + 1);
+                        got_title = true;
+                    } else if (!strcmp(f->string, "text")) {
+                        if (got_text || !cJSON_IsString(f) || !f->valuestring) {
+                            ok = false; err = "excerpt.text 须为非空字符串"; break;
+                        }
+                        size_t xlen = strlen(f->valuestring);
+                        if (!xlen || xlen > TRANSFER_STATS_EXCERPT_MAX ||
+                            !companion_valid_utf8_text(f->valuestring, xlen, true)) {
+                            ok = false; err = "excerpt.text 须为 1..300 字节的合法 UTF-8"; break;
+                        }
+                        memcpy(parsed.excerpt_text, f->valuestring, xlen + 1);
+                        got_text = true;
+                    } else {
+                        ok = false; err = "excerpt 包含未知字段";
+                    }
+                }
+                if (ok && (!got_title || !got_text)) {
+                    ok = false; err = "excerpt 缺少必填字段 title / text";
+                }
+            } else {
+                ok = false; err = "excerpt 须为对象或 null";
+            }
+        } else if (!strcmp(item->string, "last_book_path")) {
+            // 兼容 GET /stats 原样回传；自动续读路径须通过 PUT /books/progress 的 set_last 更新。
+            // Accept read-only last_book_path from GET /stats; resume path is updated via PUT /books/progress set_last.
+            ok = !has_last_path && (cJSON_IsString(item) || cJSON_IsNull(item));
+            if (ok) has_last_path = true;
+            else err = "last_book_path 须为字符串或 null";
+        } else {
+            ok = false;
+            err = "包含未知的阅读统计字段";
+        }
+    }
+    cJSON_Delete(root);
+    if (ok && !parsed.has_total_reading_sec && !parsed.has_last_book && !parsed.has_excerpt) {
+        ok = false;
+        err = "至少须提供 total_reading_sec、last_book 或 excerpt 之一";
+    }
+    if (!ok) {
+        if (err_out) *err_out = err;
+        return false;
+    }
+    *out = parsed;
     return true;
 }

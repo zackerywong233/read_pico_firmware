@@ -290,14 +290,70 @@ int main(void) {
     assert(ctx.request_app == &app_web);
     assert(strcmp(test_queued_web_url, "https://example.com/article") == 0);
 
-    // 图书进度、网页收藏夹与专注时钟伴侣回调验证。
-    // Book progress, web bookmarks and focus timer companion callback checks.
-    assert(test_last_cfg.book_progress_cb && test_last_cfg.webmarks_list_cb &&
+    // 图书进度、笔记与阅读统计恢复回调验证。
+    // Book progress, notes and reading stats restore callback checks.
+    assert(test_last_cfg.book_progress_cb && test_last_cfg.book_progress_set_cb &&
+           test_last_cfg.book_notes_set_cb && test_last_cfg.dashboard_stats_set_cb &&
+           test_last_cfg.webmarks_list_cb &&
            test_last_cfg.webmarks_upsert_cb && test_last_cfg.webmarks_delete_cb &&
            test_last_cfg.focus_get_cb && test_last_cfg.focus_ctrl_cb);
     read_pico_book_progress_t bp = {0};
     assert(test_last_cfg.book_progress_cb("/sdcard/books/prog.txt", 1024, &bp, test_last_cfg.book_progress_ctx));
-    assert(bp.has_progress && bp.percent == 65 && bp.chapter == 2 && bp.byte_off == 512);
+    assert(bp.has_progress && bp.percent == 65 && bp.chapter == 2 && bp.byte_off == 512 && bp.px == 48);
+
+    // 恢复进度：省略 px 时回退设备默认字号，失效旧 watch，并更新 last_book_path。
+    // Restore progress: omitted px falls back to book_px, invalidates stale watch, and updates last_book_path.
+    int inv_before = test_watch_invalidations;
+    read_pico_book_progress_t bp_in = { .percent = 77, .chapter = 4, .byte_off = 2048, .px = 0 };
+    read_pico_book_progress_t bp_out = {0};
+    assert(test_last_cfg.book_progress_set_cb("/sdcard/books/restored.epub", 4096, &bp_in, true, &bp_out, test_last_cfg.book_progress_ctx) == ESP_OK);
+    assert(test_watch_invalidations == inv_before + 1);
+    assert(bp_out.has_progress && bp_out.percent == 77 && bp_out.chapter == 4 && bp_out.byte_off == 2048 && bp_out.px == test_settings.book_px && bp_out.order == 13);
+    assert(!strcmp(test_last_book_path, "/sdcard/books/restored.epub"));
+
+    // 恢复书签与摘录，以及空数组清空。
+    // Restore bookmarks and excerpts, plus empty-array clearing.
+    const char* sample_ex = "生命本身就是奇迹";
+    read_pico_book_note_item_t note_items[2] = {
+        { .is_excerpt = false, .chapter = 1, .byte_off = 128, .percent = 10, .text = NULL, .text_len = 0 },
+        { .is_excerpt = true, .chapter = 3, .byte_off = 900, .percent = 45, .text = sample_ex, .text_len = strlen(sample_ex) },
+    };
+    assert(test_last_cfg.book_notes_set_cb("/sdcard/books/restored.epub", 4096, note_items, 2, test_last_cfg.book_notes_ctx) == ESP_OK);
+    assert(test_saved_note_bookmarks == 1 && test_saved_note_excerpts == 1 && !strcmp(test_saved_excerpt_copy, sample_ex));
+    int forget_before = test_notes_forget_calls;
+    assert(test_last_cfg.book_notes_set_cb("/sdcard/books/restored.epub", 4096, NULL, 0, test_last_cfg.book_notes_ctx) == ESP_OK);
+    assert(test_notes_forget_calls == forget_before + 1 && test_saved_note_bookmarks == 0 && test_saved_note_excerpts == 0);
+
+    // 恢复累计阅读统计：merge 模式保留更大时长与已有条目；replace 模式覆盖并支持清除。
+    // Restore reading stats: merge keeps larger total and existing records; replace overwrites and clears.
+    read_pico_stats_restore_t st_merge = {
+        .merge = true,
+        .has_total_reading_sec = true, .total_reading_sec = 1000U,
+        .has_last_book = true, .last_book_title = "旧书.txt", .last_book_percent = 10,
+        .has_excerpt = true, .clear_excerpt = true,
+    };
+    read_pico_dashboard_stats_t st_out = {0};
+    assert(test_last_cfg.dashboard_stats_set_cb(&st_merge, &st_out, test_last_cfg.dashboard_ctx) == ESP_OK);
+    assert(st_out.total_reading_sec == 3661U && st_out.has_last_book && !strcmp(st_out.last_book_title, "三体.epub") && st_out.has_excerpt);
+    assert(st_out.has_last_book_path && !strcmp(st_out.last_book_path, "/sdcard/books/restored.epub"));
+
+    read_pico_stats_restore_t st_replace = {
+        .merge = false,
+        .has_total_reading_sec = true, .total_reading_sec = 9000U,
+        .has_last_book = true, .last_book_title = "新书.epub", .last_book_percent = 80,
+        .has_excerpt = true, .clear_excerpt = true,
+    };
+    assert(test_last_cfg.dashboard_stats_set_cb(&st_replace, &st_out, test_last_cfg.dashboard_ctx) == ESP_OK);
+    assert(st_out.total_reading_sec == 9000U && st_out.has_last_book && !strcmp(st_out.last_book_title, "新书.epub") &&
+           st_out.last_book_percent == 80 && !st_out.has_excerpt);
+
+    read_pico_stats_restore_t st_merge_fill = {
+        .merge = true,
+        .has_total_reading_sec = true, .total_reading_sec = 12000U,
+        .has_excerpt = true, .excerpt_title = "新书.epub", .excerpt_text = "补全摘录",
+    };
+    assert(test_last_cfg.dashboard_stats_set_cb(&st_merge_fill, &st_out, test_last_cfg.dashboard_ctx) == ESP_OK);
+    assert(st_out.total_reading_sec == 12000U && st_out.has_excerpt && !strcmp(st_out.excerpt_text, "补全摘录"));
     assert(test_last_cfg.webmarks_upsert_cb("示例", "https://example.com", test_last_cfg.webmarks_ctx) == ESP_OK);
     read_pico_webmark_t wm[4];
     assert(test_last_cfg.webmarks_list_cb(wm, 4, test_last_cfg.webmarks_ctx) == 1);

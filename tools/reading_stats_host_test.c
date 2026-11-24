@@ -93,5 +93,19 @@ int main(void) {
     assert(strcmp(title, "旧版摘录") == 0);
     assert(strlen(text) == 48);
     assert((unsigned char)text[48] == 0);
+
+    // 验证恢复与清空接口 / Verify restore and clear APIs.
+    assert(reading_stats_set_total_seconds(12345U) == ESP_OK);
+    assert(reading_stats_total_seconds() == 12345U);
+    assert(reading_stats_set_last_book_checked("三体.epub", 88) == ESP_OK);
+    uint8_t pct = 0;
+    assert(reading_stats_get_last_book(title, sizeof(title), &pct) && strcmp(title, "三体.epub") == 0 && pct == 88);
+    assert(reading_stats_set_last_book_checked("", 0) == ESP_OK);
+    assert(!reading_stats_get_last_book(title, sizeof(title), &pct));
+    assert(reading_stats_set_excerpt_checked("三体.epub", "给岁月以文明") == ESP_OK);
+    assert(reading_stats_get_excerpt(title, sizeof(title), text, sizeof(text)) &&
+           strcmp(title, "三体.epub") == 0 && strcmp(text, "给岁月以文明") == 0);
+    assert(reading_stats_set_excerpt_checked("", "") == ESP_OK);
+    assert(!reading_stats_get_excerpt(title, sizeof(title), text, sizeof(text)));
     return 0;
 }

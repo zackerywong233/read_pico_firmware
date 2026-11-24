@@ -70,16 +70,53 @@ static inline bool app_time_set_utc(uint32_t unix_sec, bool* pmu_synced) {
 static int test_pmu_poll_calls;
 static inline bool read_pico_pmu_ready(void) { return true; }
 static inline int read_pico_pmu_poll(void) { ++test_pmu_poll_calls; return ESP_OK; }
-static inline uint32_t reading_stats_total_seconds(void) { return 3661U; }
+static uint32_t test_reading_seconds = 3661U;
+static bool test_has_last_book = true;
+static char test_last_book_title[128] = "三体.epub";
+static uint8_t test_last_book_percent = 42;
+static bool test_has_excerpt = true;
+static char test_excerpt_title[128] = "三体.epub";
+static char test_excerpt_text[304] = "给岁月以文明";
+static inline uint32_t reading_stats_total_seconds(void) { return test_reading_seconds; }
+static inline esp_err_t reading_stats_set_total_seconds(uint32_t seconds) {
+    test_reading_seconds = seconds;
+    return ESP_OK;
+}
 static inline bool reading_stats_get_last_book(char* title, uint32_t cap, uint8_t* pct) {
-    snprintf(title, cap, "%s", "三体.epub");
-    if (pct) *pct = 42;
+    if (!test_has_last_book || !test_last_book_title[0]) return false;
+    snprintf(title, cap, "%s", test_last_book_title);
+    if (pct) *pct = test_last_book_percent;
     return true;
 }
+static inline esp_err_t reading_stats_set_last_book_checked(const char* title, uint8_t pct) {
+    if (!title || !title[0]) {
+        test_has_last_book = false;
+        test_last_book_title[0] = 0;
+        test_last_book_percent = 0;
+        return ESP_OK;
+    }
+    test_has_last_book = true;
+    snprintf(test_last_book_title, sizeof(test_last_book_title), "%s", title);
+    test_last_book_percent = pct > 100 ? 100 : pct;
+    return ESP_OK;
+}
 static inline bool reading_stats_get_excerpt(char* title, uint32_t tcap, char* text, uint32_t cap) {
-    snprintf(title, tcap, "%s", "三体.epub");
-    snprintf(text, cap, "%s", "给岁月以文明");
+    if (!test_has_excerpt || !test_excerpt_text[0]) return false;
+    snprintf(title, tcap, "%s", test_excerpt_title);
+    snprintf(text, cap, "%s", test_excerpt_text);
     return true;
+}
+static inline esp_err_t reading_stats_set_excerpt_checked(const char* title, const char* text) {
+    if (!text || !text[0]) {
+        test_has_excerpt = false;
+        test_excerpt_title[0] = 0;
+        test_excerpt_text[0] = 0;
+        return ESP_OK;
+    }
+    test_has_excerpt = true;
+    snprintf(test_excerpt_title, sizeof(test_excerpt_title), "%s", title ? title : "");
+    snprintf(test_excerpt_text, sizeof(test_excerpt_text), "%s", text);
+    return ESP_OK;
 }
 static inline int ui_content_width(void) { return 604; }
 static inline EpdRect ui_row_rect(int i,int n,int y,int h) { int w=(604-(n-1)*12)/n; return (EpdRect){40+i*(w+12),y,w,h}; }
@@ -202,9 +239,13 @@ typedef struct {
     esp_err_t(*font_select_cb)(const char*,void*);
     void* font_ctx;
     bool(*dashboard_stats_cb)(read_pico_dashboard_stats_t*,void*);
+    esp_err_t(*dashboard_stats_set_cb)(const read_pico_stats_restore_t*,read_pico_dashboard_stats_t*,void*);
     void* dashboard_ctx;
     bool(*book_progress_cb)(const char*,uint32_t,read_pico_book_progress_t*,void*);
+    esp_err_t(*book_progress_set_cb)(const char*,uint32_t,const read_pico_book_progress_t*,bool,read_pico_book_progress_t*,void*);
     void* book_progress_ctx;
+    esp_err_t(*book_notes_set_cb)(const char*,uint32_t,const read_pico_book_note_item_t*,size_t,void*);
+    void* book_notes_ctx;
     size_t(*webmarks_list_cb)(read_pico_webmark_t*,size_t,void*);
     esp_err_t(*webmarks_upsert_cb)(const char*,const char*,void*);
     esp_err_t(*webmarks_delete_cb)(const char*,void*);
@@ -273,10 +314,70 @@ void app_web_queue_url(const char* url) {
 }
 
 typedef struct { uint32_t file_size; uint16_t chapter; uint32_t byte_off; uint8_t px; uint8_t pct; uint32_t last_open_s; } book_progress_t;
+static bool test_progress_saved;
+static char test_progress_path[288];
+static book_progress_t test_progress_val;
+static uint32_t test_progress_seq = 12;
+static int test_watch_invalidations;
+static char test_last_book_path[288] = "/sdcard/books/prog.txt";
+static inline void book_progress_invalidate_watch(const char* path) {
+    if (path && path[0]) ++test_watch_invalidations;
+}
 static inline bool book_progress_load(const char* path, uint32_t size, book_progress_t* out) {
-    if (!path || !out || !strstr(path, "prog.txt")) return false;
+    if (!path || !out) return false;
+    if (test_progress_saved && !strcmp(path, test_progress_path) && test_progress_val.file_size == size) {
+        *out = test_progress_val;
+        return true;
+    }
+    if (!strstr(path, "prog.txt")) return false;
     *out = (book_progress_t){ .file_size = size, .chapter = 2, .byte_off = 512, .px = 48, .pct = 65, .last_open_s = 12 };
     return true;
+}
+static inline esp_err_t book_progress_save(const char* path, const book_progress_t* progress) {
+    if (!path || !progress) return ESP_ERR_INVALID_ARG;
+    snprintf(test_progress_path, sizeof(test_progress_path), "%s", path);
+    test_progress_val = *progress;
+    test_progress_val.last_open_s = ++test_progress_seq;
+    test_progress_saved = true;
+    return ESP_OK;
+}
+static inline bool book_progress_last_path(char* out, size_t cap) {
+    if (!out || !cap || !test_last_book_path[0]) return false;
+    snprintf(out, cap, "%s", test_last_book_path);
+    return true;
+}
+static inline esp_err_t book_progress_set_last_path(const char* path) {
+    if (!path) return ESP_ERR_INVALID_ARG;
+    snprintf(test_last_book_path, sizeof(test_last_book_path), "%s", path);
+    return ESP_OK;
+}
+
+typedef struct { uint16_t chapter; uint32_t byte_off; uint8_t percent; } book_note_position_t;
+typedef struct { book_note_position_t position; char* text; size_t text_len; } book_note_excerpt_t;
+typedef struct { size_t bookmark_count; size_t excerpt_count; book_note_position_t* bookmarks; book_note_excerpt_t* excerpts; } book_notes_t;
+static size_t test_saved_note_bookmarks, test_saved_note_excerpts;
+static int test_notes_forget_calls;
+static char test_saved_note_path[288];
+static char test_saved_excerpt_copy[128];
+static inline esp_err_t book_notes_save(const char* path, uint32_t file_size, const book_notes_t* notes) {
+    (void)file_size;
+    if (!path || !notes) return ESP_ERR_INVALID_ARG;
+    snprintf(test_saved_note_path, sizeof(test_saved_note_path), "%s", path);
+    test_saved_note_bookmarks = notes->bookmark_count;
+    test_saved_note_excerpts = notes->excerpt_count;
+    test_saved_excerpt_copy[0] = 0;
+    if (notes->excerpt_count > 0 && notes->excerpts[0].text) {
+        snprintf(test_saved_excerpt_copy, sizeof(test_saved_excerpt_copy), "%.*s",
+                 (int)notes->excerpts[0].text_len, notes->excerpts[0].text);
+    }
+    return ESP_OK;
+}
+static inline esp_err_t book_notes_forget(const char* path) {
+    if (!path) return ESP_ERR_INVALID_ARG;
+    ++test_notes_forget_calls;
+    test_saved_note_bookmarks = 0;
+    test_saved_note_excerpts = 0;
+    return ESP_OK;
 }
 
 #define WEB_BOOKMARK_MAX 20

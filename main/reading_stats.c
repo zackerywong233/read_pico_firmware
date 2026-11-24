@@ -56,6 +56,16 @@ void reading_stats_add_seconds(uint32_t seconds) {
     nvs_close(h);
 }
 
+esp_err_t reading_stats_set_total_seconds(uint32_t seconds) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(STATS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u32(h, STATS_KEY, seconds);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
 static bool get_string(const char* key, char* out, uint32_t cap) {
     if (out == NULL || cap == 0) return false;
     out[0] = '\0';
@@ -85,19 +95,55 @@ static bool get_string(const char* key, char* out, uint32_t cap) {
     return err == ESP_OK;
 }
 
-static void put_string(const char* key, const char* value) {
+static esp_err_t put_string_checked(const char* key, const char* value) {
     nvs_handle_t h;
-    if (nvs_open(STATS_NS, NVS_READWRITE, &h) != ESP_OK) return;
-    if (nvs_set_str(h, key, value ? value : "") == ESP_OK) (void)nvs_commit(h);
+    esp_err_t err = nvs_open(STATS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(h, key, value ? value : "");
+    if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
+    return err;
+}
+
+esp_err_t reading_stats_set_excerpt_checked(const char* title, const char* text) {
+    if (!text || !text[0]) {
+        // 原子清空摘录标题与正文。/ Clear both excerpt title and text atomically.
+        nvs_handle_t h;
+        esp_err_t err = nvs_open(STATS_NS, NVS_READWRITE, &h);
+        if (err != ESP_OK) return err;
+        err = nvs_set_str(h, KEY_QUOTE_TITLE, "");
+        if (err == ESP_OK) err = nvs_set_str(h, KEY_QUOTE_TEXT, "");
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+        return err;
+    }
+    const char* safe_title = title ? title : "";
+    char excerpt[EXCERPT_MAX_BYTES + 1];
+    const char* stored_text = text;
+    size_t len = strlen(text);
+    if (len > EXCERPT_MAX_BYTES) {
+        size_t keep = utf8_prefix(text, len, EXCERPT_MAX_BYTES - 3);
+        memcpy(excerpt, text, keep);
+        memcpy(excerpt + keep, "…", 3);
+        excerpt[keep + 3] = '\0';
+        stored_text = excerpt;
+    }
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(STATS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(h, KEY_QUOTE_TITLE, safe_title);
+    if (err == ESP_OK) err = nvs_set_str(h, KEY_QUOTE_TEXT, stored_text);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
 }
 
 void reading_stats_save_excerpt(const char* title, const char* text) {
-    put_string(KEY_QUOTE_TITLE, title);
+    (void)put_string_checked(KEY_QUOTE_TITLE, title);
     if (!text) text = "";
     size_t len = strlen(text);
     if (len <= EXCERPT_MAX_BYTES) {
-        put_string(KEY_QUOTE_TEXT, text);
+        (void)put_string_checked(KEY_QUOTE_TEXT, text);
         return;
     }
     size_t keep = utf8_prefix(text, len, EXCERPT_MAX_BYTES - 3);
@@ -105,13 +151,35 @@ void reading_stats_save_excerpt(const char* title, const char* text) {
     memcpy(excerpt, text, keep);
     memcpy(excerpt + keep, "…", 3);
     excerpt[keep + 3] = '\0';
-    put_string(KEY_QUOTE_TEXT, excerpt);
+    (void)put_string_checked(KEY_QUOTE_TEXT, excerpt);
 }
 
 bool reading_stats_get_excerpt(char* title, uint32_t title_cap, char* text, uint32_t text_cap) {
     bool have_title = get_string(KEY_QUOTE_TITLE, title, title_cap);
     bool have_text = get_string(KEY_QUOTE_TEXT, text, text_cap);
     return have_title && have_text && text[0] != '\0';
+}
+
+esp_err_t reading_stats_set_last_book_checked(const char* title, uint8_t percent) {
+    if (!title || !title[0]) {
+        nvs_handle_t h;
+        esp_err_t err = nvs_open(STATS_NS, NVS_READWRITE, &h);
+        if (err != ESP_OK) return err;
+        err = nvs_set_str(h, KEY_LAST_TITLE, "");
+        if (err == ESP_OK) err = nvs_set_u8(h, KEY_LAST_PERCENT, 0);
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+        return err;
+    }
+    if (percent > 100) percent = 100;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(STATS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(h, KEY_LAST_TITLE, title);
+    if (err == ESP_OK) err = nvs_set_u8(h, KEY_LAST_PERCENT, percent);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
 }
 
 void reading_stats_set_last_book(const char* title, uint8_t percent) {

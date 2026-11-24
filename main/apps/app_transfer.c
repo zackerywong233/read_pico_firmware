@@ -32,6 +32,7 @@
 // Use the built-in font and suspend SD font opens for this page; resume only after HTTP stops.
 #include <stdatomic.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "app.h"
@@ -43,6 +44,7 @@
 #include "time_sync.h"
 #include "web_bookmarks.h"
 #include "feeds_store.h"
+#include "book_notes.h"
 #include "book_store.h"
 #include "book_progress.h"
 #include "display.h"
@@ -195,7 +197,59 @@ static bool transfer_dashboard_stats(read_pico_dashboard_stats_t* out, void* ctx
     out->has_excerpt = reading_stats_get_excerpt(
         out->excerpt_title, sizeof(out->excerpt_title),
         out->excerpt_text, sizeof(out->excerpt_text));
+    out->has_last_book_path = book_progress_last_path(
+        out->last_book_path, sizeof(out->last_book_path));
     return true;
+}
+
+static esp_err_t transfer_dashboard_stats_set(const read_pico_stats_restore_t* in,
+                                              read_pico_dashboard_stats_t* out, void* ctx) {
+    if (!in) return ESP_ERR_INVALID_ARG;
+    esp_err_t err = ESP_OK;
+    if (in->has_total_reading_sec) {
+        uint32_t target = in->total_reading_sec;
+        if (in->merge) {
+            uint32_t cur = reading_stats_total_seconds();
+            if (cur > target) target = cur;
+        }
+        err = reading_stats_set_total_seconds(target);
+        if (err != ESP_OK) return err;
+    }
+    if (in->has_last_book) {
+        if (in->clear_last_book) {
+            if (!in->merge) {
+                err = reading_stats_set_last_book_checked("", 0);
+                if (err != ESP_OK) return err;
+            }
+        } else {
+            char cur_title[128] = {0};
+            uint8_t cur_pct = 0;
+            bool have_cur = in->merge && reading_stats_get_last_book(cur_title, sizeof(cur_title), &cur_pct);
+            if (!have_cur) {
+                err = reading_stats_set_last_book_checked(in->last_book_title, in->last_book_percent);
+                if (err != ESP_OK) return err;
+            }
+        }
+    }
+    if (in->has_excerpt) {
+        if (in->clear_excerpt) {
+            if (!in->merge) {
+                err = reading_stats_set_excerpt_checked("", "");
+                if (err != ESP_OK) return err;
+            }
+        } else {
+            char cur_title[128] = {0};
+            char cur_text[16] = {0};
+            bool have_cur = in->merge && reading_stats_get_excerpt(
+                cur_title, sizeof(cur_title), cur_text, sizeof(cur_text));
+            if (!have_cur) {
+                err = reading_stats_set_excerpt_checked(in->excerpt_title, in->excerpt_text);
+                if (err != ESP_OK) return err;
+            }
+        }
+    }
+    if (out) (void)transfer_dashboard_stats(out, ctx);
+    return ESP_OK;
 }
 
 static bool transfer_book_progress(const char* path, uint32_t size,
@@ -209,8 +263,102 @@ static bool transfer_book_progress(const char* path, uint32_t size,
     out->percent = prog.pct;
     out->chapter = prog.chapter;
     out->byte_off = prog.byte_off;
+    out->px = prog.px;
     out->order = prog.last_open_s;
     return true;
+}
+
+static esp_err_t transfer_book_progress_set(const char* path, uint32_t size,
+                                            const read_pico_book_progress_t* in, bool set_last,
+                                            read_pico_book_progress_t* out, void* ctx) {
+    (void)ctx;
+    if (!path || !in) return ESP_ERR_INVALID_ARG;
+    uint8_t px = in->px ? in->px : app_settings_book_px();
+    if (px < 36 || px > 72 || (px - 36) % 4 != 0) px = 48;
+    book_progress_t prog = {
+        .file_size = size,
+        .chapter = in->chapter,
+        .byte_off = in->byte_off,
+        .px = px,
+        .pct = in->percent,
+        .last_open_s = 0,
+    };
+    // 失效阅读页旧待保存监视，避免退出传书后回写过期进度。
+    // Invalidate stale reader pending watches so exiting Transfer never overwrites restored progress.
+    book_progress_invalidate_watch(path);
+    esp_err_t err = book_progress_save(path, &prog);
+    if (err != ESP_OK) return err;
+    if (set_last) {
+        err = book_progress_set_last_path(path);
+        if (err != ESP_OK) return err;
+    }
+    if (out) {
+        memset(out, 0, sizeof(*out));
+        book_progress_t saved = {0};
+        if (book_progress_load(path, size, &saved)) {
+            out->has_progress = true;
+            out->percent = saved.pct;
+            out->chapter = saved.chapter;
+            out->byte_off = saved.byte_off;
+            out->px = saved.px;
+            out->order = saved.last_open_s;
+        } else {
+            out->has_progress = true;
+            out->percent = prog.pct;
+            out->chapter = prog.chapter;
+            out->byte_off = prog.byte_off;
+            out->px = prog.px;
+        }
+    }
+    return ESP_OK;
+}
+
+static esp_err_t transfer_book_notes_set(const char* path, uint32_t size,
+                                         const read_pico_book_note_item_t* items, size_t count,
+                                         void* ctx) {
+    (void)ctx;
+    if (!path || (count && !items)) return ESP_ERR_INVALID_ARG;
+    if (count == 0) return book_notes_forget(path);
+    size_t bookmark_count = 0, excerpt_count = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (items[i].is_excerpt) ++excerpt_count;
+        else ++bookmark_count;
+    }
+    book_note_position_t* bookmarks = bookmark_count
+        ? (book_note_position_t*)calloc(bookmark_count, sizeof(*bookmarks)) : NULL;
+    book_note_excerpt_t* excerpts = excerpt_count
+        ? (book_note_excerpt_t*)calloc(excerpt_count, sizeof(*excerpts)) : NULL;
+    if ((bookmark_count && !bookmarks) || (excerpt_count && !excerpts)) {
+        free(bookmarks);
+        free(excerpts);
+        return ESP_ERR_NO_MEM;
+    }
+    size_t bi = 0, ei = 0;
+    for (size_t i = 0; i < count; ++i) {
+        book_note_position_t pos = {
+            .chapter = items[i].chapter,
+            .byte_off = items[i].byte_off,
+            .percent = items[i].percent,
+        };
+        if (items[i].is_excerpt) {
+            excerpts[ei].position = pos;
+            excerpts[ei].text = (char*)items[i].text;
+            excerpts[ei].text_len = items[i].text_len;
+            ++ei;
+        } else {
+            bookmarks[bi++] = pos;
+        }
+    }
+    book_notes_t notes = {
+        .bookmark_count = bookmark_count,
+        .excerpt_count = excerpt_count,
+        .bookmarks = bookmarks,
+        .excerpts = excerpts,
+    };
+    esp_err_t err = book_notes_save(path, size, &notes);
+    free(bookmarks);
+    free(excerpts);
+    return err;
 }
 
 static size_t transfer_webmarks_list(read_pico_webmark_t* out, size_t cap, void* ctx) {
@@ -989,7 +1137,10 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
                 .time_get_cb = transfer_time_get, .time_set_cb = transfer_time_set,
                 .font_select_cb = transfer_font_select,
                 .dashboard_stats_cb = transfer_dashboard_stats,
+                .dashboard_stats_set_cb = transfer_dashboard_stats_set,
                 .book_progress_cb = transfer_book_progress,
+                .book_progress_set_cb = transfer_book_progress_set,
+                .book_notes_set_cb = transfer_book_notes_set,
                 .webmarks_list_cb = transfer_webmarks_list,
                 .webmarks_upsert_cb = transfer_webmarks_upsert,
                 .webmarks_delete_cb = transfer_webmarks_delete,

@@ -31,26 +31,28 @@ STA 模式下广播 mDNS 主机名 `readpico.local` 与 `_http._tcp` 80 端口�
 
 ---
 
-## 3. 路由总览（共 44 条）/ Endpoints
+## 3. 路由总览（共 48 条）/ Endpoints
 
 ### 3.1 设备信息与鉴权
 
 | 方法与路径 | 鉴权 | 说明 |
 | --- | --- | --- |
-| `GET /info` | 否 | 返回 `api_version`、`firmware_version`、`build_date/time`、`device_id`、`ble_name`、`ble_supported`、`ble_enabled`、`ble_pin_required`、`active_storage`、`free_bytes`、`file_limit`、`flash_available/free_bytes`、`sd_available/free_bytes`、`can_switch_storage`、`mode`、`network_ready`、`url`、`mdns_host`、`wifi_configured`、`wifi_ssid`、`wifi_ssids`、`clip_token`、`pin_required`、能力开关（含 `book_download_enabled`、`book_progress_enabled`、`notes_json_enabled`、`webmarks_enabled`、`feeds_enabled`、`focus_enabled`）与缓存电池状态（`battery_soc`、`battery_mv`、`charging`、`charge_state`） |
+| `GET /info` | 否 | 返回 `api_version`、`firmware_version`、`build_date/time`、`device_id`、`ble_name`、`ble_supported`、`ble_enabled`、`ble_pin_required`、`active_storage`、`free_bytes`、`file_limit`、`flash_available/free_bytes`、`sd_available/free_bytes`、`can_switch_storage`、`mode`、`network_ready`、`url`、`mdns_host`、`wifi_configured`、`wifi_ssid`、`wifi_ssids`、`clip_token`、`pin_required`、能力开关（含 `book_download_enabled`、`book_progress_enabled`、`book_progress_write_enabled`、`notes_json_enabled`、`notes_write_enabled`、`stats_enabled`、`stats_write_enabled`、`webmarks_enabled`、`feeds_enabled`、`focus_enabled`）与缓存电池状态（`battery_soc`、`battery_mv`、`charging`、`charge_state`） |
 | `POST /auth/verify` | 校验 PIN | 请求头 `X-Pico-Pin` 或 JSON `{"pin":"123456"}`，返回 `{"ok":true,"pin_required":...}` |
 | `POST /storage` | PIN | 请求 `{"target":"flash"|"sd"}`；空闲时切换图书上传目标并重启服务 |
 | `POST /transfer/stop` | PIN | 空闲时返回 `{"ok":true,"stopping":true}`，约 120 ms 后停止局域网传书并退出传书页以自动恢复 BLE 广播；上传中返回 `409` |
 
-### 3.2 图书、笔记、网页收藏与网页投递
+### 3.2 图书、进度恢复、笔记、网页收藏与网页投递
 
 | 方法与路径 | 鉴权 | 说明 |
 | --- | --- | --- |
-| `GET /books` | 否 | 支持 `?q=<关键词>&page=<页码>` 分页搜索（附带每本书的 `has_notes` 及阅读进度 `has_progress`/`percent`/`chapter`/`byte_off`/`order`）；`?name=<urlenc>` 查询单本详情与进度；`?name=<urlenc>&download=1` 流式下载图书原文件 |
+| `GET /books` | 否 | 支持 `?q=<关键词>&page=<页码>` 分页搜索（附带每本书的 `has_notes` 及阅读进度 `has_progress`/`percent`/`chapter`/`byte_off`/`px`/`order`）；`?name=<urlenc>` 查询单本详情与进度；`?name=<urlenc>&download=1` 流式下载图书原文件 |
+| `PUT /books/progress?name=<urlenc>` | PIN | 恢复当前存储根目录已有图书的阅读进度（`application/json`，正文上限 512 B）：必填 `percent` (`0..100`)、`chapter` (`0..65535`)、`byte_off` (`0..4294967295`)；可选 `px` (`36..72` 步长 4，省略时取设备默认阅读字号)、`file_size`（与设备当前文件大小不一致时返回 `409`）、`set_last`（布尔值，设为最近自动续读图书）。写入前自动失效阅读页旧待保存缓存，返回 `ok`、实际 `file_size` 与新单调序号 `order` |
 | `PUT /upload?name=<urlenc>&overwrite=0\|1` | PIN | 流式上传 `.txt` / `.epub` / `.md` / `.cbz` 至当前活动存储；内置 Flash 单文件上限 1 MiB，中断自动清理 `.part` |
 | `DELETE /books?name=<urlenc>` | PIN | 删除当前存储根目录图书并清理其进度、书签与摘录 |
 | `POST /books?name=<urlenc>&action=retry_progress` | PIN | 重试清理删除/覆盖遗留的阅读进度记录 |
 | `GET /notes?name=<urlenc>[&format=json]` | PIN | 默认流式下载 UTF-8 Markdown；加 `&format=json` 返回结构化书签/摘录 JSON 数组（含 `index`、`kind`、`chapter`、`offset`、`percent`、`text`） |
+| `PUT /notes?name=<urlenc>` | PIN | 原子覆盖恢复指定图书的书签与摘录 sidecar（`application/json`，正文上限 128 KiB，最多 512 条，单条摘录 `text` 上限 4096 字节合法 UTF-8）：接收 `{"items":[...],"file_size":...}`（兼容直接回传 `GET /notes?...&format=json` 导出的 `book`/`count`/`index`/`truncated` 字段）；可选 `file_size` 不匹配返回 `409`；`items` 为空数组 `[]` 时清空该书笔记；返回 `ok`、`bookmarks`、`excerpts`、`count` |
 | `DELETE /notes?name=<urlenc>[&index=<idx>]` | PIN | 传入 `index` 原子删除指定单条书签/摘录；省略 `index` 清空该书全部笔记 |
 | `GET / POST / DELETE /webmarks` | POST/DELETE 需 PIN | 同步网页收藏夹（最多 20 条，`read_pico` NVS）：`GET` 列出；`POST` JSON `{"title":"...","url":"https://..."}` 新增或更新标题；`DELETE` 支持 `?url=<urlenc>` 或 JSON `{"url":"..."}` |
 | `GET / POST / DELETE /feeds` | POST/DELETE 需 PIN | 管理 OPDS 1.2 / RSS 2.0 订阅源（最多 16 个，独立 `rp_feeds` NVS）：`GET` 返回脱敏列表（含 `name`、`url`、`kind` [0=RSS, 1=OPDS]、`auth_user`、`has_password`，永不回显密码）；`POST` JSON `{"name":"...","url":"https://...","kind":0\|1,"auth_user":"...","auth_pass":"...","clear_auth":false}` 新增或更新；`DELETE` 支持 `?url=<urlenc>` 或 JSON `{"url":"..."}` |
@@ -85,9 +87,11 @@ STA 模式下广播 mDNS 主机名 `readpico.local` 与 `_http._tcp` 80 端口�
 | `PATCH /settings` | PIN | 原子校验并局部更新设置：`sleep_mode` (0..2)、`auto_sleep_sec` (0/30/60/120/300/600/900/1800/3600)、`pickup_wake`、`book_px` (36..72 步长 4)、`book_refresh` (0..2)、`book_line_height` (0..2)、`book_margin` (0..2)、`book_weight` (0 或 300..800 步长 100)、`book_rotation` (0..2)、`book_gesture` (0..2)、`saver_style` (0..3，3=当前书封面)、`dashboard_items` (0..15)、`timezone_min` (-720..840)、`charge_led`、`low_soc_notify_percent` (0 或 5..30 步长 5)、`muted`、`transfer_pin_required`、`ble_enabled`、`ble_pin_required`。未知键、越界值、`font_path` 与 `vcom` 均返回 `400` |
 | `GET /time` | 否 | 读取设备 UTC 时间戳、有效标志与时区偏移分钟 |
 | `POST /time` | PIN | JSON `{"unix_sec":1795190000,"timezone_min":480}`（`timezone_min` 可选），同步主机时钟与主板 PMU RTC |
-| `GET /dashboard` | 否 | 返回看板文字（`/sdcard/dashboard.txt`）、`total_reading_sec`、`last_book` 与 `excerpt` |
+| `GET /dashboard` | 否 | 返回看板文字（`/sdcard/dashboard.txt`）、`total_reading_sec`、`last_book`、`excerpt` 与可选 `last_book_path` |
 | `PUT /dashboard` | PIN | JSON `{"note":"..."}`（合法 UTF-8，最多 4 行、1024 字节，需挂载 TF 卡） |
 | `DELETE /dashboard` | PIN | 清空 `/sdcard/dashboard.txt` |
+| `GET /stats` | 否 | 读取累计阅读统计快照（不依赖 TF 卡）：`total_reading_sec`、可选 `last_book`（`title`/`percent`）、可选 `excerpt`（`title`/`text`）与可选 `last_book_path` |
+| `PUT /stats` | PIN | 恢复或合并累计阅读统计（`application/json`，不依赖 TF 卡，至少提供 `total_reading_sec`、`last_book`、`excerpt` 之一）：可选 `mode` 为 `"replace"`（默认，按提供字段覆盖，传 `null` 清除）或 `"merge"`（`total_reading_sec` 取较大值，`last_book`/`excerpt` 仅在设备当前为空时补全）；兼容忽略只读 `last_book_path` |
 
 ### 3.6 网络、Agent、定时看板与局域网 OTA
 
@@ -98,3 +102,18 @@ STA 模式下广播 mDNS 主机名 `readpico.local` 与 `_http._tcp` 80 端口�
 | `GET / POST / DELETE /agent` | PIN | 读取/写入/清除 MQTT/TLS Agent 配置（`uri`、`username`、`password`、`topic`、`clear_password`；密码不回显） |
 | `GET / POST /ambient` | PIN | 读取/写入定时看板配置（`enabled`、`interval_min`、`quiet_start_h`、`quiet_end_h`、`source_type`、`url`、`auth_header`、`clear_auth`；鉴权头不回显） |
 | `PUT /ota` | PIN | 流式上传 ESP32-S3 应用固件（`pico-os-app.bin`）。前置校验电量 ≥ 20% 或充电中（否则返回 `409`）；支持可选请求头 `X-Pico-SHA256: <64位hex>` 端到端校验；按扇区顺序擦写至备用 OTA 槽位，校验通过后切换启动槽并在 1 秒后重启 |
+
+---
+
+## 4. iOS 伴侣备份与恢复流程建议 / Companion Backup & Restore Flow
+
+1. **备份（Pico -> iOS）**：
+   - 调 `GET /info` 确认能力开关与当前可用存储（`flash` / `sd`）；需要双存储备份时可通过 `POST /storage` 切换后分别扫描。
+   - 分页调 `GET /books?page=N`，记录每本书的 `name`、`size`、`has_progress`（`percent`、`chapter`、`byte_off`、`px`、`order`）与 `has_notes`。
+   - 对 `has_notes == true` 的书调 `GET /notes?name=<urlenc>&format=json` 保存完整 JSON。
+   - 调 `GET /stats` 保存 `total_reading_sec`、`last_book`、`excerpt` 及 `last_book_path`（可选另备份 `GET /settings` 与 `GET /webmarks`）。
+2. **恢复（iOS -> Pico）**：
+   - 确保目标书文件已存在于对应存储根（若新传书，先完成 `PUT /upload`，因为覆盖上传会清理旧进度）。
+   - 将有进度的书籍按备份时的 `order` **升序**依次调 `PUT /books/progress?name=<urlenc>`（携带 `file_size` 校验），即可保留最近阅读排序；对匹配 `last_book_path` 的最后一本附带 `"set_last": true`。
+   - 依次调 `PUT /notes?name=<urlenc>` 恢复各书的书签与摘录（携带 `file_size` 校验）。
+   - 调 `PUT /stats` 恢复累计阅读时长与最近摘录（换机清库用 `"mode": "replace"`，增量同步推荐 `"mode": "merge"`）。
