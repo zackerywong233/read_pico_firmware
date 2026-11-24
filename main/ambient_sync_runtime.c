@@ -31,6 +31,7 @@
 #include "reading_stats.h"
 #include "settings.h"
 #include "time_sync.h"
+#include "ui_heatmap.h"
 #include "ui_kit.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -212,16 +213,33 @@ bool ambient_sync_run(EpdiyHighlevelState *hl, uint8_t *framebuffer) {
         else snprintf(line, sizeof(line), "累计阅读：%lu 分钟", (unsigned long)(reading_stats_total_seconds() / 60));
         ui_text(framebuffer, UI_MARGIN, 520, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
         read_pico_sd_info_t sd = {0};
+        int note_bottom_y = 570;
         if (read_pico_sd_get_info(&sd) == ESP_OK && sd.mounted) {
             FILE *file = fopen("/sdcard/dashboard.txt", "r");
             if (file) {
                 int y = 570;
-                while (y < epd_rotated_display_height() - 80 && fgets(line, sizeof(line), file)) {
+                int lines = 0;
+                while (lines < 4 && y < epd_rotated_display_height() - 320 && fgets(line, sizeof(line), file)) {
                     line[strcspn(line, "\r\n")] = '\0';
-                    if (line[0]) { ui_text(framebuffer, UI_MARGIN, y, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false); y += 38; }
+                    if (line[0]) {
+                        ui_text(framebuffer, UI_MARGIN, y, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
+                        y += 38;
+                        ++lines;
+                    }
                 }
+                note_bottom_y = y;
                 fclose(file);
             }
+        }
+        if (app_settings_dashboard_items() & APP_DASH_HEATMAP) {
+            uint32_t today_day = 0;
+            if (now >= 946684800 && gmtime_r(&local_now, &local)) {
+                today_day = reading_stats_day_from_ymd(local.tm_year + 1900, local.tm_mon + 1, local.tm_mday);
+            }
+            reading_heatmap_t hm;
+            (void)reading_stats_get_heatmap(today_day, &hm);
+            int hy = note_bottom_y > 570 ? note_bottom_y + 24 : 600;
+            ui_heatmap_draw_card(framebuffer, (EpdRect){UI_MARGIN, hy, ui_content_width(), 222}, &hm);
         }
         success = true;
     } else {

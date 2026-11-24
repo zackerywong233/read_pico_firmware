@@ -161,11 +161,11 @@ static inline void book_store_notify_changed(void) { ++test_store_changes; }
 static inline int app_count(void) {return 0;}
 static inline const app_desc_t* app_at(int i) {(void)i;return NULL;}
 typedef enum { APP_SLEEP_LIGHT = 0, APP_SLEEP_DEEP = 1, APP_SLEEP_OFF = 2 } app_sleep_mode_t;
-typedef enum { APP_SAVER_BUILTIN = 0, APP_SAVER_QUOTE = 1, APP_SAVER_IMAGE = 2, APP_SAVER_BOOK_COVER = 3 } app_saver_style_t;
+typedef enum { APP_SAVER_BUILTIN = 0, APP_SAVER_QUOTE = 1, APP_SAVER_IMAGE = 2, APP_SAVER_BOOK_COVER = 3, APP_SAVER_HEATMAP = 4 } app_saver_style_t;
 static read_pico_device_settings_t test_settings = {
     .sleep_mode = APP_SLEEP_DEEP, .auto_sleep_sec = 120, .book_px = 48,
     .book_refresh = 1, .book_line_height = 1, .book_margin = 1,
-    .dashboard_items = 0x0f, .timezone_min = 480, .charge_led = true,
+    .dashboard_items = 0x1f, .timezone_min = 480, .charge_led = true,
     .low_soc_notify_percent = 10, .font_path = "/sdcard/fonts/test.ttf"
 };
 static int test_runtime_apply_calls;

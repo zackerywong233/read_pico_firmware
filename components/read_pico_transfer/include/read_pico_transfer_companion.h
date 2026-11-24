@@ -28,8 +28,8 @@ typedef struct {
     uint16_t book_weight;           ///< 字重 0 或 300..800 / Font weight 0 or 300..800
     uint8_t book_rotation;          ///< 阅读方向 0..2 / Reader orientation 0..2
     uint8_t book_gesture;           ///< 翻页手势 0..2 / Page-turn gesture 0..2
-    uint8_t saver_style;            ///< 锁屏样式 0..3 / Lock-screen style 0..3
-    uint8_t dashboard_items;        ///< 看板开关位掩码 0..15 / Dashboard item bitmask 0..15
+    uint8_t saver_style;            ///< 锁屏样式 0..4 / Lock-screen style 0..4
+    uint8_t dashboard_items;        ///< 看板开关位掩码 0..31 / Dashboard item bitmask 0..31
     int16_t timezone_min;           ///< 全局时区偏移分钟 -720..840 / Timezone offset minutes -720..840
     bool charge_led;                ///< 充电指示灯开关 / Charge indicator LED switch
     uint8_t low_soc_notify_percent; ///< 低电提醒 0 或 5..30 步长 5 / Low-battery alert 0 or 5..30 step 5

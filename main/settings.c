@@ -46,6 +46,8 @@
 #define NVS_KEY_BOOK_CBZ_DITH "bk_cbz_dith"
 #define NVS_KEY_SAVER "saver"
 #define NVS_KEY_DASH "dash"
+#define NVS_KEY_DASH_VER "dash_v"
+#define NVS_DASH_VERSION 2U
 #define NVS_KEY_TZ_MIN "tz_min"
 #define NVS_KEY_CHARGE_LED "chg_led"
 #define NVS_KEY_LOW_SOC "low_soc"
@@ -95,7 +97,8 @@ static uint8_t s_book_shelf;
 static uint8_t s_book_cbz_dir;
 static bool s_book_cbz_dith = true;
 static app_saver_style_t s_saver = APP_SAVER_BUILTIN;
-static uint8_t s_dashboard = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK | APP_DASH_NOTE;
+static uint8_t s_dashboard = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK |
+                             APP_DASH_NOTE | APP_DASH_HEATMAP;
 static int16_t s_tz_min = 480;
 static bool s_charge_led = true;
 static uint8_t s_low_soc = 10;
@@ -195,9 +198,18 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_BOOK_SHELF, &bk_u8) == ESP_OK && bk_u8 <= 1) s_book_shelf = bk_u8;
     if (nvs_get_u8(h, NVS_KEY_BOOK_CBZ_DIR, &bk_u8) == ESP_OK && bk_u8 <= 1) s_book_cbz_dir = bk_u8;
     if (nvs_get_u8(h, NVS_KEY_BOOK_CBZ_DITH, &bk_u8) == ESP_OK) s_book_cbz_dith = bk_u8 != 0;
-    if (nvs_get_u8(h, NVS_KEY_SAVER, &saver) == ESP_OK && saver <= APP_SAVER_BOOK_COVER) s_saver = (app_saver_style_t)saver;
+    if (nvs_get_u8(h, NVS_KEY_SAVER, &saver) == ESP_OK && saver <= APP_SAVER_HEATMAP) s_saver = (app_saver_style_t)saver;
     if (nvs_get_u8(h, NVS_KEY_DASH, &s_dashboard) != ESP_OK) {
-        s_dashboard = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK | APP_DASH_NOTE;
+        s_dashboard = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK |
+                      APP_DASH_NOTE | APP_DASH_HEATMAP;
+    } else {
+        uint8_t dash_ver = 0;
+        (void)nvs_get_u8(h, NVS_KEY_DASH_VER, &dash_ver);
+        if (dash_ver < NVS_DASH_VERSION) {
+            s_dashboard |= APP_DASH_HEATMAP;
+        }
+        s_dashboard &= (APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK |
+                        APP_DASH_NOTE | APP_DASH_HEATMAP);
     }
     int16_t tz = 480;
     if (nvs_get_i16(h, NVS_KEY_TZ_MIN, &tz) == ESP_OK && tz >= -720 && tz <= 840) s_tz_min = tz;
@@ -535,7 +547,7 @@ void app_settings_set_book_cbz_dither(bool on) {
 app_saver_style_t app_settings_saver_style(void) { return s_saver; }
 
 void app_settings_set_saver_style(app_saver_style_t style) {
-    if (style > APP_SAVER_BOOK_COVER) style = APP_SAVER_BUILTIN;
+    if (style > APP_SAVER_HEATMAP) style = APP_SAVER_BUILTIN;
     if (s_saver == style) return;
     s_saver = style;
     nvs_put_u8(NVS_KEY_SAVER, (uint8_t)style);
@@ -544,11 +556,17 @@ void app_settings_set_saver_style(app_saver_style_t style) {
 uint8_t app_settings_dashboard_items(void) { return s_dashboard; }
 
 void app_settings_set_dashboard_items(uint8_t items) {
-    const uint8_t valid = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK | APP_DASH_NOTE;
+    const uint8_t valid = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK |
+                          APP_DASH_NOTE | APP_DASH_HEATMAP;
     items &= valid;
     if (s_dashboard == items) return;
     s_dashboard = items;
-    nvs_put_u8(NVS_KEY_DASH, items);
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_u8(h, NVS_KEY_DASH, items);
+    nvs_set_u8(h, NVS_KEY_DASH_VER, NVS_DASH_VERSION);
+    nvs_commit(h);
+    nvs_close(h);
 }
 
 int16_t app_settings_timezone_min(void) { return s_tz_min; }

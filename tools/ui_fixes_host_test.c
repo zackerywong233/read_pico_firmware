@@ -31,6 +31,7 @@
 #include "reading_stats.h"
 #include "settings.h"
 #include "time_sync.h"
+#include "ui_heatmap.h"
 #include "ui_kit.h"
 #include "ui_menu.h"
 #include "ui_time_edit.h"
@@ -156,7 +157,12 @@ void ui_text(uint8_t *fb, int x, int y, int px, const char *t, enum EpdFontFlags
 void ui_text_vc(uint8_t *fb, int x, int y, int px, const char *t, enum EpdFontFlags a, bool inv) {
     ui_text(fb, x, y, px, t, a, inv);
 }
+static int s_filled_round_rects = 0;
 void ui_draw_round_rect(uint8_t *fb, EpdRect r, int rad, uint8_t c) { (void)fb; (void)r; (void)rad; (void)c; }
+void ui_fill_round_rect(uint8_t *fb, EpdRect r, int rad, uint8_t c) {
+    (void)fb; (void)r; (void)rad; (void)c;
+    s_filled_round_rects++;
+}
 void ui_draw_pressed_round_rect(uint8_t *fb, EpdRect r, int rad) { (void)fb; (void)r; (void)rad; }
 void ui_draw_choice_round_rect(uint8_t *fb, EpdRect r, int rad, bool on) { (void)fb; (void)r; (void)rad; (void)on; }
 void ui_draw_button(uint8_t *fb, EpdRect r, const char *label, bool on) { (void)fb; (void)r; (void)on; record_text(label); }
@@ -205,7 +211,8 @@ static uint8_t s_book_ind = 0;
 static app_sleep_mode_t s_sleep_mode = APP_SLEEP_DEEP;
 static uint16_t s_auto_sleep = 120;
 static app_saver_style_t s_saver = APP_SAVER_BUILTIN;
-static uint8_t s_dash_items = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK | APP_DASH_NOTE;
+static uint8_t s_dash_items = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK |
+                              APP_DASH_NOTE | APP_DASH_HEATMAP;
 static bool s_charge_led = true;
 static uint8_t s_low_soc = 15;
 static bool s_muted = false;
@@ -302,6 +309,52 @@ esp_err_t read_pico_sd_get_info(read_pico_sd_info_t *info) { info->present = fal
 esp_err_t read_pico_sd_start_probe(void) { return ESP_OK; }
 uint32_t reading_stats_total_seconds(void) { return 3600; }
 bool reading_stats_get_last_book(char *buf, uint32_t n, uint8_t *pct) { snprintf(buf, n, "Demo"); *pct = 42; return true; }
+uint32_t reading_stats_day_from_ymd(int year, int month, int day) {
+    if (year < 2000 || year > 2099 || month < 1 || month > 12 || day < 1 || day > 31) return 0;
+    int64_t y = (int64_t)year - (month <= 2 ? 1 : 0);
+    int64_t era = (y >= 0 ? y : y - 399) / 400;
+    int64_t yoe = y - era * 400;
+    int64_t doy = (153 * ((int64_t)month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+    int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return (uint32_t)(era * 146097 + doe - 719468);
+}
+void reading_stats_ymd_from_day(uint32_t day_index, int *year, int *month, int *day) {
+    int64_t z = (int64_t)day_index + 719468;
+    int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    int64_t doe = z - era * 146097;
+    int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    int64_t y = yoe + era * 400;
+    int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    int64_t mp = (5 * doy + 2) / 153;
+    int64_t d = doy - (153 * mp + 2) / 5 + 1;
+    int64_t m = mp + (mp < 10 ? 3 : -9);
+    y += (m <= 2);
+    if (year) *year = (int)y;
+    if (month) *month = (int)m;
+    if (day) *day = (int)d;
+}
+uint8_t reading_stats_heatmap_level(uint32_t seconds) {
+    if (seconds == 0) return 0;
+    if (seconds < 900U) return 1;
+    if (seconds < 1800U) return 2;
+    if (seconds < 3600U) return 3;
+    return 4;
+}
+bool reading_stats_get_heatmap(uint32_t anchor_day, reading_heatmap_t *out) {
+    memset(out, 0, sizeof(*out));
+    out->has_date = anchor_day != 0;
+    out->anchor_day = anchor_day;
+    out->daily_sec[READING_HEATMAP_DAYS - 1] = 1800; // today: 30 min (level 3)
+    out->daily_sec[READING_HEATMAP_DAYS - 2] = 3600; // yesterday: 60 min (level 4)
+    out->daily_sec[READING_HEATMAP_DAYS - 3] = 600;  // -2d: 10 min (level 1)
+    out->today_sec = 1800;
+    out->active_days = 3;
+    out->current_streak = 3;
+    out->longest_streak = 5;
+    out->max_daily_sec = 3600;
+    out->window_total_sec = 6000;
+    return true;
+}
 bool ttf_font_ready(void) { return true; }
 bool ttf_font_is_builtin(void) { return true; }
 bool ttf_font_path_is_builtin(const char *p) { return !p || !p[0]; }
@@ -658,10 +711,126 @@ static void test_sketch_drag_and_coordinates(void) {
     puts("app_sketch drag & coordinate mapping: passed");
 }
 
+static void test_personal_heatmap_and_lock_saver(void) {
+    uint8_t *fb = malloc(1216 * 684 / 2);
+    assert(fb);
+    app_ctx_t ctx = { .fb = fb, .now_ms = 1000 };
+    s_dash_items = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK | APP_DASH_NOTE | APP_DASH_HEATMAP;
+    s_saver = APP_SAVER_BUILTIN;
+
+    // 1) 看板首页应渲染热力图卡片与连续/今日统计，且填充了有记录的方格。
+    // Dashboard home renders heatmap card with streak/today stats and shaded cells.
+    app_personal.on_enter(&ctx);
+    s_filled_round_rects = 0;
+    app_personal.render(&ctx, fb);
+    assert(ui_saw_text("阅读热力图"));
+    assert(ui_saw_text("连续 3 天 · 今日 30 分"));
+    assert(ui_saw_text("近 26 周 · 已读 3 天"));
+    assert(s_filled_round_rects >= 7); // 3 active cells + 4 legend filled swatches.
+
+    // 2) 点按热力图卡片打开详情页（leaf 4），再点按「设为锁屏内容」生效。
+    // Tapping heatmap card opens detail leaf 4; tapping Set as Lock Screen updates saver_style.
+    int heatmap_y = UI_CONTENT_TOP + (130 + 10) + (94 + 10) + (128 + 10);
+    cst836u_touch_t t = { .touched = true, .count = 1, .x = UI_MARGIN + 80, .y = (uint16_t)(heatmap_y + 60) };
+    assert(app_personal.on_touch(&ctx, &t) == APP_REDRAW_PAGE);
+    assert(ctx.leaf == 4);
+    app_personal.render(&ctx, fb);
+    assert(strcmp(s_last_header, "阅读热力图") == 0);
+    assert(ui_saw_text("连续阅读") && ui_saw_text("最长连续") && ui_saw_text("今日阅读") && ui_saw_text("累计阅读"));
+    assert(ui_saw_text("设为锁屏内容"));
+
+    t.x = UI_MARGIN + 100;
+    t.y = 976 + 30;
+    assert(app_personal.on_touch(&ctx, &t) == APP_REDRAW_PAGE);
+    assert(s_saver == APP_SAVER_HEATMAP);
+    app_personal.render(&ctx, fb);
+    assert(ui_saw_text("已设为锁屏内容"));
+
+    // KEY1 返回看板主视图。/ KEY1 returns to dashboard root.
+    assert(app_personal.on_key(&ctx, UI_KEY_1) == APP_REDRAW_PAGE);
+    assert(ctx.leaf == 0);
+
+    // 3) 打开「配置看板」（leaf 1），可开关阅读热力图卡片并切换 5 项锁屏内容。
+    // Open dashboard settings (leaf 1): toggle heatmap item and select lock-screen styles.
+    EpdRect cfg_btn = ui_bar_rect(0, 2);
+    t.x = (uint16_t)(cfg_btn.x + 20);
+    t.y = (uint16_t)(cfg_btn.y + 20);
+    assert(app_personal.on_touch(&ctx, &t) == APP_REDRAW_PAGE);
+    assert(ctx.leaf == 1);
+    app_personal.render(&ctx, fb);
+    assert(ui_saw_text("阅读热力图") && ui_saw_text("当前书封面"));
+
+    // 点按第 4 个看板开关（阅读热力图：第二行第 0 列）。/ Tap 4th dashboard toggle (heatmap).
+    EpdRect hm_toggle = ui_row_rect(0, 2, 188 + 76 + UI_GAP, 76);
+    t.x = (uint16_t)(hm_toggle.x + 20);
+    t.y = (uint16_t)(hm_toggle.y + 20);
+    assert(app_personal.on_touch(&ctx, &t) == APP_REDRAW_PAGE);
+    assert((s_dash_items & APP_DASH_HEATMAP) == 0);
+    assert(app_personal.on_touch(&ctx, &t) == APP_REDRAW_PAGE);
+    assert((s_dash_items & APP_DASH_HEATMAP) != 0);
+
+    // 切换锁屏内容至默认图案再切回阅读热力图。/ Switch saver to builtin then back to heatmap.
+    EpdRect builtin_btn = ui_row_rect(0, 3, 428, 76);
+    t.x = (uint16_t)(builtin_btn.x + 20);
+    t.y = (uint16_t)(builtin_btn.y + 20);
+    assert(app_personal.on_touch(&ctx, &t) == APP_REDRAW_PAGE);
+    assert(s_saver == APP_SAVER_BUILTIN);
+
+    EpdRect hm_saver_btn = ui_row_rect(1, 2, 428 + 76 + UI_GAP, 76);
+    t.x = (uint16_t)(hm_saver_btn.x + 20);
+    t.y = (uint16_t)(hm_saver_btn.y + 20);
+    assert(app_personal.on_touch(&ctx, &t) == APP_REDRAW_PAGE);
+    assert(s_saver == APP_SAVER_HEATMAP);
+
+    // 4) 全屏锁屏渲染输出完整标题、日期、统计、最近在读与品牌页脚。
+    // Full-screen lock renderer outputs title, date, stats, recent book, and footer.
+    reading_heatmap_t hm;
+    uint32_t today = reading_stats_day_from_ymd(2026, 11, 25);
+    assert(reading_stats_get_heatmap(today, &hm));
+    s_filled_round_rects = 0;
+    ui_heatmap_render_lockscreen(fb, &hm, 5400, "三体.epub", 65);
+    assert(ui_saw_text("阅读热力图"));
+    assert(ui_saw_text("2026-11-25"));
+    assert(ui_saw_text("3 天") && ui_saw_text("5 天") && ui_saw_text("30 分钟") && ui_saw_text("1 小时 30 分"));
+    assert(ui_saw_text("三体") && ui_saw_text("已读 65%") && ui_saw_text("小纸 Pico"));
+    assert(s_filled_round_rects >= 7);
+
+    // 5) 验证「设置 → 睡眠与屏保」可循环切到「阅读热力图」再回到「默认图案」。
+    // Verify Settings -> Sleep & Screensaver cycles through APP_SAVER_HEATMAP and wraps to builtin.
+    s_saver = APP_SAVER_BOOK_COVER;
+    uint8_t *full_fb = malloc(1216 * 684 / 2);
+    uint8_t *full_back = malloc(1216 * 684 / 2);
+    assert(full_fb && full_back);
+    EpdiyHighlevelState hl = { .front_fb = full_fb, .back_fb = full_back };
+    reset_steps();
+    push_idle();
+    push_tap(300, UI_CONTENT_TOP + 2 * (UI_BTN_H + UI_GAP) + 40); // Row 2: 睡眠与屏保
+    push_tap(300, UI_CONTENT_TOP + 2 * (UI_BTN_H + UI_GAP) + 40); // Row 2: 锁屏内容 (3 -> 4)
+    push_idle();
+    app_loop_config_t cfg = { .hl = &hl, .fb = full_fb, .first_app = &app_settings };
+    if (!setjmp(s_loop_exit)) app_loop_run(&cfg);
+    assert(s_saver == APP_SAVER_HEATMAP);
+    assert(ui_saw_text("阅读热力图"));
+
+    reset_steps();
+    push_idle();
+    push_tap(300, UI_CONTENT_TOP + 2 * (UI_BTN_H + UI_GAP) + 40); // Row 2: 睡眠与屏保
+    push_tap(300, UI_CONTENT_TOP + 2 * (UI_BTN_H + UI_GAP) + 40); // Row 2: 锁屏内容 (4 -> 0)
+    push_idle();
+    if (!setjmp(s_loop_exit)) app_loop_run(&cfg);
+    assert(s_saver == APP_SAVER_BUILTIN);
+    free(full_fb);
+    free(full_back);
+    free(fb);
+
+    puts("personal_heatmap & lock_saver: passed");
+}
+
 int main(void) {
     test_time_math_and_unified_clock();
     test_settings_real_loop_navigation();
     test_sketch_drag_and_coordinates();
+    test_personal_heatmap_and_lock_saver();
     puts("ALL ui_fixes host regression tests passed!");
     return 0;
 }

@@ -20,12 +20,14 @@ typedef enum {
     APP_SLEEP_OFF = 2,
 } app_sleep_mode_t;
 
-/// 锁屏内容：默认图、TF 卡摘录、TF 卡图片、当前书封面。/ Lock content: built-in art, SD excerpt, SD image, or current book cover.
+/// 锁屏内容：默认图、TF 卡摘录、TF 卡图片、当前书封面、阅读热力图。
+/// Lock content: built-in art, SD excerpt, SD image, current book cover, or reading heatmap.
 typedef enum {
     APP_SAVER_BUILTIN = 0,
     APP_SAVER_QUOTE = 1,
     APP_SAVER_IMAGE = 2,
     APP_SAVER_BOOK_COVER = 3,
+    APP_SAVER_HEATMAP = 4,
 } app_saver_style_t;
 
 typedef enum {
@@ -33,6 +35,7 @@ typedef enum {
     APP_DASH_BATTERY = 1u << 1,
     APP_DASH_LAST_BOOK = 1u << 2,
     APP_DASH_NOTE = 1u << 3,
+    APP_DASH_HEATMAP = 1u << 4,
 } app_dashboard_item_t;
 
 typedef struct {

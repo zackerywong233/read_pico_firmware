@@ -164,13 +164,13 @@ static inline bool companion_settings_patch_object(read_pico_device_settings_t *
             if (ok) next.book_gesture = (uint8_t)iv;
             else err = "book_gesture 须为 0..2";
         } else if (!strcmp(key, "saver_style")) {
-            ok = companion_json_int_range(item, 0, 3, &iv);
+            ok = companion_json_int_range(item, 0, 4, &iv);
             if (ok) next.saver_style = (uint8_t)iv;
-            else err = "saver_style 须为 0..3";
+            else err = "saver_style 须为 0..4";
         } else if (!strcmp(key, "dashboard_items")) {
-            ok = companion_json_int_range(item, 0, 15, &iv);
+            ok = companion_json_int_range(item, 0, 31, &iv);
             if (ok) next.dashboard_items = (uint8_t)iv;
-            else err = "dashboard_items 须为 0..15";
+            else err = "dashboard_items 须为 0..31";
         } else if (!strcmp(key, "timezone_min")) {
             ok = companion_json_int_range(item, -720, 840, &iv);
             if (ok) next.timezone_min = (int16_t)iv;

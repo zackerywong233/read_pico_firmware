@@ -37,7 +37,9 @@
 #include "sc7a20h_lab.h"
 #include "read_pico_sd.h"
 #include "settings.h"
+#include "time_sync.h"
 #include "ttf_font.h"
+#include "ui_heatmap.h"
 #include "ui_kit.h"
 
 static const char* TAG = "read_pico";
@@ -537,6 +539,25 @@ static bool draw_saver_book_cover(uint8_t* framebuffer) {
     return true;
 }
 
+// 阅读热力图锁屏：纯 NVS 统计 + 本地时间，不依赖 TF 卡或 Wi-Fi。
+// Reading heatmap lock face: pure NVS stats + local time, independent of SD card and Wi-Fi.
+static bool draw_saver_heatmap(uint8_t* framebuffer) {
+    if (!ttf_font_ready()) return false;
+    struct tm local;
+    uint32_t today_day = 0;
+    if (app_time_now_local(&local, NULL)) {
+        today_day = reading_stats_day_from_ymd(local.tm_year + 1900, local.tm_mon + 1, local.tm_mday);
+    }
+    reading_heatmap_t hm;
+    (void)reading_stats_get_heatmap(today_day, &hm);
+    char book_title[128] = {0};
+    uint8_t pct = 0;
+    bool have_book = reading_stats_get_last_book(book_title, sizeof(book_title), &pct);
+    ui_heatmap_render_lockscreen(framebuffer, &hm, reading_stats_total_seconds(),
+                                 have_book ? book_title : NULL, pct);
+    return true;
+}
+
 void enter_lock_and_sleep(
     EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc
 ) {
@@ -551,6 +572,7 @@ void enter_lock_and_sleep(
     if (app_settings_saver_style() == APP_SAVER_IMAGE) custom = draw_saver_image(framebuffer);
     else if (app_settings_saver_style() == APP_SAVER_QUOTE) custom = draw_saver_quote(framebuffer);
     else if (app_settings_saver_style() == APP_SAVER_BOOK_COVER) custom = draw_saver_book_cover(framebuffer);
+    else if (app_settings_saver_style() == APP_SAVER_HEATMAP) custom = draw_saver_heatmap(framebuffer);
     if (!custom) ui_draw_full_image(framebuffer, lock_4bpp_bin_start);
     epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
 

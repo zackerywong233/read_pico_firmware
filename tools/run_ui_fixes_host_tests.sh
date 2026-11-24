@@ -10,6 +10,7 @@ cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g \
   tools/ui_fixes_host_test.c \
   main/time_sync.c \
   main/ui/ui_time_edit.c \
+  main/ui/ui_heatmap.c \
   main/ui/ui_gesture.c \
   main/app/app_loop.c \
   main/apps/app_settings.c \

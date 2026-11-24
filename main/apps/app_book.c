@@ -331,7 +331,8 @@ static bool shelf_is_grid(void) {
 }
 static bool shelf_has_recent_card(const app_ctx_t* ctx) {
     return s_view == SHELF && ctx && ctx->leaf == 0 && !s_query[0] &&
-           s_recent_index >= 0 && s_recent_index < s_count && !s_shelf[s_recent_index].removed;
+           s_recent_index >= 0 && s_recent_index < s_count &&
+           !s_shelf[s_recent_index].removed && s_shelf[s_recent_index].has_progress;
 }
 static EpdRect recent_card_rect(void) {
     int y = shelf_has_notice() ? SHELF_CONTENT_Y_NOTICE : SHELF_CONTENT_Y_PLAIN;
@@ -1665,23 +1666,41 @@ static int compare_books(const void* a, const void* b) {
     int name = strcasecmp(x->name, y->name);
     return name ? name : strcmp(x->path, y->path);
 }
-static void sort_shelf(app_ctx_t* ctx) {
-    char recent_path[BOOK_STORE_PATH_MAX] = {0};
-    if (s_recent_index >= 0 && s_recent_index < s_count) {
-        copy_text(recent_path, sizeof(recent_path), s_shelf[s_recent_index].path);
+// 按持久最后阅读路径（或未落盘的脏进度）定位最近阅读卡片，绝不沿用失效下标。
+// Resolve the recent card from persistent last path (or dirty pending progress); never reuse a stale index.
+static void resolve_recent_index(bool prune_stale) {
+    s_recent_index = -1;
+    char path[BOOK_STORE_PATH_MAX] = {0};
+    bool from_nvs = false;
+    pending_progress_t* latest = s_latest_path[0] ? pending_find(s_latest_path) : NULL;
+    if (latest && latest->dirty) {
+        copy_text(path, sizeof(path), latest->path);
+    } else if (book_progress_last_path(path, sizeof(path))) {
+        from_nvs = true;
+    } else {
+        return;
     }
+    bool found = false;
+    for (int i = 0; i < s_count; ++i) {
+        if (!s_shelf[i].removed && !strcmp(s_shelf[i].path, path)) {
+            found = true;
+            if (s_shelf[i].has_progress) {
+                s_recent_index = i;
+            } else if (prune_stale && from_nvs) {
+                (void)book_progress_set_last_path("");
+            }
+            break;
+        }
+    }
+    if (!found && prune_stale && from_nvs) {
+        (void)book_progress_set_last_path("");
+    }
+}
+static void sort_shelf(app_ctx_t* ctx) {
     if (s_count > 1) qsort(s_shelf, s_count, sizeof(*s_shelf), compare_books);
     s_visible_count = 0;
     while (s_visible_count < s_count && shelf_matches(&s_shelf[s_visible_count])) ++s_visible_count;
-    s_recent_index = -1;
-    if (recent_path[0]) {
-        for (int i = 0; i < s_count; ++i) {
-            if (!s_shelf[i].removed && !strcmp(s_shelf[i].path, recent_path)) {
-                s_recent_index = i;
-                break;
-            }
-        }
-    }
+    resolve_recent_index(false);
     ctx->leaf = 0;
 }
 static bool shelf_reserve(void) {
@@ -1724,6 +1743,7 @@ static void delete_retry_discard(const char* path) {
 static void scan_shelf(app_ctx_t* ctx) {
     s_count = 0;
     s_visible_count = 0;
+    s_recent_index = -1;
     s_message[0] = 0;
     s_shelf_warning[0] = 0;
     if (!book_store_flash_ready()) loading(ctx, "初始化内置存储…");
@@ -1762,6 +1782,10 @@ static void scan_shelf(app_ctx_t* ctx) {
             item->has_progress = book_progress_load(item->path, item->size, &p);
             item->pct = item->has_progress ? p.pct : 0;
             item->recent = item->has_progress ? p.last_open_s : 0;
+            if (pending_restore(item->path, item->size, &p)) {
+                item->has_progress = true;
+                item->pct = p.pct;
+            }
             s_shelf[s_count++] = candidate;
         }
         closedir(dir);
@@ -2663,6 +2687,7 @@ static void on_enter(app_ctx_t* ctx) {
     s_view = SHELF;
     ctx->leaf = 0;
     s_count = 0;
+    s_recent_index = -1;
     s_px = app_settings_book_px();
     s_scan_pending = true;
     s_resume_pending = true;
@@ -3101,21 +3126,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
         scan_shelf(ctx);
         if (s_resume_pending) {
             s_resume_pending = false;
-            s_recent_index = -1;
-            char path[BOOK_STORE_PATH_MAX];
-            if (book_progress_last_path(path, sizeof(path))) {
-                bool found = false;
-                for (int i = 0; i < s_count; ++i) if (!s_shelf[i].removed && !strcmp(s_shelf[i].path, path)) {
-                    found = true;
-                    if (s_shelf[i].has_progress) {
-                        s_recent_index = i;
-                    } else {
-                        (void)book_progress_set_last_path("");
-                    }
-                    break;
-                }
-                if (!found) (void)book_progress_set_last_path("");
-            }
+            resolve_recent_index(true);
         }
         if (s_queued_open_path[0]) {
             char qpath[BOOK_STORE_PATH_MAX];

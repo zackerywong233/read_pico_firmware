@@ -1,5 +1,13 @@
 # 版本变更 / Changelog
 
+## v1.0.7 · 2026-11-25
+
+- 修复图书页「最近阅读」卡片在读完书籍返回书架或管理删书/清进度后错显另一本未打开 0% 书籍的问题：`app_book` 新增 `resolve_recent_index()`，改为统一依据持久化的 `book_progress_last_path()`（或尚未落盘的脏待保存进度）解析最近阅读下标，不再在 `scan_shelf()` 重建列表或 `manage_apply()`/`batch_apply()` 压缩列表后沿用失效旧下标；同时 `shelf_has_recent_card()` 增加 `has_progress` 校验并补充宿主回归测试。
+  Fix the Book shelf “Recent Reading” card showing an unrelated unopened 0% book after finishing a book and returning to the shelf (or after deleting/clearing books): add `resolve_recent_index()` in `app_book` to resolve the recent card solely from `book_progress_last_path()` (or dirty pending progress) instead of reusing a stale array index across `scan_shelf()` rebuilds or `manage_apply()`/`batch_apply()` compactions, guard `shelf_has_recent_card()` with `has_progress`, and add host regression tests.
+
+- 我的看板新增阅读热力图并支持设为锁屏内容：在 `reading_stats` 新增独立 NVS 按日滚动窗口（近 26 周 / 182 天），随图书阅读时长自动按本地日期累计并统计当前连续阅读、最长连续、今日时长与已读天数；在「我的看板」新增 26 周 5 阶灰度阅读热力图卡片（默认开启，支持在「配置看板」中开关），点按卡片可进入 18 周大格详情页并一键「设为锁屏内容」；锁屏样式新增 `阅读热力图`（`saver_style = 4`，不依赖 TF 卡或 Wi-Fi），同步扩展「配置看板」「设置 → 睡眠与屏保」、本地定时看板及 HTTP/BLE 配套设置校验（`saver_style` 0..4、`dashboard_items` 0..31）。
+  Add reading heatmap to Personal Dashboard and lock-screen styles: persist a 26-week (182-day) daily reading log in `reading_stats` NVS with streak, peak, and active-day stats; add a 5-level grayscale heatmap card to Personal Dashboard (toggleable via `dashboard_items` bit 4) with tap-to-open 18-week detail view and 1-tap “Set as Lock Screen”; add the `APP_SAVER_HEATMAP` (`saver_style = 4`) lock face independent of SD/Wi-Fi, and update Settings, local ambient dashboard, and companion HTTP/BLE validation (`saver_style` 0..4, `dashboard_items` 0..31).
+
 ## v1.0.6 · 2026-11-25
 
 - 配套客户端阅读数据备份与恢复接口（逐书进度、书签/摘录与累计阅读统计）：

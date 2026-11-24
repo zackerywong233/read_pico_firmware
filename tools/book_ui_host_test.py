@@ -94,7 +94,18 @@ static bool book_store_flash_ready(void){return true;}
 static bool book_store_roots_degraded(void){return test_degraded;}
 static uint64_t book_store_free_bytes(const book_store_root_t* root){(void)root;return 1000000;}
 static int book_store_roots(book_store_root_t out[2],int* n){*n=test_root_count;memcpy(out,test_roots,sizeof(test_roots));return 0;}
-static bool book_progress_load(const char* p,uint32_t n,book_progress_t* out){(void)p;(void)n;*out=(book_progress_t){0};return false;}
+typedef struct {char path[288];book_progress_t value;bool used;} test_prog_entry_t;
+static test_prog_entry_t test_progs[8];
+static void test_prog_set(const char* path,uint32_t size,uint8_t pct,uint32_t seq){
+    for(int i=0;i<8;i++){if(test_progs[i].used&&!strcmp(test_progs[i].path,path)){test_progs[i].value=(book_progress_t){.file_size=size,.px=48,.pct=pct,.last_open_s=seq};return;}}
+    for(int i=0;i<8;i++){if(!test_progs[i].used){test_progs[i].used=true;snprintf(test_progs[i].path,sizeof(test_progs[i].path),"%s",path);test_progs[i].value=(book_progress_t){.file_size=size,.px=48,.pct=pct,.last_open_s=seq};return;}}
+    assert(false);
+}
+static void test_prog_clear(const char* path){for(int i=0;i<8;i++)if(test_progs[i].used&&!strcmp(test_progs[i].path,path))test_progs[i].used=false;}
+static bool book_progress_load(const char* p,uint32_t n,book_progress_t* out){
+    for(int i=0;i<8;i++)if(test_progs[i].used&&!strcmp(test_progs[i].path,p)&&test_progs[i].value.file_size==n){*out=test_progs[i].value;return true;}
+    *out=(book_progress_t){0};return false;
+}
 static void loading(app_ctx_t* ctx,const char* text){(void)ctx;(void)text;}
 typedef struct pending_progress {char path[288];book_progress_t value;bool dirty,progress_saved;book_progress_watch_t* watch;struct pending_progress* next;} pending_progress_t;
 static pending_progress_t* s_pending;
@@ -135,6 +146,7 @@ static size_t book_layout_page_start_offset(size_t page){return page*100;}
 static unsigned percent(size_t page){return (unsigned)page*20;}
 static int book_progress_save(const char* p,const book_progress_t* value){(void)p;(void)value;test_save_calls++;return test_save_error;}
 static int book_progress_set_last_path(const char* p){test_last_calls++;if(!test_last_error)snprintf(test_last_path,sizeof(test_last_path),"%s",p);return test_last_error;}
+static bool book_progress_last_path(char* out,size_t cap){if(!out||!cap||!test_last_path[0]){if(out&&cap)out[0]=0;return false;}snprintf(out,cap,"%s",test_last_path);return true;}
 static void save_progress(void);
 static void invalidate_prep(void){}
 static shelf_entry_t s_managed;
@@ -200,7 +212,7 @@ static app_redraw_t paint_control(app_ctx_t* ctx,EpdRect rect){(void)ctx;(void)r
 static int test_delete_error,test_forget_error,test_notify_count,test_delete_calls;
 static bool test_removed,test_mixed;
 static int book_store_delete(const char* path,bool* removed){(void)path;test_delete_calls++;*removed=test_removed;return test_mixed ? (strstr(path,"book001") ? -1 : 0) : test_delete_error;}
-static int book_progress_forget(const char* path){for(book_progress_watch_t* w=test_watches;w;w=w->next)if(!strcmp(w->path,path))atomic_store(&w->invalidated,true);return test_forget_error;}
+static int book_progress_forget(const char* path){for(book_progress_watch_t* w=test_watches;w;w=w->next)if(!strcmp(w->path,path))atomic_store(&w->invalidated,true);if(!test_forget_error){test_prog_clear(path);if(!strcmp(test_last_path,path))test_last_path[0]=0;}return test_forget_error;}
 static void book_store_notify_changed(void){test_notify_count++;}
 static unsigned book_store_revision(void){return (unsigned)test_notify_count;}
 static void free_book(void){s_text=NULL;s_path[0]=0;free_image();}
@@ -212,8 +224,8 @@ static int ui_content_width(void){return 604;}
 static int ttf_text_width_px(int px,const char* text){int width=0;for(;*text;text++)if(((unsigned char)*text&0xc0)!=0x80)width+=px;return width;}
 static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bool inv){(void)fb;(void)x;(void)y;(void)px;(void)align;(void)inv;assert(strlen(test_wrapped)+strlen(text)<sizeof(test_wrapped));strcat(test_wrapped,text);}
 '''
-for name in ("copy_text", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf",
-             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "shelf_is_grid", "shelf_per_page", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "resume_choice", "free_image", "close_image", "open_image", "draw_book_cover_box", "gesture_event", "on_key", "draw_wrapped_name", "on_enter", "book_on_exit"):
+for name in ("copy_text", "shelf_matches", "compare_books", "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "resolve_recent_index", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf",
+             "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "shelf_is_grid", "shelf_per_page", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "resume_choice", "free_image", "close_image", "open_image", "draw_book_cover_box", "gesture_event", "on_key", "draw_wrapped_name", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
 unit += r'''
 int main(void) {
@@ -368,6 +380,81 @@ int main(void) {
     assert(s_cover_thumb && test_cover_blits == 1 && test_cover_paperbacks == 2);
     book_on_exit(&ctx);
     assert(!s_cover_thumb);
+
+    // 最近阅读卡片回归：读完一本书（100%）返回书架重扫、切换书籍、删除/清进度后绝不跳到未打开的 0% 书籍。
+    // Recent-card regressions: finishing a book (100%), rescanning, switching, deleting, or clearing progress must never pick an unopened 0% book.
+    memset(test_progs, 0, sizeof(test_progs));
+    test_last_path[0] = 0;
+    s_latest_path[0] = 0;
+    while (s_pending) pending_discard(s_pending->path);
+    char book_a[340], book_b[340], book_c[340];
+    snprintf(book_a, sizeof(book_a), "%s/book005.txt", test_roots[0].path);
+    snprintf(book_b, sizeof(book_b), "%s/book010.txt", test_roots[0].path);
+    snprintf(book_c, sizeof(book_c), "%s/book020.txt", test_roots[0].path);
+    // 1. 此前 s_recent_index 指向旧下标，读完 book010 (100%) 后 scan_shelf 仍准确锁定 book010 (100%)。
+    // With a prior s_recent_index, finishing book010 (100%) and calling scan_shelf resolves to book010 (100%).
+    test_prog_set(book_b, 1, 100, 7);
+    strcpy(test_last_path, book_b);
+    s_recent_index = 25;
+    s_recent_sort = false;
+    s_filter = 0;
+    s_query[0] = 0;
+    scan_shelf(&ctx);
+    assert(s_recent_index >= 0 && s_recent_index < s_count);
+    assert(!strcmp(s_shelf[s_recent_index].path, book_b));
+    assert(s_shelf[s_recent_index].has_progress && s_shelf[s_recent_index].pct == 100);
+    // 2. 切去读完 book020 (100%) 后返回书架，最近阅读更新为 book020 (100%) 而非旧书或 0% 书。
+    // Finishing book020 (100%) and rescanning updates the recent card to book020 (100%).
+    test_prog_set(book_c, 1, 100, 8);
+    strcpy(test_last_path, book_c);
+    scan_shelf(&ctx);
+    assert(s_recent_index >= 0 && !strcmp(s_shelf[s_recent_index].path, book_c));
+    assert(s_shelf[s_recent_index].has_progress && s_shelf[s_recent_index].pct == 100);
+    // 3. 删除位于最近阅读之前的无关书籍 book005，最近阅读仍指向 book020，不会下标左移落到 0% 书。
+    // Deleting an earlier unrelated book keeps recent card on book020 instead of shifting onto a 0% neighbor.
+    int idx_a = -1;
+    for (int i = 0; i < s_count; ++i) if (!strcmp(s_shelf[i].path, book_a)) { idx_a = i; break; }
+    assert(idx_a >= 0 && idx_a < s_recent_index);
+    s_managed = s_shelf[idx_a];
+    s_view = MANAGE; s_delete_confirm = true; s_file_removed = false; s_clear_confirm = true;
+    test_delete_error = 0; test_removed = true; test_forget_error = 0;
+    manage_apply(&ctx);
+    assert(s_view == SHELF && s_recent_index >= 0 && !strcmp(s_shelf[s_recent_index].path, book_c));
+    assert(s_shelf[s_recent_index].has_progress && s_shelf[s_recent_index].pct == 100);
+    // 4. 清除最近阅读书籍 book020 的进度后，最近阅读卡片清空（s_recent_index == -1），绝不显示 0% 书。
+    // Clearing progress on book020 clears s_recent_index (-1) rather than showing a 0% book.
+    s_managed = s_shelf[s_recent_index];
+    s_view = MANAGE; s_delete_confirm = false; s_file_removed = false; s_clear_confirm = true;
+    manage_apply(&ctx);
+    assert(s_view == SHELF && s_recent_index == -1);
+    // 5. 批量删除最近阅读书籍 book010 后，s_recent_index 归 -1，不落到相邻未打开的 0% 书。
+    // Bulk-deleting the recent book resets s_recent_index to -1 instead of shifting onto an unopened 0% book.
+    strcpy(test_last_path, book_b);
+    scan_shelf(&ctx);
+    assert(s_recent_index >= 0 && !strcmp(s_shelf[s_recent_index].path, book_b));
+    s_view = BULK; clear_selection(); toggle_selection(s_recent_index);
+    s_batch_delete = true; s_batch_confirm = true;
+    batch_apply(&ctx);
+    assert(s_recent_index == -1);
+    // 6. 瞬时保存失败（pending dirty）时返回书架，仍显示脏进度书籍而不显示 0% 书。
+    // On transient NVS save failure (dirty pending progress), scan_shelf resolves the dirty book with its pct.
+    test_last_path[0] = 0;
+    assert(pending_reserve(book_c));
+    pending_progress_t* dirty_c = pending_find(book_c);
+    dirty_c->value = (book_progress_t){.file_size = 1, .px = 48, .pct = 100};
+    dirty_c->dirty = true;
+    pending_mark_latest(book_c);
+    scan_shelf(&ctx);
+    assert(s_recent_index >= 0 && !strcmp(s_shelf[s_recent_index].path, book_c));
+    assert(s_shelf[s_recent_index].has_progress && s_shelf[s_recent_index].pct == 100);
+    pending_discard(book_c);
+    // 7. 持久 last 指向无进度/已删书籍时，resolve_recent_index(true) 清理过期 last 并置 -1。
+    // Stale NVS last path with no progress is pruned by resolve_recent_index(true).
+    strcpy(test_last_path, book_c);
+    scan_shelf(&ctx);
+    assert(s_recent_index == -1 && test_last_path[0] != 0);
+    resolve_recent_index(true);
+    assert(s_recent_index == -1 && test_last_path[0] == 0);
 
     free(s_shelf);
     while(s_pending)pending_discard(s_pending->path);
@@ -540,6 +627,8 @@ int main(void) {
     assert(g5.y + g5.height <= footer_top - 12);
 
     s_recent_index = 0;
+    assert(!shelf_has_recent_card(&ctx));
+    s_entries[0].has_progress = true;
     assert(shelf_has_recent_card(&ctx));
     EpdRect rc = recent_card_rect();
     EpdRect gr0 = shelf_grid_rect(0, true);

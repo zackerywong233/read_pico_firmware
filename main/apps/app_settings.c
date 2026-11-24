@@ -95,6 +95,7 @@ static const char *saver_name(app_saver_style_t style) {
         case APP_SAVER_QUOTE: return "最近摘录";
         case APP_SAVER_IMAGE: return "TF 卡图片";
         case APP_SAVER_BOOK_COVER: return "当前书封面";
+        case APP_SAVER_HEATMAP: return "阅读热力图";
         case APP_SAVER_BUILTIN:
         default: return "默认图案";
     }
@@ -687,7 +688,7 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
             return APP_REDRAW_PAGE;
         }
         if (hit == 2) {
-            app_settings_set_saver_style((app_saver_style_t)((app_settings_saver_style() + 1) % 4));
+            app_settings_set_saver_style((app_saver_style_t)((app_settings_saver_style() + 1) % 5));
             return APP_REDRAW_PAGE;
         }
         if (hit == 3) {
