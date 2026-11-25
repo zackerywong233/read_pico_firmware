@@ -1,5 +1,16 @@
 # 版本变更 / Changelog
 
+## v1.0.8 · 2026-11-25
+
+- 合并底部触控导航与屏下三键说明带，简化全仓页面布局：在 `ui_menu` 与 `app_loop` 中为底部三键说明带（`y = 1168..1215`）增加触控命中，点按/500 ms 长按非空格与屏下三键共用同一套短/长按路由，空位吸收误触不透传，全屏阅读隐藏态正常透传；移除图书、文件管理、订阅书库、网页阅读、传书选网、字体管理、设置、我的看板与 Agent 历史页中与说明带重复的翻页/返回触控底栏，补齐各页 `key_hints` 与左右滑翻页，释放约 100 px 纵向内容空间。
+  Merge bottom touch navigation into the physical key-hint strip across apps: add touch hit-testing for the bottom key-hint strip (`y = 1168..1215`) in `ui_menu` and `app_loop` so tapping/500 ms holding non-empty cells shares the `KEY1/2/3` short/long pipeline while blank cells absorb taps and fullscreen hidden strips pass through; remove duplicate paging/return touch bars across Book, Files, Feeds, Web, Transfer, Font Picker, Settings, Personal, and Agent pages, complete `key_hints` and swipe paging, and reclaim ~100 px of vertical content space.
+
+- 图书书架新增多条件筛选与排序：点击书架顶栏左上角「筛选」进入独立筛选面板，支持自由组合阅读状态（全部 / 未读 / 在读 / 已读完）、图书格式（全部 / EPUB / TXT / MD / CBZ）与存储位置（全部 / TF 卡 / 内置），并实时展示全书架阅读状态统计与匹配数量；排序方式扩展为 4 档（按名称 / 按最近 / 按进度 / 按大小），顶栏快捷排序与筛选面板同步联动。
+  Add multi-condition bookshelf filtering and sorting: tap “筛选” in the top bar to open the dedicated Filter view combining reading status (All / Unread / Reading / Finished), file format (All / EPUB / TXT / MD / CBZ), and storage (All / TF / Flash) with live library counts; expand sorting to 4 modes (Name / Recent / Progress / Size) synced between the top bar and filter view.
+
+- 校时与 PMU RTC 漂移防护：完善 SNTP 同步回调与 PMU 软睡/开机时间漂移校验，并补齐主机回归测试。
+  Improve SNTP sync callback and PMU RTC drift guard across sleep/boot cycles, with host regression tests.
+
 ## v1.0.7 · 2026-11-25
 
 - 修复图书页「最近阅读」卡片在读完书籍返回书架或管理删书/清进度后错显另一本未打开 0% 书籍的问题：`app_book` 新增 `resolve_recent_index()`，改为统一依据持久化的 `book_progress_last_path()`（或尚未落盘的脏待保存进度）解析最近阅读下标，不再在 `scan_shelf()` 重建列表或 `manage_apply()`/`batch_apply()` 压缩列表后沿用失效旧下标；同时 `shelf_has_recent_card()` 增加 `has_progress` 校验并补充宿主回归测试。
