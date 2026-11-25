@@ -255,7 +255,6 @@ static void render_network_time(uint8_t *fb) {
         ui_text(fb, UI_MARGIN, btn_y + 4 * (UI_BTN_H + UI_GAP) + 8, UI_PX_CAPTION,
                 s_notice, EPD_DRAW_ALIGN_LEFT, false);
     }
-    draw_action_btn(fb, ui_bar_rect(0, 1), "返回设置", s_pressed == CTRL_BACK);
 }
 
 static void render_display(uint8_t *fb) {
@@ -297,8 +296,6 @@ static void render_display(uint8_t *fb) {
                     para_names[app_settings_book_para_gap() % 3], s_pressed == 9);
     draw_action_btn(fb, ui_row_rect(1, 2, y7, UI_BTN_H),
                     app_settings_book_indent() ? "缩进 强制两格" : "缩进 跟随原文", s_pressed == 10);
-
-    draw_action_btn(fb, ui_bar_rect(0, 1), "返回设置", s_pressed == CTRL_BACK);
 }
 
 static void render_sleep(uint8_t *fb) {
@@ -316,8 +313,6 @@ static void render_sleep(uint8_t *fb) {
 
     draw_kv_btn(fb, row_rect(3), "睡眠与唤醒详细设置", "打开 ›", s_pressed == 3);
     draw_kv_btn(fb, row_rect(4), "我的看板与定时刷新", "打开 ›", s_pressed == 4);
-
-    draw_action_btn(fb, ui_bar_rect(0, 1), "返回设置", s_pressed == CTRL_BACK);
 }
 
 static void render_power(uint8_t *fb) {
@@ -347,8 +342,6 @@ static void render_power(uint8_t *fb) {
 
     draw_kv_btn(fb, sub_row_rect(btn_y, 2), "全局蜂鸣静音",
                 app_settings_muted() ? "开启" : "关闭", s_pressed == 2);
-
-    draw_action_btn(fb, ui_bar_rect(0, 1), "返回设置", s_pressed == CTRL_BACK);
 }
 
 static void render_device(uint8_t *fb) {
@@ -372,8 +365,6 @@ static void render_device(uint8_t *fb) {
     draw_kv_btn(fb, sub_row_rect(btn_y, 0), "设备概览与识别码", "打开 ›", s_pressed == 0);
     draw_kv_btn(fb, sub_row_rect(btn_y, 1), "存储与蜂鸣", "打开 ›", s_pressed == 1);
     draw_kv_btn(fb, sub_row_rect(btn_y, 2), "设备自检", "打开 ›", s_pressed == 2);
-
-    draw_action_btn(fb, ui_bar_rect(0, 1), "返回设置", s_pressed == CTRL_BACK);
 }
 
 static void render_update(uint8_t *fb) {
@@ -394,8 +385,7 @@ static void render_update(uint8_t *fb) {
     }
     draw_action_btn(fb, update_control_rect(0), "检查更新", s_pressed == 0);
     draw_action_btn(fb, update_control_rect(1), "安装更新", s_pressed == 1);
-    draw_action_btn(fb, update_control_rect(2), "取消 / 返回", s_pressed == 2);
-    draw_action_btn(fb, ui_bar_rect(0, 1), "返回设置", s_pressed == CTRL_BACK);
+    draw_action_btn(fb, update_control_rect(2), "取消更新", s_pressed == 2);
 }
 
 static void render(app_ctx_t *ctx, uint8_t *fb) {
@@ -431,12 +421,6 @@ static int hit_control(uint16_t x, uint16_t y, EpdRect *out_rect) {
 
     if (s_view == SETTINGS_VIEW_TIME_EDIT) {
         return ui_time_edit_hit_rect(x, y, out_rect) ? 0 : CTRL_NONE;
-    }
-
-    EpdRect back = ui_bar_rect(0, 1);
-    if (ui_rect_hit(back, x, y)) {
-        if (out_rect) *out_rect = back;
-        return CTRL_BACK;
     }
 
     if (s_view == SETTINGS_VIEW_NETWORK_TIME) {
@@ -557,20 +541,6 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
             return APP_REDRAW_FULL;
         }
         return res == UI_TIME_EDIT_CHANGED ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
-    }
-
-    if (hit == CTRL_BACK) {
-        if (s_view == SETTINGS_VIEW_UPDATE) {
-            ota_update_status_t status;
-            ota_update_get_status(&status);
-            if (status.state == OTA_UPDATE_DOWNLOADING || status.state == OTA_UPDATE_CHECKING) {
-                ota_update_cancel();
-                return APP_REDRAW_PAGE;
-            }
-        }
-        s_notice[0] = '\0';
-        s_view = SETTINGS_VIEW_ROOT;
-        return APP_REDRAW_PAGE;
     }
 
     if (s_view == SETTINGS_VIEW_ROOT) {
@@ -874,6 +844,21 @@ static EpdRect area_hint(app_ctx_t *ctx) {
     return s_dirty_area;
 }
 
+static void key_hints(app_ctx_t *ctx, ui_key_hints_t *out) {
+    (void)ctx;
+    if (s_view == SETTINGS_VIEW_UPDATE) {
+        ota_update_status_t status;
+        ota_update_get_status(&status);
+        if (status.state == OTA_UPDATE_DOWNLOADING || status.state == OTA_UPDATE_CHECKING) {
+            out->left = "取消";
+            out->right = NULL;
+            return;
+        }
+    }
+    out->left = "返回";
+    out->right = NULL;
+}
+
 const app_desc_t app_settings = {
     .title = "设置",
     .detail = "网络、阅读、电源与设备选项",
@@ -882,6 +867,7 @@ const app_desc_t app_settings = {
     .render = render,
     .on_gesture = on_gesture,
     .on_key = on_key,
+    .key_hints = key_hints,
     .on_tick = on_tick,
     .area_hint = area_hint,
 };

@@ -28,6 +28,9 @@ bool app_time_now_utc(time_t *out_utc);
 bool app_time_now_local(struct tm *out_local, int *out_tz_min);
 /// 设置主机时间并同步写入 PMU RTC。/ Set host time and persist it to the PMU RTC.
 bool app_time_set_utc(uint32_t unix_sec, bool *pmu_synced);
+/// 主机下电前把有效的 ESP32 晶振时间回写 PMU RTC，消除清醒期 CW32 LSI 漂移。
+/// Flush valid ESP32 crystal time to PMU RTC before host power-down to clear awake CW32 LSI drift.
+bool app_time_flush_to_pmu(void);
 /// 返回指定年月的天数（含闰年）。/ Return the number of days in the given year and month (leap-year aware).
 int app_time_days_in_month(int year, int month);
 /// 将本地年月日时分与时区偏移换算为 UTC Unix 秒。/ Convert local Y/M/D H:M and timezone minutes to UTC Unix seconds.

@@ -24,6 +24,7 @@
 #include "display.h"
 #include "e0470_epaper_waveform.h"
 #include "esp_app_desc.h"
+#include "esp_netif_sntp.h"
 #include "ota_update.h"
 #include "read_pico_pmu.h"
 #include "read_pico_sd.h"
@@ -168,6 +169,14 @@ void ui_draw_choice_round_rect(uint8_t *fb, EpdRect r, int rad, bool on) { (void
 void ui_draw_button(uint8_t *fb, EpdRect r, const char *label, bool on) { (void)fb; (void)r; (void)on; record_text(label); }
 void ui_hairline(uint8_t *fb, int y, int x, int w, uint8_t c) { (void)fb; (void)y; (void)x; (void)w; (void)c; }
 void ui_draw_key_hints(uint8_t *fb, const ui_key_hints_t *h) { (void)fb; (void)h; }
+int ui_key_hint_hit_test(uint16_t x, uint16_t y, const ui_key_hints_t *h) {
+    if (!h || h->hidden || y < UI_KEY_HINT_RULE_Y || y >= UI_LOCK_HEIGHT || x >= UI_LOCK_WIDTH) return -1;
+    int col_w = UI_LOCK_WIDTH / 3;
+    int col = (int)x < col_w ? UI_KEY_1 : (int)x < col_w * 2 ? UI_KEY_2 : UI_KEY_3;
+    const char *label = col == UI_KEY_1 ? h->left
+        : col == UI_KEY_2 ? (h->center ? h->center : "刷新 · 长按桌面") : h->right;
+    return (label && label[0]) ? col : -1;
+}
 int ui_content_width(void) { return epd_rotated_display_width() - 2 * UI_MARGIN; }
 int ui_content_right(void) { return epd_rotated_display_width() - UI_MARGIN; }
 EpdRect ui_content_refresh_area(void) { return (EpdRect){ 0, UI_HEADER_RULE_Y, 684, UI_CONTENT_BOTTOM - UI_HEADER_RULE_Y }; }
@@ -277,6 +286,21 @@ static pmu_snapshot_t s_pmu = {
     .battery_mv = 4100, .soc_permille = 850,
 };
 static int s_pmu_time_sync_calls = 0;
+static bool s_pmu_time_sync_fail = false;
+static esp_sntp_time_cb_t s_sntp_cb = NULL;
+static int s_sntp_init_calls = 0;
+static int s_sntp_deinit_calls = 0;
+static int64_t s_fake_timer_offset_us = 0;
+
+esp_err_t esp_netif_sntp_init(const esp_sntp_config_t *c) {
+    s_sntp_init_calls++;
+    s_sntp_cb = c ? c->sync_cb : NULL;
+    return ESP_OK;
+}
+void esp_netif_sntp_deinit(void) {
+    s_sntp_deinit_calls++;
+    s_sntp_cb = NULL;
+}
 
 bool read_pico_pmu_ready(void) { return s_pmu.present; }
 const pmu_snapshot_t *read_pico_pmu_get(void) { return &s_pmu; }
@@ -288,6 +312,10 @@ esp_err_t read_pico_pmu_cmd(uint16_t code, const uint8_t *p, uint8_t n) {
 }
 esp_err_t read_pico_pmu_time_sync(uint32_t unix_seconds) {
     s_pmu_time_sync_calls++;
+    if (s_pmu_time_sync_fail) {
+        s_pmu.last_op_status = 0x00FF;
+        return ESP_FAIL;
+    }
     s_pmu.unix_sec = unix_seconds;
     s_pmu.time_ok = true;
     s_pmu.time_synced = 1;
@@ -427,7 +455,7 @@ esp_err_t cst836u_read(cst836u_handle_t h, cst836u_touch_t *t) {
     return ESP_OK;
 }
 esp_err_t cst836u_get_info(cst836u_handle_t h, cst836u_info_t *i) { (void)h; (void)i; return ESP_OK; }
-int64_t esp_timer_get_time(void) { return (int64_t)(s_step + 1) * 10000; }
+int64_t esp_timer_get_time(void) { return s_fake_timer_offset_us + (int64_t)(s_step + 1) * 10000; }
 void vTaskDelay(int ticks) { (void)ticks; if (++s_step >= s_step_count) longjmp(s_loop_exit, 1); }
 
 static void reset_steps(void) { s_step_count = 0; s_step = 0; }
@@ -562,14 +590,14 @@ static void test_settings_real_loop_navigation(void) {
     push_tap(top_bar_btn.x + 40, top_bar_btn.y + 40); // 顶部状态栏
     EpdRect indent_btn = ui_row_rect(1, 2, UI_CONTENT_TOP + 7 * (UI_BTN_H + UI_GAP), UI_BTN_H);
     push_tap(indent_btn.x + 40, indent_btn.y + 40); // 缩进
-    EpdRect back_btn = ui_bar_rect(0, 1);
-    push_tap(back_btn.x + 40, back_btn.y + 40); // 返回设置
+    push_tap(114, UI_KEY_HINT_TOP + 20); // 点击底部说明带左格“返回”回设置首页
     push_idle();
     if (!setjmp(s_loop_exit)) app_loop_run(&cfg);
     assert(s_book_px == 52);
     assert(s_book_top == false);
     assert(s_book_ind == 1);
     assert(!ui_saw_text("翻页效果"));
+    assert(!ui_saw_text("返回设置"));
     assert(strcmp(s_last_header, "设置") == 0);
 
     // 场景 3：进入设置 -> 点按“电源与提示” -> 点按“全局蜂鸣静音” -> 静音状态反转。
@@ -738,9 +766,11 @@ static void test_personal_heatmap_and_lock_saver(void) {
     assert(strcmp(s_last_header, "阅读热力图") == 0);
     assert(ui_saw_text("连续阅读") && ui_saw_text("最长连续") && ui_saw_text("今日阅读") && ui_saw_text("累计阅读"));
     assert(ui_saw_text("设为锁屏内容"));
+    assert(!ui_saw_text("返回看板"));
 
-    t.x = UI_MARGIN + 100;
-    t.y = 976 + 30;
+    EpdRect lock_btn = ui_bar_rect(0, 1);
+    t.x = (uint16_t)(lock_btn.x + 100);
+    t.y = (uint16_t)(lock_btn.y + 30);
     assert(app_personal.on_touch(&ctx, &t) == APP_REDRAW_PAGE);
     assert(s_saver == APP_SAVER_HEATMAP);
     app_personal.render(&ctx, fb);
@@ -826,11 +856,94 @@ static void test_personal_heatmap_and_lock_saver(void) {
     puts("personal_heatmap & lock_saver: passed");
 }
 
+static void test_sntp_callback_and_pmu_drift_guard(void) {
+    // 1) 开机从偏快 5 分钟的 PMU 恢复时间后连上 Wi-Fi：SNTP 未回包前绝不可提前写回旧时间或锁死 s_synced_this_boot。
+    // Boot from a +5 min drifted PMU clock and join Wi-Fi: poll before NTP reply must neither echo stale time nor lock out SNTP.
+    uint32_t real_utc = 0;
+    assert(app_time_make_utc(2026, 11, 25, 22, 0, 480, &real_utc));
+    uint32_t drifted_pmu = real_utc + 300U;
+    s_fake_sys_time = 0;
+    s_pmu.time_ok = true;
+    s_pmu.unix_sec = drifted_pmu;
+    s_pmu.time_synced = 1;
+    s_pmu_time_sync_fail = false;
+    s_sntp_init_calls = 0;
+    s_sntp_deinit_calls = 0;
+    s_fake_timer_offset_us = 1000000LL;
+
+    app_time_sync_from_pmu();
+    assert(s_fake_sys_time == (time_t)drifted_pmu);
+
+    int sync_before = s_pmu_time_sync_calls;
+    app_time_sync_sta_ip();
+    assert(s_sntp_init_calls == 1);
+    assert(s_sntp_cb != NULL);
+    app_time_sync_poll();
+    assert(s_pmu_time_sync_calls == sync_before);
+    assert(s_pmu.unix_sec == drifted_pmu);
+
+    // 离线热点断开后再重连，仍可重新启动 SNTP。/ Stopping before NTP reply allows a subsequent STA connect to retry SNTP.
+    app_time_sync_stop();
+    assert(s_sntp_deinit_calls == 1);
+    app_time_sync_sta_ip();
+    assert(s_sntp_init_calls == 2);
+    assert(s_sntp_cb != NULL);
+
+    // 2) 收到真实 NTP 响应后，poll 把准确时间写回 PMU。/ Once NTP callback fires, poll flushes accurate UTC to PMU.
+    s_fake_sys_time = (time_t)real_utc;
+    struct timeval tv = { .tv_sec = (time_t)real_utc, .tv_usec = 0 };
+    s_sntp_cb(&tv);
+    app_time_sync_poll();
+    assert(s_pmu_time_sync_calls == sync_before + 1);
+    assert(s_pmu.unix_sec == real_utc);
+
+    // 3) 清醒期间 CW32 LSI 漂移快了 3 分钟，切换页面调用 app_time_sync_from_pmu() 绝不反向污染 ESP32 晶振时钟。
+    // If CW32 LSI drifts +3 min while awake, app_time_sync_from_pmu() must never overwrite the valid ESP32 clock.
+    s_pmu.unix_sec = real_utc + 180U;
+    app_time_sync_from_pmu();
+    assert(s_fake_sys_time == (time_t)real_utc);
+
+    // 4) 下电前 app_time_flush_to_pmu() 把准确的 ESP32 时间回写 PMU，清掉清醒期 LSI 漂移。
+    // Pre-sleep app_time_flush_to_pmu() writes accurate host time back to PMU, clearing awake LSI drift.
+    assert(app_time_flush_to_pmu());
+    assert(s_pmu.unix_sec == real_utc);
+
+    // 5) 30 分钟后再次联网允许重新启动 SNTP；若 NTP 回包后立刻退网且首次写 PMU 失败，切页时由 app_time_sync_from_pmu() 补写。
+    // After 30 min awake, STA reconnect re-arms SNTP; if stop-time PMU write fails, app_time_sync_from_pmu() flushes it without overwriting host.
+    app_time_sync_stop();
+    app_time_sync_sta_ip();
+    assert(s_sntp_init_calls == 2); // 刚同步过 30 分钟内不重复启动 / Skipped within 30 min of last sync.
+
+    s_fake_timer_offset_us += 31LL * 60LL * 1000000LL;
+    app_time_sync_sta_ip();
+    assert(s_sntp_init_calls == 3);
+    assert(s_sntp_cb != NULL);
+
+    uint32_t next_utc = real_utc + 1860U;
+    s_fake_sys_time = (time_t)next_utc;
+    s_pmu.unix_sec = next_utc + 240U; // 模拟 PMU 又偏快 / Simulate drifted PMU again.
+    tv.tv_sec = (time_t)next_utc;
+    s_sntp_cb(&tv);
+
+    s_pmu_time_sync_fail = true;
+    app_time_sync_stop();
+    assert(s_pmu.unix_sec == next_utc + 240U);
+
+    s_pmu_time_sync_fail = false;
+    app_time_sync_from_pmu();
+    assert(s_fake_sys_time == (time_t)next_utc);
+    assert(s_pmu.unix_sec == next_utc);
+
+    s_fake_timer_offset_us = 0;
+    puts("sntp_callback & pmu_drift_guard: passed");
+}
+
 int main(void) {
     test_time_math_and_unified_clock();
     test_settings_real_loop_navigation();
     test_sketch_drag_and_coordinates();
     test_personal_heatmap_and_lock_saver();
+    test_sntp_callback_and_pmu_drift_guard();
     puts("ALL ui_fixes host regression tests passed!");
     return 0;
 }

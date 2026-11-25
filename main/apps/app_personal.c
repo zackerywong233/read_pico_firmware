@@ -249,7 +249,6 @@ static void draw_settings(uint8_t* fb) {
             EPD_DRAW_ALIGN_LEFT, false);
     if (s_time_sync_msg[0])
         ui_text(fb, UI_MARGIN, PERSONAL_HINT_Y + 120, UI_PX_CAPTION, s_time_sync_msg, EPD_DRAW_ALIGN_LEFT, false);
-    ui_draw_button(fb, ui_bar_rect(0, 1), "返回看板", false);
 }
 
 static void draw_heatmap_detail(uint8_t* fb) {
@@ -260,9 +259,8 @@ static void draw_heatmap_detail(uint8_t* fb) {
     ui_text(fb, UI_MARGIN, 824, UI_PX_CAPTION,
             "按天累计图书阅读时长，数据保存在设备本地", EPD_DRAW_ALIGN_LEFT, false);
     bool is_lock = app_settings_saver_style() == APP_SAVER_HEATMAP;
-    ui_draw_button(fb, ui_row_rect(0, 1, PERSONAL_AMBIENT_BTN_Y, UI_BTN_H),
+    ui_draw_button(fb, ui_bar_rect(0, 1),
                    is_lock ? "已设为锁屏内容" : "设为锁屏内容", is_lock);
-    ui_draw_button(fb, ui_bar_rect(0, 1), "返回看板", false);
 }
 
 static void draw_ambient_settings(uint8_t* fb) {
@@ -311,8 +309,7 @@ static void draw_ambient_settings(uint8_t* fb) {
         strftime(line, sizeof(line), success ? "上次结果：成功 %H:%M" : "上次结果：失败 %H:%M", &local);
     } else snprintf(line, sizeof(line), "上次结果：暂无");
     ui_text(fb, UI_MARGIN, 775, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
-    ui_draw_button(fb, ui_row_rect(0, 2, AMBIENT_TEST_Y, UI_BTN_H), "立即测试刷新", false);
-    ui_draw_button(fb, ui_bar_rect(0, 1), "返回看板", false);
+    ui_draw_button(fb, ui_bar_rect(0, 1), "立即测试刷新", false);
 }
 
 static void render(app_ctx_t* ctx, uint8_t* fb) {
@@ -376,8 +373,7 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
         return res == UI_TIME_EDIT_CHANGED ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
     }
     if (ctx->leaf == 4) {
-        if (ui_bar_hit(touch->x, touch->y, 1) == 0) { ctx->leaf = 0; return APP_REDRAW_PAGE; }
-        if (ui_rect_hit(ui_row_rect(0, 1, PERSONAL_AMBIENT_BTN_Y, UI_BTN_H), touch->x, touch->y)) {
+        if (ui_bar_hit(touch->x, touch->y, 1) == 0) {
             app_settings_set_saver_style(APP_SAVER_HEATMAP);
             return APP_REDRAW_PAGE;
         }
@@ -408,7 +404,6 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
         return APP_REDRAW_NONE;
     }
     if (ctx->leaf == 2) {
-        if (ui_bar_hit(touch->x, touch->y, 1) == 0) { ctx->leaf = 0; return APP_REDRAW_PAGE; }
         app_ambient_settings_t cfg;
         app_settings_ambient_get(&cfg);
         if (ui_rect_hit(ui_row_rect(0, 1, AMBIENT_ROW_Y(0), UI_BTN_H), touch->x, touch->y)) cfg.enabled = !cfg.enabled;
@@ -422,7 +417,7 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
         else if (ui_rect_hit(ui_row_rect(0, 1, AMBIENT_ROW_Y(3), UI_BTN_H), touch->x, touch->y))
             cfg.quiet_end_h = (uint8_t)((cfg.quiet_end_h + 1) % 24);
         else if (ui_rect_hit(ui_row_rect(0, 1, AMBIENT_ROW_Y(4), UI_BTN_H), touch->x, touch->y)) cfg.source_type = (uint8_t)((cfg.source_type + 1) % 3);
-        else if (ui_rect_hit(ui_row_rect(0, 2, AMBIENT_TEST_Y, UI_BTN_H), touch->x, touch->y)) {
+        else if (ui_bar_hit(touch->x, touch->y, 1) == 0) {
             if (!ctx->hl || !ctx->fb) return APP_REDRAW_NONE;
             (void)read_pico_pmu_refresh();
             app_time_sync_from_pmu();
@@ -435,7 +430,6 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
         (void)app_settings_ambient_set(&cfg);
         return APP_REDRAW_PAGE;
     }
-    if (ui_bar_hit(touch->x, touch->y, 1) == 0) { ctx->leaf = 0; return APP_REDRAW_PAGE; }
     if (ui_rect_hit(ui_row_rect(0, 2, PERSONAL_SYNC_Y, UI_BTN_H), touch->x, touch->y)) {
         s_time_edit_return_leaf = 1;
         ui_time_edit_open(&s_time_editor);

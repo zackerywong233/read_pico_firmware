@@ -21,6 +21,7 @@ idf.py build
 
 - `sdkconfig.defaults`：真机 120 MHz flash / PSRAM 时序，依赖板上 Zbit 型号。/ Board timing for 120 MHz flash / PSRAM; depends on the Zbit part.
 - `sdkconfig.ci`：默认时序，只验证能否编过。/ Default timing; compile-only CI check.
+- **开发环境约定**：当前开发机未安装本地 ESP-IDF，不要在本机搜索或运行 `idf.py`；本地先跑 `tools/` 下的主机回归测试，固件完整编译通过推送到 GitHub Actions 构建验证。/ **Dev machine note**: ESP-IDF is not installed locally; do not probe or run `idf.py` locally. Run host regression tests under `tools/` locally and push to GitHub Actions for full firmware builds.
 
 不要在没有对应 flash 的机器上把 CI 配置当产品默认。/ Do not ship the CI timing as the product default.
 

@@ -36,6 +36,10 @@ extern "C" {
 /// Hit-test for the keys below the display. Returns UI_KEY_1/2/3, or -1 outside the key strip.
 int ui_key_hit_test(uint16_t x, uint16_t y);
 
+/// 底部三键说明带（y=1168..1215）触控命中测试；仅非空文案格命中并返回 UI_KEY_1/2/3，否则返回 -1。
+/// Hit-test for the bottom key-hint strip (y=1168..1215); returns UI_KEY_1/2/3 only for non-empty cells, else -1.
+int ui_key_hint_hit_test(uint16_t x, uint16_t y, const ui_key_hints_t* hints);
+
 /// 绘制底部按键说明带（y=1170..1214，顶部分隔线 y=1168，三等分对齐屏下三键）。
 /// Draw the bottom key-hint strip (y=1170..1214, top rule at y=1168, 3 equal columns aligned to physical keys).
 void ui_draw_key_hints(uint8_t* framebuffer, const ui_key_hints_t* hints);

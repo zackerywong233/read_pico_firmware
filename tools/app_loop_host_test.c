@@ -4,6 +4,7 @@
  */
 #include "app_loop.h"
 #include "ui_gesture.h"
+#include "ui_kit.h"
 #include "ui_menu.h"
 #include <assert.h>
 #include <setjmp.h>
@@ -70,6 +71,13 @@ EpdRect ui_content_refresh_area(void) {return (EpdRect){0,0,684,1000};}
 const app_desc_t* app_home_page(void) {return &first;}
 const app_desc_t* app_at(int i) {return i==0?&first:i==1?&second:i==2?&third:NULL;}
 int ui_key_hit_test(uint16_t x,uint16_t y) {return y>=1300 && x<480?x/160:-1;}
+int ui_key_hint_hit_test(uint16_t x,uint16_t y,const ui_key_hints_t* h) {
+    if (!h || h->hidden || y < UI_KEY_HINT_RULE_Y || y >= UI_LOCK_HEIGHT || x >= UI_LOCK_WIDTH) return -1;
+    int col_w = UI_LOCK_WIDTH / 3;
+    int col = (int)x < col_w ? UI_KEY_1 : (int)x < col_w * 2 ? UI_KEY_2 : UI_KEY_3;
+    const char* label = col == UI_KEY_1 ? h->left : col == UI_KEY_2 ? (h->center ? h->center : "刷新 · 长按桌面") : h->right;
+    return (label && label[0]) ? col : -1;
+}
 void ui_draw_key_hints(uint8_t*fb, const ui_key_hints_t* h) {(void)fb; if(h){last_hints=*h; hint_draws++;}}
 
 static void enter(app_ctx_t*c) {(void)c;enters++;}
@@ -292,6 +300,36 @@ int main(void) {
     reset();bg_test_redraw_and_lock=true;bg_ticks=0;lock_calls=0;first.holds_pmu=true;
     add(0,0,0,0);add(0,0,0,0);run_bg();
     assert(fulls==2&&lock_calls==0);
+
+    // 12. 底部说明带触控与屏下三键共享短/长按路由，空位拦截不透传，全屏隐藏态透传。
+    // Bottom key-hint strip shares short/long KEY1/2/3 routing; empty cells absorb taps; hidden strip passes through.
+    reset();first.key_hints=hints_cb;key_handles_all=true;
+    add(100,1190,1,0);add(0,0,0,0); // 左格 -> KEY1
+    add(342,1190,1,0);add(0,0,0,0); // 中格 -> KEY2 强刷
+    add(580,1190,1,0);add(0,0,0,0); // 右格 -> KEY3
+    run();
+    assert(keys[0]==1&&!keys[1]&&keys[2]==1&&fulls==2&&touch_calls==0);
+
+    // 子页长按说明带中格回桌面首页；未消费左格短按返回上级。
+    // Sub-page holding hint center returns to Home; tapping hint left returns to parent.
+    reset();start_second=true;first.on_enter=home_enter;first.render=home_render;
+    add(100,1190,1,0);add(0,0,0,0);run();
+    assert(keys[0]==1&&exits==1&&home_enters==1);
+
+    reset();start_second=true;key_handles_all=true;first.on_enter=home_enter;first.render=home_render;
+    time_step=200000;
+    add(342,1190,1,0);add(342,1190,1,0);add(342,1190,1,0);add(342,1190,1,0);add(0,0,0,0);run();
+    assert(exits==1&&home_enters==1&&rendered_leaf==0&&fulls==2);
+
+    // 首页左格与右格均为空：点击说明带空位被吸收，不触发 on_touch 也不触发 on_key。
+    // Empty hint cells on Home absorb taps without firing on_touch or on_key.
+    reset();add(100,1190,1,0);add(0,0,0,0);add(580,1190,1,0);add(0,0,0,0);run();
+    assert(touch_calls==0&&keys[0]==0&&keys[2]==0);
+
+    // 全屏隐藏态（hidden=true）：点击 y=1190 正常透传给页面。
+    // Fullscreen hidden strip lets y=1190 pass through to the page.
+    reset();first.key_hints=hints_cb;hide_hints=true;add(100,1190,1,0);add(0,0,0,0);run();
+    assert(touch_calls==1&&keys[0]==0);
 
     puts("app_loop: v3.2 scheduler, nav stack and 3-key scenarios passed");
     return 0;

@@ -622,10 +622,18 @@ static bool save_article_txt(void) {
 /* ---- 视图渲染 / View rendering ---- */
 
 static void render_sources(uint8_t *fb) {
+    int pages = (int)((s_source_count + FEEDS_PER_PAGE - 1) / FEEDS_PER_PAGE);
+    if (pages <= 0) pages = 1;
     char sub[96];
-    snprintf(sub, sizeof(sub), "%s · 共 %u 个源",
-             s_net_ready ? "Wi-Fi 已连接" : ((s_net_started || s_start_pending) ? "连接中…" : "离线模式"),
-             (unsigned)s_source_count);
+    if (pages > 1) {
+        snprintf(sub, sizeof(sub), "%s · %u 个源 · 第 %d/%d 页",
+                 s_net_ready ? "Wi-Fi 已连接" : ((s_net_started || s_start_pending) ? "连接中…" : "离线模式"),
+                 (unsigned)s_source_count, s_source_page + 1, pages);
+    } else {
+        snprintf(sub, sizeof(sub), "%s · 共 %u 个源",
+                 s_net_ready ? "Wi-Fi 已连接" : ((s_net_started || s_start_pending) ? "连接中…" : "离线模式"),
+                 (unsigned)s_source_count);
+    }
     ui_draw_header(fb, "订阅书库", sub);
 
     if (s_notice[0]) {
@@ -652,13 +660,8 @@ static void render_sources(uint8_t *fb) {
         }
     }
 
-    int pages = (int)((s_source_count + FEEDS_PER_PAGE - 1) / FEEDS_PER_PAGE);
-    if (pages <= 0) pages = 1;
-    ui_draw_button(fb, ui_bar_rect(0, 3), "去传书配置", false);
-    ui_draw_button(fb, ui_bar_rect(1, 3), s_delete_mode ? "取消删除" : "删除源", s_delete_mode);
-    char pg[36];
-    snprintf(pg, sizeof(pg), "%d / %d 页", s_source_page + 1, pages);
-    ui_draw_button(fb, ui_bar_rect(2, 3), pg, false);
+    ui_draw_button(fb, ui_bar_rect(0, 2), "去传书配置", false);
+    ui_draw_button(fb, ui_bar_rect(1, 2), s_delete_mode ? "取消删除" : "删除源", s_delete_mode);
 }
 
 static void render_entries(uint8_t *fb) {
@@ -695,12 +698,7 @@ static void render_entries(uint8_t *fb) {
         draw_ellipsis(fb, r.x + 18, r.y + 66, UI_PX_CAPTION, r.width - 36, meta);
     }
 
-    ui_draw_button(fb, ui_bar_rect(0, 4), "返回", false);
-    ui_draw_button(fb, ui_bar_rect(1, 4), "刷新", false);
-    ui_draw_button(fb, ui_bar_rect(2, 4), "上一页", false);
-    ui_draw_button(fb, ui_bar_rect(3, 4),
-                   (s_entry_page + 1 >= pages && s_parsed.next_url[0]) ? "下批目录" : "下一页",
-                   false);
+    ui_draw_button(fb, ui_bar_rect(0, 1), "刷新目录", false);
 }
 
 static void render_detail(uint8_t *fb) {
@@ -736,7 +734,6 @@ static void render_detail(uint8_t *fb) {
     if (s_last_saved_path[0]) {
         ui_draw_button(fb, ui_row_rect(0, 1, by + 192, UI_BTN_H), "打开已下载图书", false);
     }
-    ui_draw_button(fb, ui_bar_rect(0, 1), "返回目录", false);
 }
 
 static void render_article(uint8_t *fb) {
@@ -749,17 +746,13 @@ static void render_article(uint8_t *fb) {
     if (s_notice[0]) {
         ui_text(fb, UI_MARGIN, UI_BAR_TOP - 32, UI_PX_CAPTION, s_notice, EPD_DRAW_ALIGN_LEFT, false);
     }
-    ui_draw_button(fb, ui_bar_rect(0, 4), "返回", false);
-    ui_draw_button(fb, ui_bar_rect(1, 4), "上一页", false);
-    ui_draw_button(fb, ui_bar_rect(2, 4), "下一页", false);
-    ui_draw_button(fb, ui_bar_rect(3, 4), "存为图书", false);
+    ui_draw_button(fb, ui_bar_rect(0, 1), "存为图书", false);
 }
 
 static void render_loading(uint8_t *fb) {
     ui_draw_header(fb, "订阅书库", "网络请求中");
     ui_text_vc(fb, epd_rotated_display_width() / 2, UI_CONTENT_TOP + 220, UI_PX_BODY,
                s_notice[0] ? s_notice : "正在加载…", EPD_DRAW_ALIGN_CENTER, false);
-    ui_draw_button(fb, ui_bar_rect(0, 1), "取消", false);
 }
 
 static void render(app_ctx_t *ctx, uint8_t *fb) {
@@ -962,10 +955,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
             return APP_REDRAW_NONE;
         }
         if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
-        if (ui_rect_hit(ui_bar_rect(0, 4), ev->x, ev->y)) { navigate_back(); return APP_REDRAW_PAGE; }
-        if (ui_rect_hit(ui_bar_rect(1, 4), ev->x, ev->y) && s_article_page > 0) { s_article_page--; return APP_REDRAW_PAGE; }
-        if (ui_rect_hit(ui_bar_rect(2, 4), ev->x, ev->y) && s_article_page + 1 < total) { s_article_page++; return APP_REDRAW_PAGE; }
-        if (ui_rect_hit(ui_bar_rect(3, 4), ev->x, ev->y)) {
+        if (ui_rect_hit(ui_bar_rect(0, 1), ev->x, ev->y)) {
             if (!save_article_txt()) snprintf(s_notice, sizeof(s_notice), "保存失败：书架不可用或空间不足");
             return APP_REDRAW_PAGE;
         }
@@ -974,31 +964,47 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         return APP_REDRAW_NONE;
     }
 
-    if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
-    uint16_t x = ev->x, y = ev->y;
+    if (s_view == FEEDS_VIEW_SOURCES && (ev->type == UI_GESTURE_SWIPE_L || ev->type == UI_GESTURE_SWIPE_R)) {
+        int pages = (int)((s_source_count + FEEDS_PER_PAGE - 1) / FEEDS_PER_PAGE);
+        if (ev->type == UI_GESTURE_SWIPE_L && s_source_page + 1 < pages) { s_source_page++; return APP_REDRAW_PAGE; }
+        if (ev->type == UI_GESTURE_SWIPE_R && s_source_page > 0) { s_source_page--; return APP_REDRAW_PAGE; }
+        return APP_REDRAW_NONE;
+    }
 
-    if (s_view == FEEDS_VIEW_LOADING) {
-        if (ui_rect_hit(ui_bar_rect(0, 1), x, y)) {
-            navigate_back();
-            return APP_REDRAW_PAGE;
+    if (s_view == FEEDS_VIEW_ENTRIES && (ev->type == UI_GESTURE_SWIPE_L || ev->type == UI_GESTURE_SWIPE_R)) {
+        int pages = (int)((s_parsed.count + FEEDS_PER_PAGE - 1) / FEEDS_PER_PAGE);
+        if (ev->type == UI_GESTURE_SWIPE_R && s_entry_page > 0) { s_entry_page--; return APP_REDRAW_PAGE; }
+        if (ev->type == UI_GESTURE_SWIPE_L) {
+            if (s_entry_page + 1 < pages) { s_entry_page++; return APP_REDRAW_PAGE; }
+            if (s_nav_urls && s_parsed.next_url[0]) {
+                if (s_nav_depth < FEEDS_NAV_DEPTH) {
+                    snprintf(s_nav_urls[s_nav_depth++], FEEDS_URL_MAX, "%s", s_parsed.next_url);
+                } else {
+                    snprintf(s_nav_urls[FEEDS_NAV_DEPTH - 1], FEEDS_URL_MAX, "%s", s_parsed.next_url);
+                }
+                (void)start_xml_fetch(s_nav_urls[s_nav_depth - 1]);
+                return APP_REDRAW_PAGE;
+            }
         }
         return APP_REDRAW_NONE;
     }
 
+    if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
+    uint16_t x = ev->x, y = ev->y;
+
+    if (s_view == FEEDS_VIEW_LOADING) {
+        return APP_REDRAW_NONE;
+    }
+
     if (s_view == FEEDS_VIEW_SOURCES) {
-        if (ui_rect_hit(ui_bar_rect(0, 3), x, y)) {
+        if (ui_rect_hit(ui_bar_rect(0, 2), x, y)) {
             ctx->request_app = &app_transfer;
             return APP_REDRAW_NONE;
         }
-        if (ui_rect_hit(ui_bar_rect(1, 3), x, y)) {
+        if (ui_rect_hit(ui_bar_rect(1, 2), x, y)) {
             s_delete_mode = !s_delete_mode;
             snprintf(s_notice, sizeof(s_notice), "%s", s_delete_mode ? "点按任意源将其删除" : "");
             return APP_REDRAW_PAGE;
-        }
-        if (ui_rect_hit(ui_bar_rect(2, 3), x, y)) {
-            int pages = (int)((s_source_count + FEEDS_PER_PAGE - 1) / FEEDS_PER_PAGE);
-            if (pages > 1) { s_source_page = (s_source_page + 1) % pages; return APP_REDRAW_PAGE; }
-            return APP_REDRAW_NONE;
         }
         int list_y = UI_CONTENT_TOP + 40;
         size_t start = (size_t)s_source_page * FEEDS_PER_PAGE;
@@ -1024,29 +1030,9 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     }
 
     if (s_view == FEEDS_VIEW_ENTRIES) {
-        int pages = (int)((s_parsed.count + FEEDS_PER_PAGE - 1) / FEEDS_PER_PAGE);
-        if (pages <= 0) pages = 1;
-        if (ui_rect_hit(ui_bar_rect(0, 4), x, y)) { navigate_back(); return APP_REDRAW_PAGE; }
-        if (ui_rect_hit(ui_bar_rect(1, 4), x, y) && s_nav_urls && s_nav_depth > 0) {
+        if (ui_rect_hit(ui_bar_rect(0, 1), x, y) && s_nav_urls && s_nav_depth > 0) {
             (void)start_xml_fetch(s_nav_urls[s_nav_depth - 1]);
             return APP_REDRAW_PAGE;
-        }
-        if (ui_rect_hit(ui_bar_rect(2, 4), x, y) && s_entry_page > 0) {
-            s_entry_page--;
-            return APP_REDRAW_PAGE;
-        }
-        if (ui_rect_hit(ui_bar_rect(3, 4), x, y)) {
-            if (s_entry_page + 1 < pages) { s_entry_page++; return APP_REDRAW_PAGE; }
-            if (s_nav_urls && s_parsed.next_url[0]) {
-                if (s_nav_depth < FEEDS_NAV_DEPTH) {
-                    snprintf(s_nav_urls[s_nav_depth++], FEEDS_URL_MAX, "%s", s_parsed.next_url);
-                } else {
-                    snprintf(s_nav_urls[FEEDS_NAV_DEPTH - 1], FEEDS_URL_MAX, "%s", s_parsed.next_url);
-                }
-                (void)start_xml_fetch(s_nav_urls[s_nav_depth - 1]);
-                return APP_REDRAW_PAGE;
-            }
-            return APP_REDRAW_NONE;
         }
         int list_y = UI_CONTENT_TOP + 40;
         size_t start = (size_t)s_entry_page * FEEDS_PER_PAGE;
@@ -1077,7 +1063,6 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     }
 
     if (s_view == FEEDS_VIEW_DETAIL) {
-        if (ui_rect_hit(ui_bar_rect(0, 1), x, y)) { navigate_back(); return APP_REDRAW_PAGE; }
         if (s_selected_entry < 0 || (size_t)s_selected_entry >= s_parsed.count) return APP_REDRAW_NONE;
         const feed_item_t *it = &s_parsed.items[s_selected_entry];
         int by = 720;
@@ -1184,17 +1169,17 @@ static void key_hints(app_ctx_t *ctx, ui_key_hints_t *out) {
         out->right = NULL;
     } else if (s_view == FEEDS_VIEW_ARTICLE) {
         size_t total = book_layout_page_count();
-        out->left = s_article_page > 0 ? "上一页" : "返回";
+        out->left = s_article_page > 0 ? "上页 · 长按返回" : "返回";
         out->right = (s_article_page + 1 < total) ? "下一页" : NULL;
     } else if (s_view == FEEDS_VIEW_ENTRIES) {
         int pages = (int)((s_parsed.count + FEEDS_PER_PAGE - 1) / FEEDS_PER_PAGE);
         if (pages <= 0) pages = 1;
-        out->left = s_entry_page > 0 ? "上一页" : "返回";
-        out->right = (s_entry_page + 1 < pages || s_parsed.next_url[0]) ? "下一页" : NULL;
+        out->left = s_entry_page > 0 ? "上页 · 长按返回" : "返回";
+        out->right = (s_entry_page + 1 < pages) ? "下一页" : (s_parsed.next_url[0] ? "下批目录" : NULL);
     } else {
         int pages = (int)((s_source_count + FEEDS_PER_PAGE - 1) / FEEDS_PER_PAGE);
         if (pages <= 0) pages = 1;
-        out->left = s_source_page > 0 ? "上一页" : "返回";
+        out->left = s_source_page > 0 ? "上页 · 长按返回" : "返回";
         out->right = (s_source_page + 1 < pages) ? "下一页" : NULL;
     }
 }

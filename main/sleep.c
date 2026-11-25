@@ -62,9 +62,8 @@ static void arm_ambient_alarm_before_sleep(app_sleep_mode_t mode) {
         (void)read_pico_pmu_alarm_set(0, 10);
         return;
     }
-    const pmu_snapshot_t *pmu = read_pico_pmu_get();
-    time_t now = pmu && pmu->time_ok && pmu->unix_sec
-        ? (time_t)pmu->unix_sec : time(NULL);
+    time_t now = 0;
+    if (!app_time_now_utc(&now)) now = time(NULL);
     uint32_t interval = (uint32_t)cfg.interval_min * 60U;
     uint32_t delay = interval;
     if (now >= 946684800) {
@@ -308,6 +307,9 @@ app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
 }
 
 esp_err_t app_enter_host_sleep(app_sleep_mode_t mode) {
+    // 断电前把高精度 ESP32 晶振时钟回写 CW32 RTC，抵消本次清醒期间的 LSI 漂移。
+    // Flush ESP32 crystal time to CW32 RTC before power-down to zero out awake LSI drift.
+    (void)app_time_flush_to_pmu();
     periph_suspend(true);
     pmu_selftest_prepare_powerdown();
     esp_err_t err = mode == APP_SLEEP_OFF

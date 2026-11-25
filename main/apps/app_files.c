@@ -36,7 +36,7 @@ extern const app_desc_t app_book;
 extern void app_book_queue_open(const char *path);
 
 #define FILES_ROOT "/sdcard"
-#define FILES_ROWS 7
+#define FILES_ROWS 8
 #define PSRAM_CAPS (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
 
 typedef enum {
@@ -254,11 +254,6 @@ static void render_browse(app_ctx_t *ctx, uint8_t *fb) {
                        right, EPD_DRAW_ALIGN_RIGHT, false);
         }
     }
-
-    ui_draw_button(fb, ui_bar_rect(0, 3), "上一页", ctx->leaf > 0);
-    ui_draw_button(fb, ui_bar_rect(1, 3),
-                   strcmp(s_cur_dir, FILES_ROOT) == 0 ? "刷新" : "上级目录", false);
-    ui_draw_button(fb, ui_bar_rect(2, 3), "下一页", ctx->leaf + 1 < page_count());
 }
 
 static void render_detail(uint8_t *fb) {
@@ -282,7 +277,6 @@ static void render_detail(uint8_t *fb) {
     ui_draw_button(fb, ui_row_rect(0, 1, by + 96, UI_BTN_H),
                    e->kind == FILES_KIND_BOOK ? "前往书架阅读" : "移至上级目录", false);
     ui_draw_button(fb, ui_row_rect(0, 1, by + 192, UI_BTN_H), "删除此项", false);
-    ui_draw_button(fb, ui_bar_rect(0, 1), "返回列表", false);
 }
 
 static void render_confirm_del(uint8_t *fb) {
@@ -324,8 +318,7 @@ static void render_preview_img(uint8_t *fb) {
         ui_text_vc(fb, epd_rotated_display_width() / 2, 540, UI_PX_BODY,
                    s_status[0] ? s_status : "图片不可用", EPD_DRAW_ALIGN_CENTER, false);
     }
-    ui_draw_button(fb, ui_bar_rect(0, 2), "设为锁屏图片", false);
-    ui_draw_button(fb, ui_bar_rect(1, 2), "返回", false);
+    ui_draw_button(fb, ui_bar_rect(0, 1), "设为锁屏图片", false);
 }
 
 static void render_preview_txt(uint8_t *fb) {
@@ -342,7 +335,7 @@ static void render_preview_txt(uint8_t *fb) {
         int y = UI_CONTENT_TOP + 8;
         const int max_w = ui_content_width();
         size_t p = off;
-        while (p < s_txt_len && y + 40 < UI_CONTENT_BOTTOM) {
+        while (p < s_txt_len && y + 40 < UI_NO_BAR_BOTTOM) {
             char line[160] = {0};
             size_t l = 0;
             while (p < s_txt_len && s_txt_buf[p] != '\n' && l + 5 < sizeof(line)) {
@@ -364,9 +357,6 @@ static void render_preview_txt(uint8_t *fb) {
             y += 42;
         }
     }
-    ui_draw_button(fb, ui_bar_rect(0, 3), "上一页", s_txt_page > 0);
-    ui_draw_button(fb, ui_bar_rect(1, 3), "返回", false);
-    ui_draw_button(fb, ui_bar_rect(2, 3), "下一页", (size_t)(s_txt_page + 1) * 600 < s_txt_len);
 }
 
 static void render(app_ctx_t *ctx, uint8_t *fb) {
@@ -438,12 +428,20 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         ctx->leaf--;
         return APP_REDRAW_PAGE;
     }
+    if (ev->type == UI_GESTURE_SWIPE_L && s_view == FM_PREVIEW_TXT &&
+        (size_t)(s_txt_page + 1) * 600 < s_txt_len) {
+        s_txt_page++;
+        return APP_REDRAW_PAGE;
+    }
+    if (ev->type == UI_GESTURE_SWIPE_R && s_view == FM_PREVIEW_TXT && s_txt_page > 0) {
+        s_txt_page--;
+        return APP_REDRAW_PAGE;
+    }
     if (ev->type != UI_GESTURE_TAP && ev->type != UI_GESTURE_LONG_PRESS) return APP_REDRAW_NONE;
 
     uint16_t x = ev->x, y = ev->y;
     if (s_view == FM_PREVIEW_IMG) {
-        int b = ui_bar_hit(x, y, 2);
-        if (b == 0) {
+        if (ui_bar_hit(x, y, 1) == 0) {
             if (files_set_wallpaper_from(FILES_ROOT, s_preview_path)) {
                 app_settings_set_saver_style(APP_SAVER_IMAGE);
                 snprintf(s_status, sizeof(s_status), "已设为锁屏图片");
@@ -455,18 +453,17 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
             reload_dir(ctx);
             return APP_REDRAW_FULL;
         }
-        if (b == 1) {
-            free_previews();
-            s_view = FM_BROWSE;
-            return APP_REDRAW_FULL;
-        }
         return APP_REDRAW_NONE;
     }
     if (s_view == FM_PREVIEW_TXT) {
-        int b = ui_bar_hit(x, y, 3);
-        if (b == 0 && s_txt_page > 0) { s_txt_page--; return APP_REDRAW_PAGE; }
-        if (b == 2 && (size_t)(s_txt_page + 1) * 600 < s_txt_len) { s_txt_page++; return APP_REDRAW_PAGE; }
-        if (b == 1) { free_previews(); s_view = FM_BROWSE; return APP_REDRAW_PAGE; }
+        if (x < epd_rotated_display_width() / 3 && s_txt_page > 0) {
+            s_txt_page--;
+            return APP_REDRAW_PAGE;
+        }
+        if (x > epd_rotated_display_width() * 2 / 3 && (size_t)(s_txt_page + 1) * 600 < s_txt_len) {
+            s_txt_page++;
+            return APP_REDRAW_PAGE;
+        }
         return APP_REDRAW_NONE;
     }
     if (s_view == FM_CONFIRM_DEL) {
@@ -500,7 +497,6 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         return APP_REDRAW_NONE;
     }
     if (s_view == FM_DETAIL) {
-        if (ui_rect_hit(ui_bar_rect(0, 1), x, y)) { s_view = FM_BROWSE; return APP_REDRAW_PAGE; }
         if (s_selected_idx < 0 || (size_t)s_selected_idx >= s_count) { s_view = FM_BROWSE; return APP_REDRAW_PAGE; }
         const files_entry_t *e = &s_entries[s_selected_idx];
         char full[FILES_PATH_MAX];
@@ -606,19 +602,6 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         return APP_REDRAW_PAGE;
     }
 
-    int bar = ui_bar_hit(x, y, 3);
-    if (bar == 0 && ctx->leaf > 0) { ctx->leaf--; return APP_REDRAW_PAGE; }
-    if (bar == 2 && ctx->leaf + 1 < page_count()) { ctx->leaf++; return APP_REDRAW_PAGE; }
-    if (bar == 1) {
-        char parent[FILES_PATH_MAX];
-        if (files_path_parent(FILES_ROOT, s_cur_dir, parent, sizeof(parent))) {
-            snprintf(s_cur_dir, sizeof(s_cur_dir), "%s", parent);
-            ctx->leaf = 0;
-        }
-        reload_dir(ctx);
-        return APP_REDRAW_PAGE;
-    }
-
     for (int r = 0; r < FILES_ROWS; ++r) {
         if (!ui_rect_hit(list_row_rect(r), x, y)) continue;
         size_t idx = (size_t)ctx->leaf * FILES_ROWS + (size_t)r;
@@ -709,11 +692,15 @@ static app_redraw_t on_key_long(app_ctx_t *ctx, int key) {
 
 static void key_hints(app_ctx_t *ctx, ui_key_hints_t *out) {
     if (s_view == FM_BROWSE) {
-        out->left = ctx->leaf > 0 ? "上一页" : (strcmp(s_cur_dir, FILES_ROOT) == 0 ? "返回" : "上级目录");
+        out->left = ctx->leaf > 0 ? "上页 · 长按返回"
+            : (strcmp(s_cur_dir, FILES_ROOT) == 0 ? "返回" : "上级目录");
         out->right = (ctx->leaf + 1 < page_count()) ? "下一页" : NULL;
     } else if (s_view == FM_PREVIEW_TXT) {
-        out->left = s_txt_page > 0 ? "上一页" : "返回";
+        out->left = s_txt_page > 0 ? "上页 · 长按返回" : "返回";
         out->right = (size_t)(s_txt_page + 1) * 600 < s_txt_len ? "下一页" : NULL;
+    } else if (s_view == FM_CONFIRM_DEL) {
+        out->left = "取消";
+        out->right = NULL;
     } else {
         out->left = "返回";
         out->right = NULL;

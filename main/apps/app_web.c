@@ -93,9 +93,6 @@ typedef struct {
     EpdRect url_field;
     EpdRect open;
     EpdRect home;
-    EpdRect back;
-    EpdRect prev;
-    EpdRect next;
     EpdRect bookmark;
     EpdRect save;
 } web_geom_t;
@@ -165,11 +162,8 @@ static web_geom_t web_geom(void) {
         .url_field = {UI_MARGIN, 210, width, 112},
         .open = {UI_MARGIN, 330, button_w, 80},
         .home = {UI_MARGIN + button_w + UI_GAP, 330, button_w, 80},
-        .back = ui_bar_rect(0, 5),
-        .prev = ui_bar_rect(1, 5),
-        .next = ui_bar_rect(2, 5),
-        .bookmark = ui_bar_rect(3, 5),
-        .save = ui_bar_rect(4, 5),
+        .bookmark = ui_bar_rect(0, 2),
+        .save = ui_bar_rect(1, 2),
     };
 }
 
@@ -559,10 +553,9 @@ static void draw_keyboard(uint8_t *fb) {
     draw_button(fb, ui_row_rect(0, 2, 900, 72), "https://", false);
     draw_button(fb, ui_row_rect(1, 2, 900, 72), s_uppercase ? "abc" : "ABC", s_uppercase);
     ui_text(fb, UI_MARGIN, 990, UI_PX_CAPTION,
-            s_notice[0] ? s_notice : "需先连接已有 WiFi · 网页最多 512 KiB · KEY1 返回",
+            s_notice[0] ? s_notice : "需先连接已有 WiFi · 网页最多 512 KiB",
             EPD_DRAW_ALIGN_LEFT, false);
-    draw_button(fb, ui_bar_rect(0, 2), "取消", false);
-    draw_button(fb, ui_bar_rect(1, 2), "打开", false);
+    draw_button(fb, ui_bar_rect(0, 1), "打开", false);
 }
 
 static void draw_home(uint8_t *fb) {
@@ -607,9 +600,6 @@ static void draw_article(uint8_t *fb) {
     }
     ui_draw_header(fb, "网页阅读", page);
     book_layout_draw_page(fb, s_page, web_body_rect(), WEB_BODY_PX);
-    draw_button(fb, web_geom().back, "网址", false);
-    draw_button(fb, web_geom().prev, "上一页", false);
-    draw_button(fb, web_geom().next, "下一页", false);
     size_t index = 0;
     draw_button(fb, web_geom().bookmark, bookmark_index(s_url, &index) ? "取消收藏" : "收藏", false);
     draw_button(fb, web_geom().save, "存到书架", false);
@@ -617,7 +607,15 @@ static void draw_article(uint8_t *fb) {
 
 static void draw_bookmarks(uint8_t *fb) {
     ui_clear_page(fb);
-    ui_draw_header(fb, "收藏夹", "点按网址直接加载");
+    size_t pages = s_bookmark_count ? (s_bookmark_count + 5) / 6 : 1;
+    char sub[80];
+    if (pages > 1) {
+        snprintf(sub, sizeof(sub), "点按网址直接加载 · 第 %u/%u 页",
+                 (unsigned)s_bookmark_page + 1, (unsigned)pages);
+    } else {
+        snprintf(sub, sizeof(sub), "点按网址直接加载");
+    }
+    ui_draw_header(fb, "收藏夹", sub);
     if (!s_bookmark_count) {
         ui_text(fb, UI_MARGIN, UI_CONTENT_TOP + 48, UI_PX_BODY, "还没有收藏网页", EPD_DRAW_ALIGN_LEFT, false);
     }
@@ -629,9 +627,6 @@ static void draw_bookmarks(uint8_t *fb) {
         ui_text(fb, rect.x + UI_PAD, rect.y + 8, UI_PX_BTN, item->title, EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, rect.x + UI_PAD, rect.y + rect.height - 24, UI_PX_CAPTION, item->url, EPD_DRAW_ALIGN_LEFT, false);
     }
-    draw_button(fb, ui_bar_rect(0, 3), "返回", false);
-    draw_button(fb, ui_bar_rect(1, 3), "上一页", false);
-    draw_button(fb, ui_bar_rect(2, 3), "下一页", false);
 }
 
 static void render(app_ctx_t *ctx, uint8_t *fb) {
@@ -799,8 +794,7 @@ static bool keyboard_touch(uint16_t x, uint16_t y) {
     }
     if (ui_rect_hit(ui_row_rect(0, 2, 900, 72), x, y)) append_url("https://");
     else if (ui_rect_hit(ui_row_rect(1, 2, 900, 72), x, y)) s_uppercase = !s_uppercase;
-    else if (ui_rect_hit(ui_bar_rect(0, 2), x, y)) s_view = WEB_HOME;
-    else if (ui_rect_hit(ui_bar_rect(1, 2), x, y)) {
+    else if (ui_rect_hit(ui_bar_rect(0, 1), x, y)) {
         if (!s_net_ready) snprintf(s_notice, sizeof(s_notice), "WiFi 尚未连接");
         else if (!valid_web_url(s_draft)) snprintf(s_notice, sizeof(s_notice), "请输入有效的 HTTP 或 HTTPS 网址");
         else if (!start_fetch()) snprintf(s_notice, sizeof(s_notice), "无法开始加载网页");
@@ -838,9 +832,6 @@ static bool article_touch(uint16_t x, uint16_t y) {
         if (!save_article_to_shelf()) snprintf(s_notice, sizeof(s_notice), "保存失败：书架空间不足或文件无法创建");
         return true;
     }
-    if (ui_rect_hit(g.back, x, y)) { s_view = WEB_HOME; return true; }
-    if (ui_rect_hit(g.prev, x, y)) return article_turn(-1);
-    if (ui_rect_hit(g.next, x, y)) return article_turn(1);
     if (x < epd_rotated_display_width() / 3) return article_turn(-1);
     if (x > epd_rotated_display_width() * 2 / 3) return article_turn(1);
     return false;
@@ -854,19 +845,14 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
         if (s_view == WEB_EDIT_URL) changed = keyboard_touch(event->x, event->y);
         else if (s_view == WEB_READING) changed = article_touch(event->x, event->y);
         else if (s_view == WEB_BOOKMARKS) {
-            if (ui_rect_hit(ui_bar_rect(0, 3), event->x, event->y)) { s_view = WEB_HOME; changed = true; }
-            else if (ui_rect_hit(ui_bar_rect(1, 3), event->x, event->y) && s_bookmark_page) { --s_bookmark_page; changed = true; }
-            else if (ui_rect_hit(ui_bar_rect(2, 3), event->x, event->y) && (s_bookmark_page + 1) * 6 < s_bookmark_count) { ++s_bookmark_page; changed = true; }
-            else {
-                size_t first = s_bookmark_page * 6;
-                for (size_t row = 0; s_bookmarks && row < 6 && first + row < s_bookmark_count; ++row) {
-                    EpdRect rect = ui_grid_rect(0, 1, (int)row, UI_CONTENT_TOP, 104);
-                    if (!ui_rect_hit(rect, event->x, event->y)) continue;
-                    snprintf(s_draft, sizeof(s_draft), "%.*s",
-                             (int)(sizeof(s_draft) - 1), s_bookmarks[first + row].url);
-                    if (!start_fetch()) snprintf(s_notice, sizeof(s_notice), "无法开始加载网页");
-                    changed = true; break;
-                }
+            size_t first = s_bookmark_page * 6;
+            for (size_t row = 0; s_bookmarks && row < 6 && first + row < s_bookmark_count; ++row) {
+                EpdRect rect = ui_grid_rect(0, 1, (int)row, UI_CONTENT_TOP, 104);
+                if (!ui_rect_hit(rect, event->x, event->y)) continue;
+                snprintf(s_draft, sizeof(s_draft), "%.*s",
+                         (int)(sizeof(s_draft) - 1), s_bookmarks[first + row].url);
+                if (!start_fetch()) snprintf(s_notice, sizeof(s_notice), "无法开始加载网页");
+                changed = true; break;
             }
         }
         else changed = home_touch(event->x, event->y);
@@ -884,6 +870,15 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
     if (s_view == WEB_READING && event->type == UI_GESTURE_SWIPE_R) {
         return article_turn(-1) ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
     }
+    if (s_view == WEB_BOOKMARKS && event->type == UI_GESTURE_SWIPE_L &&
+        (s_bookmark_page + 1) * 6 < s_bookmark_count) {
+        ++s_bookmark_page;
+        return APP_REDRAW_PAGE;
+    }
+    if (s_view == WEB_BOOKMARKS && event->type == UI_GESTURE_SWIPE_R && s_bookmark_page > 0) {
+        --s_bookmark_page;
+        return APP_REDRAW_PAGE;
+    }
     return APP_REDRAW_NONE;
 }
 
@@ -891,7 +886,9 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     if (s_view == WEB_READING) {
         if (key == UI_KEY_1) {
             ctx->key_handled = true;
-            return article_turn(-1) ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
+            if (s_page > 0) return article_turn(-1) ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
+            s_view = WEB_HOME;
+            return APP_REDRAW_PAGE;
         }
         if (key == UI_KEY_3) {
             ctx->key_handled = true;
@@ -899,8 +896,22 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
         }
         return APP_REDRAW_NONE;
     }
+    if (s_view == WEB_BOOKMARKS) {
+        if (key == UI_KEY_1) {
+            ctx->key_handled = true;
+            if (s_bookmark_page > 0) { --s_bookmark_page; return APP_REDRAW_PAGE; }
+            s_view = WEB_HOME;
+            return APP_REDRAW_PAGE;
+        }
+        if (key == UI_KEY_3 && (s_bookmark_page + 1) * 6 < s_bookmark_count) {
+            ctx->key_handled = true;
+            ++s_bookmark_page;
+            return APP_REDRAW_PAGE;
+        }
+        return APP_REDRAW_NONE;
+    }
     if (key != UI_KEY_1) return APP_REDRAW_NONE;
-    if (s_view == WEB_EDIT_URL || s_view == WEB_BOOKMARKS) {
+    if (s_view == WEB_EDIT_URL) {
         s_view = WEB_HOME;
         return APP_REDRAW_PAGE;
     }
@@ -911,6 +922,40 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
         return APP_REDRAW_PAGE;
     }
     return APP_REDRAW_NONE;
+}
+
+static app_redraw_t on_key_long(app_ctx_t *ctx, int key) {
+    if (key != UI_KEY_1) return APP_REDRAW_NONE;
+    if (s_view == WEB_READING || s_view == WEB_BOOKMARKS || s_view == WEB_EDIT_URL) {
+        ctx->key_handled = true;
+        s_view = WEB_HOME;
+        return APP_REDRAW_PAGE;
+    }
+    if (s_view == WEB_LOADING) {
+        ctx->key_handled = true;
+        s_fetch_cancel = true;
+        s_view = WEB_HOME;
+        snprintf(s_notice, sizeof(s_notice), "已取消加载");
+        return APP_REDRAW_PAGE;
+    }
+    return APP_REDRAW_NONE;
+}
+
+static void key_hints(app_ctx_t *ctx, ui_key_hints_t *out) {
+    (void)ctx;
+    if (s_view == WEB_READING) {
+        out->left = s_page > 0 ? "上页 · 长按返回" : "返回";
+        out->right = (s_page + 1 < book_layout_page_count() || !book_layout_complete()) ? "下一页" : NULL;
+    } else if (s_view == WEB_BOOKMARKS) {
+        out->left = s_bookmark_page > 0 ? "上页 · 长按返回" : "返回";
+        out->right = (s_bookmark_page + 1) * 6 < s_bookmark_count ? "下一页" : NULL;
+    } else if (s_view == WEB_EDIT_URL || s_view == WEB_LOADING) {
+        out->left = "取消";
+        out->right = NULL;
+    } else {
+        out->left = "返回";
+        out->right = NULL;
+    }
 }
 
 static EpdRect area_hint(app_ctx_t *ctx) {
@@ -938,6 +983,8 @@ const app_desc_t app_web = {
     .on_media_lost = on_media_lost,
     .on_gesture = on_gesture,
     .on_key = on_key,
+    .on_key_long = on_key_long,
+    .key_hints = key_hints,
     .on_tick = on_tick,
     .area_hint = area_hint,
 };

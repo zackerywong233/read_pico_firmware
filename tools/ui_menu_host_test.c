@@ -48,6 +48,21 @@ int main(void) {
     ui_draw_key_hints(fb, &h);
     assert(clears == 1 && texts == 3);
 
+    // 底部按键说明带触控命中：三等分对应 KEY1/2/3，空位与隐藏态不命中。
+    // Bottom key-hint touch hit-test: 3 equal columns map to KEY1/2/3; blank cells and hidden strip miss.
+    h.hidden = false;
+    assert(ui_key_hint_hit_test(100, UI_KEY_HINT_RULE_Y - 1, &h) == -1);
+    assert(ui_key_hint_hit_test(100, UI_KEY_HINT_RULE_Y, &h) == UI_KEY_1);
+    assert(ui_key_hint_hit_test(342, UI_KEY_HINT_TOP + 20, &h) == UI_KEY_2);
+    assert(ui_key_hint_hit_test(600, UI_LOCK_HEIGHT - 1, &h) == UI_KEY_3);
+    assert(ui_key_hint_hit_test(600, UI_LOCK_HEIGHT, &h) == -1);
+    ui_key_hints_t h_empty = { .left = NULL, .center = "刷新", .right = "", .hidden = false };
+    assert(ui_key_hint_hit_test(100, UI_KEY_HINT_TOP + 20, &h_empty) == -1);
+    assert(ui_key_hint_hit_test(342, UI_KEY_HINT_TOP + 20, &h_empty) == UI_KEY_2);
+    assert(ui_key_hint_hit_test(600, UI_KEY_HINT_TOP + 20, &h_empty) == -1);
+    h.hidden = true;
+    assert(ui_key_hint_hit_test(100, UI_KEY_HINT_TOP + 20, &h) == -1);
+
     puts("ui_menu: physical key hit-test and key-hint strip passed");
     return 0;
 }

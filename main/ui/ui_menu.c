@@ -22,6 +22,20 @@ int ui_key_hit_test(uint16_t x, uint16_t y) {
     return index;
 }
 
+int ui_key_hint_hit_test(uint16_t x, uint16_t y, const ui_key_hints_t* hints) {
+    if (hints == NULL || hints->hidden) return -1;
+    if (y < UI_KEY_HINT_RULE_Y || y >= UI_LOCK_HEIGHT) return -1;
+    const int width = epd_rotated_display_width();
+    if (width <= 0 || (int)x >= width) return -1;
+    const int col_w = width / 3;
+    int col = ((int)x < col_w) ? UI_KEY_1 : ((int)x < col_w * 2) ? UI_KEY_2 : UI_KEY_3;
+    const char* label = (col == UI_KEY_1) ? hints->left
+        : (col == UI_KEY_2) ? (hints->center != NULL ? hints->center : "刷新 · 长按桌面")
+        : hints->right;
+    if (label == NULL || label[0] == '\0') return -1;
+    return col;
+}
+
 void ui_draw_key_hints(uint8_t* framebuffer, const ui_key_hints_t* hints) {
     if (framebuffer == NULL || hints == NULL || hints->hidden) return;
     const int width = epd_rotated_display_width();

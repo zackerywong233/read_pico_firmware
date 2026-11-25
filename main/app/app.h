@@ -15,13 +15,16 @@
  * 短按 KEY2 整屏 GC16 强刷；长按 KEY2（500ms）全局返回桌面第 1 页（桌面首页无动作）；
  * 短按 KEY1/KEY3 优先派发当前页 on_key，未消费时 KEY1 弹栈返回上一级，KEY3 无动作；
  * 长按 KEY1/KEY3（500ms）优先派发当前页 on_key_long，未消费时 KEY1 跨页直接返回上一级，KEY3 无动作；
- * 底部统一按键说明带（y=1170..1214）由主循环按 key_hints 渲染，纯全屏态可隐藏。
+ * 底部统一按键说明带（y=1170..1214）由主循环按 key_hints 渲染，纯全屏态可隐藏；
+ * 非隐藏态下点按/长按说明带非空格与屏下三键共用同一套短/长按路由，消除页面重复触控导航栏。
  * Frozen: Gesture callbacks replace legacy touch callbacks. Full-screen app list (ui_menu)
  * and the bottom-right menu handle are removed. Physical keys follow one OS-wide contract:
  * short KEY2 full GC16 refresh; 500ms hold KEY2 returns to Home page 1 (no-op on Home page 1);
  * short KEY1/KEY3 dispatch to on_key first, unhandled KEY1 pops nav stack back, KEY3 no-ops;
  * 500ms hold KEY1/KEY3 dispatch to on_key_long first, unhandled KEY1 returns directly to parent;
- * bottom key-hint strip (y=1170..1214) is drawn from key_hints unless hidden in fullscreen.
+ * bottom key-hint strip (y=1170..1214) is drawn from key_hints unless hidden in fullscreen;
+ * when visible, tapping or holding a non-empty hint cell routes through the same KEY1/2/3 path
+ * as the capacitive keys to eliminate duplicate in-page navigation buttons.
  * 冻结：主循环维护 8 层导航栈；普通切页入栈（回桌面清空栈），返回弹栈恢复上一页与页码。
  * Frozen: The loop keeps an 8-level nav stack; switching pushes (going Home clears), Return pops page and leaf.
  */

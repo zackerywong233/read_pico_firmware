@@ -21,14 +21,73 @@
 #include "read_pico_pmu.h"
 #include "settings.h"
 
+#define TIME_SYNC_RETRY_BACKOFF_US (30LL * 1000000LL)
+#define TIME_SYNC_RESYNC_INTERVAL_US (30LL * 60LL * 1000000LL)
+
 static const char *TAG = "time_sync";
 static portMUX_TYPE s_sync_mux = portMUX_INITIALIZER_UNLOCKED;
 static bool s_sntp_started;
+static bool s_sntp_pending_pmu_sync;
 static bool s_synced_this_boot;
+static int64_t s_last_sync_us;
 static int64_t s_retry_after_us;
 
 static bool valid_utc(time_t value) {
     return value >= (time_t)APP_TIME_MIN_VALID && value <= (time_t)APP_TIME_MAX_VALID;
+}
+
+static bool write_pmu_time(uint32_t unix_sec) {
+    if (!read_pico_pmu_ready()) return false;
+    esp_err_t err = read_pico_pmu_time_sync(unix_sec);
+    uint16_t status = read_pico_pmu_get()->last_op_status;
+    bool accepted = err == ESP_OK
+        && (status == PMU_STATUS_OK || status == PMU_STATUS_ACCEPTED);
+    if (!accepted) return false;
+    err = read_pico_pmu_cmd(PMU_CMD_TIME_GET, NULL, 0);
+    status = read_pico_pmu_get()->last_op_status;
+    return err == ESP_OK
+        && (status == PMU_STATUS_OK || status == PMU_STATUS_ACCEPTED)
+        && read_pico_pmu_get()->time_synced;
+}
+
+// SNTP 回调运行在 lwIP 任务中，不直接访问 I2C；仅标记待主循环回写 PMU。
+// Runs in the lwIP task without touching I2C; marks a pending flush for the main loop.
+static void sntp_sync_cb(struct timeval *tv) {
+    time_t synced_sec = (tv && valid_utc(tv->tv_sec)) ? tv->tv_sec : time(NULL);
+    if (!valid_utc(synced_sec)) return;
+    portENTER_CRITICAL(&s_sync_mux);
+    s_sntp_pending_pmu_sync = true;
+    s_retry_after_us = 0;
+    portEXIT_CRITICAL(&s_sync_mux);
+}
+
+static bool flush_pending_sntp_to_pmu(bool honor_backoff) {
+    int64_t now_us = esp_timer_get_time();
+    portENTER_CRITICAL(&s_sync_mux);
+    bool pending = s_sntp_pending_pmu_sync;
+    bool wait_retry = honor_backoff && now_us < s_retry_after_us;
+    portEXIT_CRITICAL(&s_sync_mux);
+    if (!pending || wait_retry) return false;
+
+    time_t now = time(NULL);
+    if (!valid_utc(now)) return false;
+
+    if (write_pmu_time((uint32_t)now)) {
+        portENTER_CRITICAL(&s_sync_mux);
+        s_sntp_pending_pmu_sync = false;
+        s_synced_this_boot = true;
+        s_last_sync_us = now_us;
+        s_retry_after_us = 0;
+        portEXIT_CRITICAL(&s_sync_mux);
+        ESP_LOGI(TAG, "PMU clock synchronized from SNTP");
+        return true;
+    }
+
+    portENTER_CRITICAL(&s_sync_mux);
+    s_retry_after_us = now_us + TIME_SYNC_RETRY_BACKOFF_US;
+    portEXIT_CRITICAL(&s_sync_mux);
+    ESP_LOGW(TAG, "PMU clock sync failed");
+    return false;
 }
 
 int app_time_days_in_month(int year, int month) {
@@ -63,14 +122,20 @@ bool app_time_make_utc(int year, int month, int day, int hour, int minute, int t
 }
 
 void app_time_sync_from_pmu(void) {
+    // 若 SNTP 已完成但尚未落盘到 PMU，优先回写 PMU，避免旧 PMU 时间反向覆盖主机。
+    // Flush any pending SNTP update to PMU first so stale PMU time never overwrites the host.
+    if (flush_pending_sntp_to_pmu(false)) return;
+
+    time_t sys_now = time(NULL);
+    if (valid_utc(sys_now)) {
+        // 主机 40 MHz 晶振精度远高于 CW32 片内 LSI（±1–2%）；主机时钟已有效时不再反向拉偏。
+        // ESP32's 40 MHz crystal is far more accurate than CW32's ±1-2% LSI; keep valid host time.
+        return;
+    }
     const pmu_snapshot_t *pmu = read_pico_pmu_get();
     if (!pmu || !pmu->time_ok || !valid_utc((time_t)pmu->unix_sec)) return;
-    time_t sys_now = time(NULL);
-    int64_t diff = (int64_t)pmu->unix_sec - (int64_t)sys_now;
-    if (!valid_utc(sys_now) || diff > 2 || diff < -2) {
-        struct timeval tv = { .tv_sec = (time_t)pmu->unix_sec, .tv_usec = 0 };
-        settimeofday(&tv, NULL);
-    }
+    struct timeval tv = { .tv_sec = (time_t)pmu->unix_sec, .tv_usec = 0 };
+    settimeofday(&tv, NULL);
 }
 
 void app_time_refresh_from_pmu(void) {
@@ -112,31 +177,49 @@ bool app_time_set_utc(uint32_t unix_sec, bool *pmu_synced) {
     struct timeval tv = { .tv_sec = (time_t)unix_sec, .tv_usec = 0 };
     settimeofday(&tv, NULL);
 
-    bool synced = false;
-    if (read_pico_pmu_ready()) {
-        esp_err_t err = read_pico_pmu_time_sync(unix_sec);
-        uint16_t status = read_pico_pmu_get()->last_op_status;
-        bool accepted = err == ESP_OK
-            && (status == PMU_STATUS_OK || status == PMU_STATUS_ACCEPTED);
-        if (accepted) {
-            err = read_pico_pmu_cmd(PMU_CMD_TIME_GET, NULL, 0);
-            status = read_pico_pmu_get()->last_op_status;
-            synced = err == ESP_OK
-                && (status == PMU_STATUS_OK || status == PMU_STATUS_ACCEPTED)
-                && read_pico_pmu_get()->time_synced;
-        }
-    }
+    // 显式设时覆盖任何挂起的旧 SNTP 回写请求。/ Explicit time set supersedes any stale pending SNTP flush.
+    portENTER_CRITICAL(&s_sync_mux);
+    s_sntp_pending_pmu_sync = false;
+    s_retry_after_us = 0;
+    portEXIT_CRITICAL(&s_sync_mux);
+
+    bool synced = write_pmu_time(unix_sec);
     if (pmu_synced) *pmu_synced = synced;
     return true;
 }
 
-void app_time_sync_sta_ip(void) {
+bool app_time_flush_to_pmu(void) {
+    time_t now = time(NULL);
+    if (!valid_utc(now)) return false;
+    if (!write_pmu_time((uint32_t)now)) return false;
+    int64_t now_us = esp_timer_get_time();
     portENTER_CRITICAL(&s_sync_mux);
-    bool skip = s_sntp_started || s_synced_this_boot;
+    if (s_sntp_pending_pmu_sync) {
+        s_sntp_pending_pmu_sync = false;
+        s_synced_this_boot = true;
+        s_last_sync_us = now_us;
+        s_retry_after_us = 0;
+    }
+    portEXIT_CRITICAL(&s_sync_mux);
+    return true;
+}
+
+void app_time_sync_sta_ip(void) {
+    int64_t now_us = esp_timer_get_time();
+    portENTER_CRITICAL(&s_sync_mux);
+    bool recent = s_synced_this_boot && (now_us - s_last_sync_us < TIME_SYNC_RESYNC_INTERVAL_US);
+    bool skip = s_sntp_started || recent;
     if (!skip) s_sntp_started = true;
     portEXIT_CRITICAL(&s_sync_mux);
     if (skip) return;
+
+#if defined(CONFIG_LWIP_SNTP_MAX_SERVERS) && (CONFIG_LWIP_SNTP_MAX_SERVERS >= 3)
+    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(
+        3, ESP_SNTP_SERVER_LIST("ntp.aliyun.com", "ntp.tencent.com", "pool.ntp.org"));
+#else
     esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+#endif
+    config.sync_cb = sntp_sync_cb;
     esp_err_t err = esp_netif_sntp_init(&config);
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "SNTP started after STA acquired IP");
@@ -149,31 +232,7 @@ void app_time_sync_sta_ip(void) {
 }
 
 void app_time_sync_poll(void) {
-    portENTER_CRITICAL(&s_sync_mux);
-    bool active = s_sntp_started && !s_synced_this_boot;
-    portEXIT_CRITICAL(&s_sync_mux);
-    if (!active) return;
-    int64_t now_us = esp_timer_get_time();
-    if (now_us < s_retry_after_us) return;
-
-    time_t now = time(NULL);
-    if (now < 1704067200 || now > (time_t)APP_TIME_MAX_VALID) return;
-    uint32_t unix_sec = (uint32_t)now;
-    esp_err_t err = read_pico_pmu_time_sync(unix_sec);
-    uint16_t status = read_pico_pmu_get()->last_op_status;
-    bool accepted = err == ESP_OK && (status == PMU_STATUS_OK || status == PMU_STATUS_ACCEPTED);
-    if (accepted) err = read_pico_pmu_cmd(PMU_CMD_TIME_GET, NULL, 0);
-    status = read_pico_pmu_get()->last_op_status;
-    if (err == ESP_OK && (status == PMU_STATUS_OK || status == PMU_STATUS_ACCEPTED)
-        && read_pico_pmu_get()->time_synced) {
-        portENTER_CRITICAL(&s_sync_mux);
-        s_synced_this_boot = true;
-        portEXIT_CRITICAL(&s_sync_mux);
-        ESP_LOGI(TAG, "PMU clock synchronized from SNTP");
-    } else {
-        s_retry_after_us = now_us + 30000000;
-        ESP_LOGW(TAG, "PMU clock sync failed: %s", esp_err_to_name(err));
-    }
+    (void)flush_pending_sntp_to_pmu(true);
 }
 
 void app_time_sync_stop(void) {
@@ -184,4 +243,7 @@ void app_time_sync_stop(void) {
     if (was_started) {
         esp_netif_sntp_deinit();
     }
+    // 退网前若有已收到的 SNTP 校时结果，立即回写 PMU。
+    // Flush any received SNTP calibration to PMU immediately before leaving the network page.
+    (void)flush_pending_sntp_to_pmu(false);
 }

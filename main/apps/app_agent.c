@@ -484,7 +484,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     if (!ttf_font_ready()) { ui_draw_no_font_page(fb, false, false); return; }
     if (s_history_list) {
         ui_clear_page(fb);
-        ui_draw_header(fb, "Agent 历史收件", "点选消息查看详情，KEY1 或点底部返回");
+        ui_draw_header(fb, "Agent 历史收件", "点选消息查看详情");
         uint8_t oldest = (uint8_t)((s_history_next + AGENT_HISTORY_COUNT - s_history_size) % AGENT_HISTORY_COUNT);
         int y = UI_CONTENT_TOP + 12;
         for (int i = 0; i < s_history_size; ++i) {
@@ -496,9 +496,8 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             EpdRect row = {UI_MARGIN, y, ui_content_width(), 38};
             ui_draw_button(fb, row, label, index == s_history_selected);
             y += 41;
-            if (y > UI_CONTENT_BOTTOM - 40) break;
+            if (y > UI_NO_BAR_BOTTOM - 40) break;
         }
-        ui_draw_button(fb, ui_bar_rect(0, 1), "返回消息", false);
         return;
     }
     if (s_history_selected >= 0 && s_history[s_history_selected].body_or_path) {
@@ -764,7 +763,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
     (void)ctx;
     if (s_history_list) {
         if (event->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
-        if (event->y < UI_CONTENT_TOP || ui_rect_hit(ui_bar_rect(0, 1), event->x, event->y)) {
+        if (event->y < UI_CONTENT_TOP) {
             s_history_list = false;
             return APP_REDRAW_PAGE;
         }
@@ -815,8 +814,16 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     if (agent_viewing_text()) {
         if (key == UI_KEY_1) {
-            ctx->key_handled = true;
-            if (s_page) { --s_page; return APP_REDRAW_PAGE; }
+            if (s_page > 0) {
+                ctx->key_handled = true;
+                --s_page;
+                return APP_REDRAW_PAGE;
+            }
+            if (s_history_selected >= 0 && s_history_size) {
+                ctx->key_handled = true;
+                s_history_list = true;
+                return APP_REDRAW_PAGE;
+            }
             return APP_REDRAW_NONE;
         }
         if (key == UI_KEY_3) {
@@ -838,6 +845,32 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     return APP_REDRAW_NONE;
 }
 
+static app_redraw_t on_key_long(app_ctx_t *ctx, int key) {
+    if (key != UI_KEY_1) return APP_REDRAW_NONE;
+    if (s_history_list) {
+        ctx->key_handled = true;
+        s_history_list = false;
+        return APP_REDRAW_PAGE;
+    }
+    if (s_history_selected >= 0 && s_history_size) {
+        ctx->key_handled = true;
+        s_history_list = true;
+        return APP_REDRAW_PAGE;
+    }
+    return APP_REDRAW_NONE;
+}
+
+static void key_hints(app_ctx_t *ctx, ui_key_hints_t *out) {
+    (void)ctx;
+    if (agent_viewing_text()) {
+        out->left = s_page > 0 ? "上页 · 长按返回" : "返回";
+        out->right = (s_page + 1 < book_layout_page_count()) ? "下一页" : NULL;
+    } else {
+        out->left = "返回";
+        out->right = NULL;
+    }
+}
+
 const app_desc_t app_agent = {
     .title = "Agent 收件",
     .detail = "MQTT/TLS 文字与图片屏保",
@@ -850,4 +883,6 @@ const app_desc_t app_agent = {
     .on_tick = on_tick,
     .on_gesture = on_gesture,
     .on_key = on_key,
+    .on_key_long = on_key_long,
+    .key_hints = key_hints,
 };

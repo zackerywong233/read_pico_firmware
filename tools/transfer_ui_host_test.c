@@ -118,10 +118,17 @@ int main(void) {
     test_configured = true;
     enter_networks();
     network_ui_tick(&ctx);
-    tap(&ctx, network_control_rect(9));
-    assert(s_network_page == 1);
-    tap(&ctx, network_control_rect(7));
-    assert(s_network_page == 0);
+    ui_key_hints_t hints = {0};
+    transfer_key_hints(&ctx, &hints);
+    assert(strcmp(hints.left, "返回") == 0 && strcmp(hints.right, "下一页") == 0);
+    assert(on_key(&ctx, UI_KEY_3) == APP_REDRAW_PAGE && s_network_page == 1);
+    transfer_key_hints(&ctx, &hints);
+    assert(strcmp(hints.left, "上页 · 长按返回") == 0 && hints.right == NULL);
+    assert(on_key(&ctx, UI_KEY_1) == APP_REDRAW_PAGE && s_network_page == 0);
+    ui_gesture_event_t swipe = {.type = UI_GESTURE_SWIPE_L, .x0 = 500, .y0 = 600, .x = 200, .y = 600};
+    assert(on_gesture(&ctx, &swipe) == APP_REDRAW_PAGE && s_network_page == 1);
+    swipe.type = UI_GESTURE_SWIPE_R;
+    assert(on_gesture(&ctx, &swipe) == APP_REDRAW_PAGE && s_network_page == 0);
     tap(&ctx, network_control_rect(0));
     assert(s_view == TRANSFER_PASSWORD && !s_password[0]);
     tap(&ctx, password_control_rect(46));
@@ -158,7 +165,9 @@ int main(void) {
     network_ui_tick(&ctx);
     tap(&ctx, network_control_rect(0));
     tap(&ctx, password_control_rect(0));
-    tap(&ctx, password_control_rect(44));
+    transfer_key_hints(&ctx, &hints);
+    assert(strcmp(hints.left, "取消") == 0 && hints.right == NULL);
+    assert(on_key(&ctx, UI_KEY_1) == APP_REDRAW_PAGE);
     assert(s_view == TRANSFER_NETWORKS && !s_password[0]);
     test_scan_count = 0;
     tap(&ctx, network_control_rect(8));
@@ -187,8 +196,10 @@ int main(void) {
     }
     tap(&ctx, network_control_rect(6));
     assert(s_view == TRANSFER_HOME && s_start_pending && s_mode == READ_PICO_TRANSFER_MODE_STA);
+    transfer_key_hints(&ctx, &hints);
+    assert(strcmp(hints.left, "停止并返回") == 0 && hints.right == NULL);
     int stops_before = test_stop_count;
-    tap(&ctx, control_rect(2));
+    assert(on_key(&ctx, UI_KEY_1) == APP_REDRAW_NONE);
     assert(test_stop_count == stops_before + 1 && !s_start_pending);
     assert(ctx.request_return && ctx.request_app == NULL);
     on_enter(&ctx);

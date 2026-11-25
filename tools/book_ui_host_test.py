@@ -71,8 +71,7 @@ static bool s_batch_confirm,s_batch_delete;
 static bool read_pico_search_match(const char* name,const char* query){return !*query||strstr(name,query)!=NULL;}
 static int book_chapter_count(void){return 1;}
 #define BOOK_TOC_ROWS 10
-static int s_filter;
-static bool s_recent_sort;
+static int s_filter,s_status_filter,s_format_filter,s_sort_mode;
 static shelf_entry_t* s_shelf;
 static size_t s_shelf_capacity;
 static int s_count,s_visible_count;
@@ -152,8 +151,8 @@ static void invalidate_prep(void){}
 static shelf_entry_t s_managed;
 static bool s_delete_confirm,s_file_removed,s_clear_confirm;
 static char s_manage_message[128];
-typedef enum {SHELF,READING,TOC,MANAGE,BULK,SEARCH,BOOKMARKS,EXCERPTS,TYPOGRAPHY,CHAPTER_RESULTS} book_view_t;
-static book_view_t s_view,s_search_parent;
+typedef enum {SHELF,READING,TOC,MANAGE,BULK,SEARCH,BOOKMARKS,EXCERPTS,TYPOGRAPHY,CHAPTER_RESULTS,FILTER} book_view_t;
+static book_view_t s_view,s_search_parent,s_filter_parent;
 #define UI_KEY_1 1
 #define UI_KEY_2 2
 #define UI_KEY_3 3
@@ -224,7 +223,7 @@ static int ui_content_width(void){return 604;}
 static int ttf_text_width_px(int px,const char* text){int width=0;for(;*text;text++)if(((unsigned char)*text&0xc0)!=0x80)width+=px;return width;}
 static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bool inv){(void)fb;(void)x;(void)y;(void)px;(void)align;(void)inv;assert(strlen(test_wrapped)+strlen(text)<sizeof(test_wrapped));strcat(test_wrapped,text);}
 '''
-for name in ("copy_text", "shelf_matches", "compare_books", "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "resolve_recent_index", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf",
+for name in ("copy_text", "shelf_entry_format_matches", "shelf_matches", "compare_books", "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "resolve_recent_index", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf",
              "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "shelf_is_grid", "shelf_per_page", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "resume_choice", "free_image", "close_image", "open_image", "draw_book_cover_box", "gesture_event", "on_key", "draw_wrapped_name", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
 unit += r'''
@@ -277,10 +276,10 @@ int main(void) {
     shelf_entry_t a={.search_match=true,.name="Same.txt",.path="/sdcard/books/A/Same.txt"};
     shelf_entry_t b={.search_match=true,.name="Same.txt",.path="/sdcard/books/B/Same.txt"};
     assert(compare_books(&a,&b)<0);
-    b.recent=10;s_recent_sort=true;assert(compare_books(&a,&b)>0);
+    b.recent=10;s_sort_mode=1;assert(compare_books(&a,&b)>0);
     b.is_flash=true;s_filter=1;assert(compare_books(&a,&b)<0);
     s_filter=2;assert(compare_books(&a,&b)>0);
-    s_filter=0;s_recent_sort=false;
+    s_filter=0;s_sort_mode=0;
     snprintf(test_roots[0].path,sizeof(test_roots[0].path),"/tmp/book-ui-%d",(int)getpid());
     assert(mkdir(test_roots[0].path,0700)==0);
     for(int i=0;i<65;i++){char path[340];snprintf(path,sizeof(path),"%s/book%03d.txt",test_roots[0].path,i);FILE* f=fopen(path,"w");assert(f);fputs("x",f);fclose(f);}
@@ -320,7 +319,7 @@ int main(void) {
     for(int i=0;i<80;i++){memcpy(long_name+i*3,"书",3);}long_name[240]=0;test_wrapped[0]=0;
     assert(draw_wrapped_name(NULL,long_name,176)+104<870);assert(!strcmp(test_wrapped,long_name));
     scan_shelf(&ctx);s_view=BULK;toggle_selection(0);toggle_selection(14);assert(selected_count()==2);
-    s_recent_sort=true;sort_shelf(&ctx);assert(selected_count()==2);select_page(1);assert(selected_count()==9);
+    s_sort_mode=1;sort_shelf(&ctx);assert(selected_count()==2);select_page(1);assert(selected_count()==9);
     ctx.leaf=2;strcpy(s_query,"book");search_begin();strcpy(s_search_draft,"bad");search_finish(&ctx,false);
     assert(ctx.leaf==2&&!strcmp(s_query,"book")&&selected_count()==9);
     search_begin();assert(on_key(&ctx,UI_KEY_3)==APP_REDRAW_NONE&&ctx.leaf==2);assert(on_key(&ctx,UI_KEY_1)==APP_REDRAW_PAGE&&ctx.leaf==2&&s_view==BULK);
@@ -396,7 +395,7 @@ int main(void) {
     test_prog_set(book_b, 1, 100, 7);
     strcpy(test_last_path, book_b);
     s_recent_index = 25;
-    s_recent_sort = false;
+    s_sort_mode = 0;
     s_filter = 0;
     s_query[0] = 0;
     scan_shelf(&ctx);
@@ -511,6 +510,8 @@ with tempfile.TemporaryDirectory() as tmp:
 #define UI_CONTENT_BOTTOM 1056
 #define UI_BAR_TOP 1072
 #define UI_BAR_H 84
+#define UI_KEY_HINT_RULE_Y 1168
+#define UI_NO_BAR_BOTTOM (UI_KEY_HINT_RULE_Y - UI_GAP)
 #define BOOK_ROWS 7
 #define BOOK_GRID_ROWS 6
 #define BOOK_TOC_ROWS 10
@@ -524,7 +525,7 @@ with tempfile.TemporaryDirectory() as tmp:
 typedef struct { int x, y, width, height; } EpdRect;
 typedef struct { int leaf; bool request_menu; bool key_handled; int64_t now_ms; } app_ctx_t;
 typedef enum { APP_REDRAW_PAGE, APP_REDRAW_AREA, APP_REDRAW_NONE, APP_REDRAW_FULL } app_redraw_t;
-typedef enum { SHELF, READING, TOC, MANAGE, BULK, SEARCH, BOOKMARKS, EXCERPTS, TYPOGRAPHY, CHAPTER_RESULTS } book_view_t;
+typedef enum { SHELF, READING, TOC, MANAGE, BULK, SEARCH, BOOKMARKS, EXCERPTS, TYPOGRAPHY, CHAPTER_RESULTS, FILTER } book_view_t;
 typedef enum { UI_GESTURE_PRESS, UI_GESTURE_TAP, UI_GESTURE_LONG_PRESS, UI_GESTURE_SWIPE_L, UI_GESTURE_SWIPE_R, UI_GESTURE_SWIPE_U, UI_GESTURE_SWIPE_D, UI_GESTURE_CANCEL } ui_gesture_type_t;
 typedef struct { ui_gesture_type_t type; uint16_t x0, y0, x, y; } ui_gesture_event_t;
 typedef struct { char name[256], path[BOOK_STORE_PATH_MAX]; uint32_t size; bool is_flash, has_progress; uint8_t pct; uint32_t recent; bool selected, removed, search_match; } shelf_entry_t;
@@ -539,13 +540,6 @@ static EpdRect ui_bar_rect(int col, int cols) {
     int w = (ui_content_width() - (cols - 1) * UI_GAP) / cols;
     return (EpdRect){ UI_MARGIN + col * (w + UI_GAP), UI_BAR_TOP, w, UI_BAR_H };
 }
-static int ui_bar_hit(uint16_t x, uint16_t y, int cols) {
-    for (int i = 0; i < cols; ++i) {
-        EpdRect r = ui_bar_rect(i, cols);
-        if ((int)x >= r.x && (int)x < r.x + r.width && (int)y >= r.y && (int)y < r.y + r.height) return i;
-    }
-    return -1;
-}
 static bool ui_rect_hit(EpdRect r, uint16_t x, uint16_t y) {
     return (int)x >= r.x && (int)x < r.x + r.width && (int)y >= r.y && (int)y < r.y + r.height;
 }
@@ -554,6 +548,7 @@ static shelf_entry_t s_entries[16];
 static shelf_entry_t* s_shelf = s_entries;
 static shelf_entry_t s_managed;
 static int s_count, s_visible_count, s_recent_index = -1, s_pressed_control = -1;
+static int s_filter, s_status_filter, s_format_filter, s_sort_mode;
 static char s_message[128], s_shelf_warning[128], s_query[65], s_resume_path[BOOK_STORE_PATH_MAX], s_manage_message[128];
 static bool s_batch_confirm, s_note_delete_confirm, s_clear_confirm, s_delete_confirm, s_file_removed, s_toolbar, s_save_failed;
 static bool s_image_open, s_scan_pending, s_selecting;
@@ -586,19 +581,20 @@ static void invalidate_prep(void) {}
 static app_redraw_t paint_reading(app_ctx_t* ctx, int m) { (void)ctx; (void)m; return APP_REDRAW_AREA; }
 static app_redraw_t turn_page(app_ctx_t* ctx, int d) { (void)ctx; (void)d; return APP_REDRAW_PAGE; }
 static app_redraw_t paint_control(app_ctx_t* ctx, EpdRect rect) { (void)ctx; (void)rect; ++test_paint_calls; return APP_REDRAW_AREA; }
-static app_redraw_t shelf_nav_action(app_ctx_t* ctx, int nav);
+typedef struct { const char* left; const char* center; const char* right; bool hidden; } ui_key_hints_t;
 static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
+    (void)ctx; (void)x; (void)y;
     ++test_action_calls;
-    int nav = ui_bar_hit(x, y, 3);
-    if (nav == 0 || nav == 2) return shelf_nav_action(ctx, nav);
     return APP_REDRAW_NONE;
 }
 static void copy_text(char* dst, size_t cap, const char* src) { snprintf(dst, cap, "%s", src); }
 ''' + shelf_defines + "\n"
-    for name in ("row_rect", "typo_rect", "shelf_has_notice", "shelf_is_grid", "shelf_has_recent_card",
+    for name in ("shelf_filter_is_default", "shelf_filter_active_count", "shelf_filter_button_label",
+                 "shelf_sort_button_label", "shelf_entry_format_matches", "shelf_matches", "compare_books",
+                 "row_rect", "typo_rect", "filter_rect", "shelf_has_notice", "shelf_is_grid", "shelf_has_recent_card",
                  "recent_card_rect", "shelf_grid_rect", "shelf_list_rect", "shelf_per_page",
-                 "leaves", "can_prev_leaf", "can_next_leaf", "shelf_nav_action",
-                 "control_at", "gesture_event"):
+                 "leaves", "can_prev_leaf", "can_next_leaf",
+                 "control_at", "gesture_event", "book_key_hints"):
         shelf_unit += function(name) + "\n"
     shelf_unit += r'''
 int main(void) {
@@ -607,7 +603,7 @@ int main(void) {
     s_count = s_visible_count = 3;
     test_shelf_view = 0; // 网格模式 / Grid mode
     int notice_bottom = SHELF_NOTICE_Y + UI_PX_CAPTION;
-    int footer_top = UI_CONTENT_BOTTOM - UI_PX_CAPTION;
+    int footer_top = UI_NO_BAR_BOTTOM - UI_PX_CAPTION;
 
     // 1. 无警告时保持原排版位置。/ Preserve normal layout coordinates without warnings.
     s_shelf_warning[0] = 0;
@@ -647,56 +643,111 @@ int main(void) {
     assert(ln0.y >= notice_bottom + 12);
     test_shelf_view = 0;
 
-    // 3. 单页书架：上一页与下一页均禁用，按下和点按都不触发重刷。
-    // Single-page shelf: both prev and next are disabled; press and tap trigger zero redraws.
+    // 3. 书架底部触控翻页栏已合并进说明带：底栏区无控件，管理移至顶栏第 5 键。
+    // Shelf bottom paging bar merged into key-hint strip: no bar hit, Manage is top-bar col 4.
     assert(leaves() == 1 && !can_prev_leaf(&ctx) && !can_next_leaf(&ctx));
-    EpdRect prev_btn = ui_bar_rect(0, 3);
-    EpdRect mid_btn = ui_bar_rect(1, 3);
-    EpdRect next_btn = ui_bar_rect(2, 3);
+    EpdRect old_prev = ui_bar_rect(0, 3);
+    EpdRect old_next = ui_bar_rect(2, 3);
+    EpdRect manage_btn = ui_row_rect(4, 5, 176, 68);
     EpdRect hit_r = {0};
-    assert(control_at(&ctx, (uint16_t)(prev_btn.x + 10), (uint16_t)(prev_btn.y + 10), &hit_r) == -1);
-    assert(control_at(&ctx, (uint16_t)(next_btn.x + 10), (uint16_t)(next_btn.y + 10), &hit_r) == -1);
-    assert(control_at(&ctx, (uint16_t)(mid_btn.x + 10), (uint16_t)(mid_btn.y + 10), &hit_r) == 101);
-    ui_gesture_event_t ev = { .type = UI_GESTURE_PRESS, .x0 = (uint16_t)(next_btn.x + 10), .y0 = (uint16_t)(next_btn.y + 10),
-                              .x = (uint16_t)(next_btn.x + 10), .y = (uint16_t)(next_btn.y + 10) };
-    assert(gesture_event(&ctx, &ev) == APP_REDRAW_NONE);
-    ev.type = UI_GESTURE_TAP;
-    assert(gesture_event(&ctx, &ev) == APP_REDRAW_NONE);
-    assert(test_paint_calls == 0 && test_action_calls == 0 && ctx.leaf == 0);
-    assert(shelf_nav_action(&ctx, 0) == APP_REDRAW_NONE && ctx.leaf == 0);
-    assert(shelf_nav_action(&ctx, 2) == APP_REDRAW_NONE && ctx.leaf == 0);
+    assert(control_at(&ctx, (uint16_t)(old_prev.x + 10), (uint16_t)(old_prev.y + 10), &hit_r) == -1);
+    assert(control_at(&ctx, (uint16_t)(old_next.x + 10), (uint16_t)(old_next.y + 10), &hit_r) == -1);
+    assert(control_at(&ctx, (uint16_t)(manage_btn.x + 10), (uint16_t)(manage_btn.y + 10), &hit_r) == 101);
+    ui_key_hints_t hints = {0};
+    book_key_hints(&ctx, &hints);
+    assert(!hints.hidden && strcmp(hints.left, "返回") == 0 && hints.right == NULL);
 
-    // 4. 多页书架：首页仅下一页可用，末页仅上一页可用。
-    // Multi-page shelf: first page enables only next; last page enables only prev.
+    // 4. 多页书架：说明带首页显示“返回 / 下一页”，末页显示“上页 · 长按返回 / NULL”，且支持左右滑翻页。
+    // Multi-page shelf: key hints reflect first/last page and left/right swipe turns pages.
     s_count = s_visible_count = 8;
     assert(leaves() == 2 && !can_prev_leaf(&ctx) && can_next_leaf(&ctx));
-    assert(control_at(&ctx, (uint16_t)(prev_btn.x + 10), (uint16_t)(prev_btn.y + 10), &hit_r) == -1);
-    assert(control_at(&ctx, (uint16_t)(next_btn.x + 10), (uint16_t)(next_btn.y + 10), &hit_r) == 102);
-    ev.type = UI_GESTURE_PRESS;
-    assert(gesture_event(&ctx, &ev) == APP_REDRAW_AREA && test_paint_calls == 1);
-    ev.type = UI_GESTURE_TAP;
+    book_key_hints(&ctx, &hints);
+    assert(strcmp(hints.left, "返回") == 0 && strcmp(hints.right, "下一页") == 0);
+    ui_gesture_event_t ev = { .type = UI_GESTURE_SWIPE_L, .x0 = 500, .y0 = 600, .x = 200, .y = 600 };
     assert(gesture_event(&ctx, &ev) == APP_REDRAW_PAGE && ctx.leaf == 1);
     assert(can_prev_leaf(&ctx) && !can_next_leaf(&ctx));
-    // 末页再点下一页不触发重刷。/ Clicking next on the last page triggers no redraw.
-    test_paint_calls = 0; test_action_calls = 0;
-    ev.type = UI_GESTURE_PRESS;
-    assert(gesture_event(&ctx, &ev) == APP_REDRAW_NONE);
-    ev.type = UI_GESTURE_TAP;
-    assert(gesture_event(&ctx, &ev) == APP_REDRAW_NONE);
-    assert(test_paint_calls == 0 && test_action_calls == 0 && ctx.leaf == 1);
-    // 末页点上一页回到首页。/ Clicking prev on the last page returns to page 0.
-    ev.x0 = ev.x = (uint16_t)(prev_btn.x + 10);
-    ev.y0 = ev.y = (uint16_t)(prev_btn.y + 10);
-    ev.type = UI_GESTURE_TAP;
+    book_key_hints(&ctx, &hints);
+    assert(strcmp(hints.left, "上页 · 长按返回") == 0 && hints.right == NULL);
+    ev.type = UI_GESTURE_SWIPE_R;
     assert(gesture_event(&ctx, &ev) == APP_REDRAW_PAGE && ctx.leaf == 0);
 
-    // 5. 排版与显示页共 7 项（已移除翻页动效），字重占满底行。
-    // Typography page has 7 controls (turn animation removed), with weight spanning full width.
+    // 5. 排版与显示页共 7 项（已移除翻页动效与重复返回底栏），字重占满底行。
+    // Typography page has 7 controls (turn animation and redundant return bar removed), with weight spanning full width.
     s_view = TYPOGRAPHY;
     assert(BOOK_TYPO_COUNT == 7);
     EpdRect wrect = typo_rect(6);
     assert(wrect.width == ui_content_width());
     assert(control_at(&ctx, (uint16_t)(wrect.x + 20), (uint16_t)(wrect.y + 20), &hit_r) == 906);
+    EpdRect old_back = ui_bar_rect(0, 1);
+    assert(control_at(&ctx, (uint16_t)(old_back.x + 20), (uint16_t)(old_back.y + 20), &hit_r) == -1);
+
+    // 6. 多条件书架筛选（阅读状态 + 图书格式 + 存储位置）与排序（名称/最近/进度/大小）验证。
+    // Multi-condition shelf filters (status + format + storage) and sort modes (name/recent/progress/size).
+    s_view = SHELF;
+    s_count = 4;
+    s_entries[0] = (shelf_entry_t){ .name = "Alpha.epub", .path = "/sdcard/books/Alpha.epub", .size = 1000, .is_flash = false, .has_progress = false, .pct = 0, .recent = 0, .search_match = true };
+    s_entries[1] = (shelf_entry_t){ .name = "Beta.txt", .path = "/flash/books/Beta.txt", .size = 5000, .is_flash = true, .has_progress = true, .pct = 45, .recent = 20, .search_match = true };
+    s_entries[2] = (shelf_entry_t){ .name = "Gamma.cbz", .path = "/sdcard/books/Gamma.cbz", .size = 9000, .is_flash = false, .has_progress = true, .pct = 100, .recent = 10, .search_match = true };
+    s_entries[3] = (shelf_entry_t){ .name = "Delta.md", .path = "/sdcard/books/Delta.md", .size = 3000, .is_flash = false, .has_progress = false, .pct = 0, .recent = 0, .search_match = true };
+    s_filter = s_status_filter = s_format_filter = s_sort_mode = 0;
+    char flbl[24];
+    shelf_filter_button_label(flbl, sizeof(flbl));
+    assert(shelf_filter_is_default() && strcmp(flbl, "筛选") == 0);
+
+    // 仅未读：Alpha.epub + Delta.md；且筛选激活时隐藏最近阅读卡片。
+    // Unread only: Alpha.epub + Delta.md; active filter hides recent card.
+    s_status_filter = 1;
+    shelf_filter_button_label(flbl, sizeof(flbl));
+    assert(!shelf_filter_is_default() && strcmp(flbl, "未读") == 0);
+    s_recent_index = 1;
+    assert(!shelf_has_recent_card(&ctx));
+    assert(shelf_matches(&s_entries[0]) && !shelf_matches(&s_entries[1]) && !shelf_matches(&s_entries[2]) && shelf_matches(&s_entries[3]));
+
+    // 在读 vs 已读完。/ Reading vs finished.
+    s_status_filter = 2;
+    assert(!shelf_matches(&s_entries[0]) && shelf_matches(&s_entries[1]) && !shelf_matches(&s_entries[2]));
+    s_status_filter = 3;
+    assert(!shelf_matches(&s_entries[0]) && !shelf_matches(&s_entries[1]) && shelf_matches(&s_entries[2]));
+
+    // 组合筛选：未读 + EPUB -> 仅 Alpha.epub，标签显示“筛选2”。
+    // Combined filter: Unread + EPUB -> Alpha.epub only, label shows "筛选2".
+    s_status_filter = 1;
+    s_format_filter = 1;
+    shelf_filter_button_label(flbl, sizeof(flbl));
+    assert(shelf_filter_active_count() == 2 && strcmp(flbl, "筛选2") == 0);
+    assert(shelf_matches(&s_entries[0]) && !shelf_matches(&s_entries[3]));
+
+    // 格式筛选 MD / CBZ + 存储筛选 内置。/ Format MD/CBZ and flash storage filter.
+    s_status_filter = 0; s_format_filter = 3;
+    assert(shelf_matches(&s_entries[3]) && !shelf_matches(&s_entries[0]));
+    s_format_filter = 4;
+    assert(shelf_matches(&s_entries[2]) && !shelf_matches(&s_entries[1]));
+    s_format_filter = 0; s_filter = 2;
+    assert(shelf_matches(&s_entries[1]) && !shelf_matches(&s_entries[0]));
+
+    // 排序：按进度（Gamma 100% -> Beta 45% -> Alpha/Delta）与按大小（Gamma 9000 -> Beta 5000 -> Delta 3000 -> Alpha 1000）。
+    // Sort by progress and by size.
+    s_filter = s_status_filter = s_format_filter = 0;
+    s_sort_mode = 2;
+    assert(strcmp(shelf_sort_button_label(), "进度") == 0);
+    assert(compare_books(&s_entries[2], &s_entries[1]) < 0);
+    assert(compare_books(&s_entries[1], &s_entries[0]) < 0);
+    s_sort_mode = 3;
+    assert(strcmp(shelf_sort_button_label(), "大小") == 0);
+    assert(compare_books(&s_entries[2], &s_entries[1]) < 0);
+    assert(compare_books(&s_entries[1], &s_entries[3]) < 0);
+    assert(compare_books(&s_entries[3], &s_entries[0]) < 0);
+
+    // FILTER 视图控件命中与不重叠验证。/ FILTER view control hit-testing.
+    s_view = FILTER;
+    EpdRect unread_chip = filter_rect(1301);
+    EpdRect epub_chip = filter_rect(1311);
+    EpdRect reset_btn = filter_rect(1340);
+    EpdRect apply_btn = filter_rect(1341);
+    assert(control_at(&ctx, (uint16_t)(unread_chip.x + 10), (uint16_t)(unread_chip.y + 10), &hit_r) == 1301);
+    assert(control_at(&ctx, (uint16_t)(epub_chip.x + 10), (uint16_t)(epub_chip.y + 10), &hit_r) == 1311);
+    assert(control_at(&ctx, (uint16_t)(reset_btn.x + 10), (uint16_t)(reset_btn.y + 10), &hit_r) == 1340);
+    assert(control_at(&ctx, (uint16_t)(apply_btn.x + 10), (uint16_t)(apply_btn.y + 10), &hit_r) == 1341);
 
     puts("book_ui_shelf_layout_and_paging_test: PASS");
 }
@@ -783,7 +834,7 @@ int main(void) {
 typedef struct { int x, y, width, height; } EpdRect;
 typedef struct { int leaf; bool request_menu; bool key_handled; int64_t now_ms; } app_ctx_t;
 typedef enum { APP_REDRAW_PAGE, APP_REDRAW_AREA, APP_REDRAW_NONE, APP_REDRAW_FULL } app_redraw_t;
-typedef enum { SHELF, READING, TOC, MANAGE, BULK, SEARCH, BOOKMARKS, EXCERPTS, TYPOGRAPHY, CHAPTER_RESULTS } book_view_t;
+typedef enum { SHELF, READING, TOC, MANAGE, BULK, SEARCH, BOOKMARKS, EXCERPTS, TYPOGRAPHY, CHAPTER_RESULTS, FILTER } book_view_t;
 static int epd_width(void) { return 1216; }
 static int epd_height(void) { return 684; }
 static int ui_content_width(void) { return 684 - 2 * UI_MARGIN; }

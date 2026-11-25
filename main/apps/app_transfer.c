@@ -510,8 +510,7 @@ static EpdRect network_control_rect(int id) {
     if (id == 6) return ui_row_rect(0, 2, 176, 84);
     if (id == 11) return s_forget_confirm ? ui_row_rect(0, 2, 600, UI_BTN_H) : ui_row_rect(1, 2, 176, 84);
     if (id == 12) return ui_row_rect(1, 2, 600, UI_BTN_H);
-    if (id == 10) return ui_bar_rect(0, 1);
-    return ui_row_rect(id - 7, 3, 968, 84);
+    return ui_bar_rect(0, 1);
 }
 
 static EpdRect password_control_rect(int id) {
@@ -521,12 +520,11 @@ static EpdRect password_control_rect(int id) {
         return (EpdRect){UI_MARGIN + (id % 10) * (width + gap), 420 + (id / 10) * 100, width, 88};
     }
     if (id < 44) return ui_row_rect(id - 40, 4, 830, 78);
-    return ui_bar_rect(id - 44, 3);
+    return ui_bar_rect(id == 46 ? 1 : 0, 2);
 }
 
 static EpdRect saved_control_rect(int id) {
     if (id < 5) return (EpdRect){UI_MARGIN, 240 + id * 112, ui_content_width(), 96};
-    if (id == 5) return ui_row_rect(0, 2, 840, 84);
     return ui_bar_rect(0, 1);
 }
 
@@ -554,7 +552,6 @@ static void draw_networks(uint8_t* fb) {
         }
         if (!s_saved_count) ui_text(fb, UI_MARGIN, 320, UI_PX_BODY, "尚未保存网络", EPD_DRAW_ALIGN_LEFT, false);
         provisioning_button(fb, saved_control_rect(5), "遗忘全部", 5);
-        provisioning_button(fb, saved_control_rect(6), "返回选网", 6);
         return;
     }
     if (s_forget_confirm) {
@@ -601,10 +598,7 @@ static void draw_networks(uint8_t* fb) {
                  !network->supported ? "暂不支持" : network->requires_password ? "需要密码" : "开放网络");
         ui_text(fb, rect.x + UI_PAD, rect.y + 50, UI_PX_CAPTION, detail, EPD_DRAW_ALIGN_LEFT, false);
     }
-    provisioning_button(fb, network_control_rect(7), "上一页", 7);
     provisioning_button(fb, network_control_rect(8), "重新扫描", 8);
-    provisioning_button(fb, network_control_rect(9), "下一页", 9);
-    provisioning_button(fb, network_control_rect(10), "返回传书", 10);
 }
 
 static void draw_password(uint8_t* fb) {
@@ -637,7 +631,6 @@ static void draw_password(uint8_t* fb) {
     provisioning_button(fb, password_control_rect(43), "退格", 43);
     ui_text(fb, UI_MARGIN, 940, UI_PX_CAPTION,
             s_network_message[0] ? s_network_message : "支持字母、数字、符号和空格", EPD_DRAW_ALIGN_LEFT, false);
-    provisioning_button(fb, password_control_rect(44), "取消", 44);
     provisioning_button(fb, password_control_rect(45), s_password_visible ? "隐藏" : "显示", 45);
     provisioning_button(fb, password_control_rect(46), "连接", 46);
 }
@@ -700,15 +693,18 @@ static int provisioning_hit(uint16_t x, uint16_t y) {
         return -1;
     }
     if (s_view == TRANSFER_PASSWORD) {
-        for (int i = 0; i < 47; ++i) if (ui_rect_hit(password_control_rect(i), x, y)) return i;
+        for (int i = 0; i < 47; ++i) {
+            if (i == 44) continue;
+            if (ui_rect_hit(password_control_rect(i), x, y)) return i;
+        }
     } else if (s_view == TRANSFER_SAVED) {
         for (int i = 0; i < (int)s_saved_count; ++i) if (ui_rect_hit(saved_control_rect(i), x, y)) return i;
         if (ui_rect_hit(saved_control_rect(5), x, y)) return 5;
-        if (ui_rect_hit(saved_control_rect(6), x, y)) return 6;
     } else {
         EpdRect manage = {UI_MARGIN + ui_content_width() / 2, 292, ui_content_width() / 2, 48};
         if (ui_rect_hit(manage, x, y)) return 13;
         for (int i = 0; i < 12; ++i) {
+            if (i == 7 || i == 9 || i == 10) continue;
             if (i < NETWORK_ROWS && (s_scan_pending || s_network_page * NETWORK_ROWS + i >= s_network_count)) continue;
             if ((i == 6 || i == 11) && !s_saved_configured) continue;
             if (ui_rect_hit(network_control_rect(i), x, y)) return i;
@@ -795,6 +791,18 @@ static app_redraw_t provisioning_action(int id) {
 }
 
 static app_redraw_t provisioning_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
+    if (s_view == TRANSFER_NETWORKS && !s_forget_confirm && !s_scan_pending) {
+        if (ev->type == UI_GESTURE_SWIPE_L && (s_network_page + 1) * NETWORK_ROWS < s_network_count) {
+            s_pressed = -1;
+            ++s_network_page;
+            return APP_REDRAW_PAGE;
+        }
+        if (ev->type == UI_GESTURE_SWIPE_R && s_network_page > 0) {
+            s_pressed = -1;
+            --s_network_page;
+            return APP_REDRAW_PAGE;
+        }
+    }
     int old = s_pressed;
     int origin = provisioning_hit(ev->x0, ev->y0);
     s_pressed = ev->type == UI_GESTURE_PRESS ? origin : -1;
@@ -929,9 +937,6 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     draw_capacity(fb);
     ui_hairline(fb, 578, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
     draw_status(fb);
-    EpdRect back = control_rect(2);
-    if (s_pressed == 2) ui_draw_pressed_round_rect(fb, back, UI_BTN_RADIUS);
-    ui_draw_button(fb, back, "停止并返回", false);
 }
 
 static void on_enter(app_ctx_t* ctx) {
@@ -1195,7 +1200,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
 static int hit_control(uint16_t x, uint16_t y) {
     if (s_mode == READ_PICO_TRANSFER_MODE_AP && s_status.network_ready && ui_rect_hit(control_rect(3), x, y)) return 3;
     if (s_can_switch_root && !s_media_lost && ui_rect_hit(control_rect(4), x, y)) return 4;
-    for (int i = 0; i < 3; ++i) if (ui_rect_hit(control_rect(i), x, y)) return i;
+    for (int i = 0; i < 2; ++i) if (ui_rect_hit(control_rect(i), x, y)) return i;
     return -1;
 }
 
@@ -1245,11 +1250,14 @@ static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
     return APP_REDRAW_AREA;
 }
 
+static void transfer_key_hints(app_ctx_t* ctx, ui_key_hints_t* out);
+
 static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     if (redraw == APP_REDRAW_FULL && s_settle) {
         render(ctx, ctx->fb);
         ui_key_hints_t hints = { .left = "返回", .center = "刷新 · 长按桌面" };
-        ui_draw_key_hints(ctx->fb, &hints);
+        transfer_key_hints(ctx, &hints);
+        if (!hints.hidden) ui_draw_key_hints(ctx->fb, &hints);
         guard_draw_result(ctx->hl, update_display_full(ctx->hl));
         s_settle = false;
         return true;
@@ -1301,6 +1309,46 @@ bool app_transfer_remote_stop(app_ctx_t* ctx) {
 }
 
 static app_redraw_t on_key(app_ctx_t* ctx, int key) {
+    s_pressed = -1;
+    if (s_view == TRANSFER_NETWORKS && !s_forget_confirm) {
+        if (key == UI_KEY_1) {
+            if (s_network_page > 0) {
+                --s_network_page;
+                return APP_REDRAW_PAGE;
+            }
+            queue_network_start(s_mode);
+            return APP_REDRAW_PAGE;
+        }
+        if (key == UI_KEY_3 && !s_scan_pending && (s_network_page + 1) * NETWORK_ROWS < s_network_count) {
+            ++s_network_page;
+            return APP_REDRAW_PAGE;
+        }
+        return APP_REDRAW_NONE;
+    }
+    if (key != UI_KEY_1) return APP_REDRAW_NONE;
+    if (s_forget_confirm) {
+        s_forget_confirm = false;
+        s_network_message[0] = 0;
+        return APP_REDRAW_PAGE;
+    }
+    if (s_view == TRANSFER_PASSWORD) {
+        clear_password();
+        s_network_message[0] = 0;
+        s_view = TRANSFER_NETWORKS;
+        return APP_REDRAW_PAGE;
+    }
+    if (s_view == TRANSFER_SAVED) {
+        s_view = TRANSFER_NETWORKS;
+        s_scan_pending = true;
+        return APP_REDRAW_PAGE;
+    }
+    s_start_pending = false;
+    stop_session();
+    if (ctx) ctx->request_return = true;
+    return APP_REDRAW_NONE;
+}
+
+static app_redraw_t on_key_long(app_ctx_t* ctx, int key) {
     if (key != UI_KEY_1) return APP_REDRAW_NONE;
     s_pressed = -1;
     if (s_forget_confirm) {
@@ -1329,10 +1377,28 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
     return APP_REDRAW_NONE;
 }
 
+static void transfer_key_hints(app_ctx_t* ctx, ui_key_hints_t* out) {
+    (void)ctx;
+    if (s_view == TRANSFER_HOME) {
+        out->left = "停止并返回";
+        out->right = NULL;
+    } else if (s_view == TRANSFER_PASSWORD || s_forget_confirm) {
+        out->left = "取消";
+        out->right = NULL;
+    } else if (s_view == TRANSFER_NETWORKS) {
+        out->left = s_network_page > 0 ? "上页 · 长按返回" : "返回";
+        out->right = (!s_scan_pending && (s_network_page + 1) * NETWORK_ROWS < s_network_count) ? "下一页" : NULL;
+    } else {
+        out->left = "返回";
+        out->right = NULL;
+    }
+}
+
 const app_desc_t app_transfer = {
     .on_media_lost = transfer_on_media_lost,
     .title = "传书", .detail = "热点或已有 WiFi，浏览器上传",
     .blocks_idle_sleep = true,
     .on_enter = on_enter, .on_exit = transfer_on_exit, .render = render, .present = present,
-    .on_tick = on_tick, .on_gesture = on_gesture, .on_key = on_key,
+    .on_tick = on_tick, .on_gesture = on_gesture, .on_key = on_key, .on_key_long = on_key_long,
+    .key_hints = transfer_key_hints,
 };

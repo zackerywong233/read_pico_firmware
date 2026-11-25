@@ -91,6 +91,9 @@ extern "C" {
 #define UI_BAR_MARGIN 24
 #define UI_BAR_TOP 1072
 #define UI_CONTENT_BOTTOM 1056
+// 无底栏按钮的页面内容区下沿，紧贴底部说明带上方。
+// Content bottom for pages without a bottom touch bar, stopping just above the key-hint strip.
+#define UI_NO_BAR_BOTTOM (UI_KEY_HINT_RULE_Y - UI_GAP)
 
 // epdiy 图形接口取 8 位灰度（仅高 4 位有效），字体属性取 4 位灰度，两者不可混用。
 // epdiy graphics uses 8-bit gray (high nibble only); font attrs use 4-bit gray. Do not mix them.

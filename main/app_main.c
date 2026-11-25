@@ -97,9 +97,8 @@ static void arm_next_ambient_alarm(const app_ambient_settings_t *config) {
     if (!config || !config->enabled) return;
     uint32_t interval = (uint32_t)config->interval_min * 60U;
     uint32_t delay = interval;
-    const pmu_snapshot_t *snapshot = read_pico_pmu_get();
-    time_t now = snapshot && snapshot->time_ok && snapshot->unix_sec
-        ? (time_t)snapshot->unix_sec : time(NULL);
+    time_t now = 0;
+    if (!app_time_now_utc(&now)) now = time(NULL);
     if (now >= 946684800) {
         time_t local_now = now + (time_t)app_settings_timezone_min() * 60;
         struct tm local;

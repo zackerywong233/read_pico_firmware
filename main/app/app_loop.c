@@ -15,13 +15,16 @@
  * 短按 KEY2 整屏 GC16 强刷；长按 KEY2（500ms）全局回桌面第 1 页（桌面首页无动作）；
  * 短按 KEY1/KEY3 优先交页面 on_key，未消费时 KEY1 弹栈返回，KEY3 无动作；
  * 长按 KEY1/KEY3（500ms）优先交页面 on_key_long，未消费时 KEY1 跨页直接返回，KEY3 无动作；
- * 短按抬起提交，长按触发一次后不再触发短按，滑出/多点/读错/锁屏/切页取消。
+ * 短按抬起提交，长按触发一次后不再触发短按，滑出/多点/读错/锁屏/切页取消；
+ * 底部说明带（y=1168..1215）未隐藏时，点按/长按非空格共用同一套 KEY1/2/3 路由，空位拦截不透传。
  * Frozen: Produce gestures without interpreting them; full-screen menu list and handle are removed.
  * Physical keys follow one OS-wide contract: short KEY2 full GC16 refresh; 500ms hold KEY2 returns
  * to Home page 1 (no-op on Home page 1); short KEY1/KEY3 dispatch to on_key (unhandled KEY1 pops
  * nav stack, KEY3 no-ops); 500ms hold KEY1/KEY3 dispatch to on_key_long (unhandled KEY1 returns
  * directly to parent). Short press commits on release; holds suppress short press; slide-off,
- * multitouch, errors, lock and navigation cancel tracking.
+ * multitouch, errors, lock and navigation cancel tracking. When the bottom key-hint strip
+ * (y=1168..1215) is visible, tapping/holding a non-empty cell shares the KEY1/2/3 path and empty
+ * cells absorb touch without leaking to the page.
  * 冻结：主循环维护 8 层导航栈；普通切页入栈（回桌面清空栈），返回弹栈恢复上一页与页码。
  * Frozen: Keep an 8-level nav stack; ordinary switches push (Home clears), Return pops page and leaf.
  */
@@ -71,8 +74,7 @@ void app_lock_ignore_for(int64_t ms) {
     s_lock_ignore_until_ms = esp_timer_get_time() / 1000 + ms;
 }
 
-static void draw_page_key_hints(app_ctx_t* ctx, const app_desc_t* app) {
-    if (ctx == NULL || ctx->fb == NULL || app == NULL) return;
+static ui_key_hints_t resolve_page_key_hints(app_ctx_t* ctx, const app_desc_t* app) {
     const bool at_home_first = (app == app_home_page() && ctx->leaf == 0);
     ui_key_hints_t hints = {
         .left = (app == app_home_page()) ? NULL : "返回",
@@ -80,15 +82,36 @@ static void draw_page_key_hints(app_ctx_t* ctx, const app_desc_t* app) {
         .right = NULL,
         .hidden = false,
     };
-    if (app->key_hints != NULL) {
+    if (app != NULL && app->key_hints != NULL) {
         app->key_hints(ctx, &hints);
         if (!hints.hidden && hints.center == NULL) {
             hints.center = at_home_first ? "刷新" : "刷新 · 长按桌面";
         }
     }
+    return hints;
+}
+
+static void draw_page_key_hints(app_ctx_t* ctx, const app_desc_t* app) {
+    if (ctx == NULL || ctx->fb == NULL || app == NULL) return;
+    ui_key_hints_t hints = resolve_page_key_hints(ctx, app);
     if (!hints.hidden) {
         ui_draw_key_hints(ctx->fb, &hints);
     }
+}
+
+// 统一命中屏下实体三键与底部可见说明带；非隐藏说明带空位标记 in_hint_strip 以吞掉误触。
+// Unified hit-test for physical keys and visible bottom key-hint cells; flags in_hint_strip so empty cells absorb taps.
+static int hit_nav_key(
+    app_ctx_t* ctx, const app_desc_t* app, uint16_t x, uint16_t y, bool* in_hint_strip
+) {
+    if (in_hint_strip != NULL) *in_hint_strip = false;
+    int key = ui_key_hit_test(x, y);
+    if (key >= 0) return key;
+    if (y < UI_KEY_HINT_RULE_Y || y >= UI_LOCK_HEIGHT) return -1;
+    ui_key_hints_t hints = resolve_page_key_hints(ctx, app);
+    if (hints.hidden) return -1;
+    if (in_hint_strip != NULL) *in_hint_strip = true;
+    return ui_key_hint_hit_test(x, y, &hints);
 }
 
 void app_present(app_ctx_t* ctx, const app_desc_t* app, app_redraw_t redraw) {
@@ -368,17 +391,20 @@ void app_loop_run(const app_loop_config_t* config) {
         if (pressed && err == ESP_OK) {
             held_key = -1;
             held_long_fired = false;
-            const int key = ui_key_hit_test(touch.x, touch.y);
+            bool in_hint_strip = false;
+            const int key = hit_nav_key(&ctx, current, touch.x, touch.y, &in_hint_strip);
             ctx.consumed = true;
             if (key >= 0) {
                 cancel_gesture(&ctx, current, &gesture);
-                // 实体键按下仅记录起点：抬起提交短按，满 500ms 触发长按且不再触发短按。
-                // Physical key press only arms tracking: release commits short press, 500ms fires hold once.
+                // 实体键与说明带按下仅记录起点：抬起提交短按，满 500ms 触发长按且不再触发短按。
+                // Physical key or hint-cell press arms tracking: release commits short press, 500ms fires hold once.
                 if (touch.count == 1) {
                     held_key = key;
                     held_since_ms = ctx.now_ms;
                     held_long_fired = false;
                 }
+            } else if (in_hint_strip) {
+                cancel_gesture(&ctx, current, &gesture);
             } else if (current->on_gesture) {
                 ctx.consumed = false;
             } else {
@@ -475,7 +501,7 @@ void app_loop_run(const app_loop_config_t* config) {
                     }
                 }
             } else if (!touch.touched || touch.count != 1
-                       || ui_key_hit_test(touch.x, touch.y) != held_key
+                       || hit_nav_key(&ctx, current, touch.x, touch.y, NULL) != held_key
                        || ctx.now_ms < held_since_ms) {
                 held_key = -1;
                 held_long_fired = false;
