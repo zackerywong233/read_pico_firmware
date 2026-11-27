@@ -3393,7 +3393,7 @@ void app_book_sync_runtime_settings(app_ctx_t *ctx, bool apply_px_to_open_book) 
             unlock_draw();
         } else if (s_cbz_mode) {
             lock_draw();
-            cbz_decode_into_cache(s_cbz_page);
+            (void)cbz_load_page_locked(s_cbz_page);
             unlock_draw();
         }
         s_full = true;

@@ -190,7 +190,7 @@ static void render_step0_welcome(uint8_t *fb) {
     int y = 360;
     struct tm local = { 0 };
     int tz_min = app_settings_timezone_min();
-    char time_val[64], tz_val[32];
+    char time_val[112], tz_val[24];
     fmt_tz(tz_val, sizeof(tz_val), tz_min);
     if (app_time_now_local(&local, &tz_min)) {
         snprintf(time_val, sizeof(time_val), "%04d-%02d-%02d %02d:%02d (%s)",
