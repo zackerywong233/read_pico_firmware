@@ -33,10 +33,10 @@ idf.py build
 | `main/ble_service.*` | 轻量 BLE 配套控制桥接：在主循环串行执行配网、远程传书、对时、设置与短文本指令。/ Lightweight BLE companion bridge executing provisioning, remote transfer, time, settings and memos on the main loop. |
 | `main/reading_stats.c` | 持久化累计阅读时间、最近摘录与最近图书进度。/ Persist cumulative reading time, saved excerpt and recent book progress. |
 | `main/app/app.h` | `app_desc_t` / `app_ctx_t` / `app_redraw_t` 契约。/ Page contract. |
-| `main/app/app_loop.c` | 与页面无关的事件循环：触摸去抖、三键短/长按与 8 层导航栈、切页、刷屏、底栏按键说明带、锁屏、SD 字体延迟加载。/ Shared event loop with 3-key short/long dispatch, 8-level nav stack, and key-hint bar. |
-| `main/app/app_registry.c` | 全部 24 个应用与工具的 3 页九宫格（9 + 9 + 6）顺序表。/ Flat 24-app order across 3 pages of 3×3 grid (9 + 9 + 6). |
+| `main/app/app_loop.c` | 与页面无关的事件循环：触摸去抖、三键短/长按与 8 层导航栈、顶边下滑快捷控制中心、切页、刷屏、底栏按键说明带、锁屏、SD 字体延迟加载。/ Shared event loop with 3-key short/long dispatch, 8-level nav stack, top pull-down Quick Control Menu, and key-hint bar. |
+| `main/app/app_registry.c` | 全部 24 个应用与工具的 3 页九宫格（9 + 9 + 6）顺序表及桌面/引导入口。/ Flat 24-app order across 3 pages of 3×3 grid (9 + 9 + 6) plus Home/Onboarding entries. |
 | `main/app/app_config.h` | 均衡 / ALL_DU 刷新档位。/ Refresh profile. |
-| `main/ui/` | `ui_kit` 排版常量与绘制原语；`ui_icons` 24 格线框图标库；`ui_menu` 屏下三键命中与按键说明带。/ Shared drawing, wireframe icons, and physical key-hint bar. |
+| `main/ui/` | `ui_kit` 排版常量与绘制原语；`ui_icons` 24 格线框图标库；`ui_menu` 屏下三键命中与按键说明带；`ui_quick_menu` 顶部下滑快捷控制中心。/ Shared drawing, wireframe icons, physical key-hint bar, and top pull-down Quick Control Menu. |
 | `main/files_ops.*` `main/feeds_store.*` | TF 卡文件管理安全护栏与 OPDS/RSS 订阅源独立 NVS 持久化及 XML 解析。/ TF file-manager guardrails and OPDS/RSS feed store + XML parser. |
 | `main/font/` | stb_truetype 字形缓存。`fallback.h` 是生成位图，勿手改。/ Glyph cache. Do not edit `fallback.h` by hand. |
 | `main/factory/` | 设备功能自检与出厂 VCOM 标定。/ Device self-test and factory VCOM. |
@@ -75,7 +75,8 @@ One file, one `app_desc_t`. All 24 apps are arranged in `app_registry.c` across 
 
 | 文件 / File | 功能 / Role | 依赖 / Depends on |
 | --- | --- | --- |
-| `app_pico_home.c` | Pico OS 3 页九宫格桌面（24 格线框图标与统一顶栏）。/ 3-page 3×3 launcher grid with wireframe icons and status bar. | `ui_kit`, `ui_icons` |
+| `app_pico_home.c` | Pico OS 3 页九宫格桌面（24 格线框图标与实时顶栏状态栏）。/ 3-page 3×3 launcher grid with wireframe icons and live status bar. | `ui_kit`, `ui_icons` |
+| `app_onboarding.c` | 五步交互式初始使用引导（首次开机自动进入，也可从设置页重看）。/ 5-step interactive first-run onboarding guide (also reopenable from Settings). | `settings`, `time_sync`, `ui_time_edit`, `ui_kit` |
 | `app_book.c` | 一级应用：TXT / EPUB / MD / CBZ 书架（最近阅读卡片、3×2 封面网格/列表）、波前翻页、双开关 HUD、中文精排、长按文本摘录与 CBZ 漫读。/ Reader, cover shelf, wavefront turns, HUD, Chinese typography, long-press excerpts, CBZ manga mode. | `book_*`, `continuous_du`, `ttf_font` |
 | `app_transfer.c` | 一级应用：设备热点/已有 WiFi 传书、TF 字体上传与网页配置（含 `/feeds` 订阅源）。/ WiFi book/font transfer and LAN web UI (including `/feeds`). | `read_pico_transfer`, `book_store`, `feeds_store` |
 | `app_web.c` | 一级应用：静态抓取 HTTP/HTTPS 网页正文并开放同网剪藏入口。/ Root app: static HTTP/HTTPS page reader and local browser-clip endpoint. | `read_pico_transfer`, `html_text`, `book_layout`, `esp_http_client` |

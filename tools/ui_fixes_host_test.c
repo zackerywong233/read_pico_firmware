@@ -35,8 +35,11 @@
 #include "ui_heatmap.h"
 #include "ui_kit.h"
 #include "ui_menu.h"
+#include "ui_quick_menu.h"
 #include "ui_time_edit.h"
 
+extern const app_desc_t app_pico_home;
+extern const app_desc_t app_onboarding;
 extern const app_desc_t app_settings;
 extern const app_desc_t app_sketch;
 
@@ -92,6 +95,8 @@ void epd_fill_rect(EpdRect r, uint8_t color, uint8_t *fb) { (void)r; (void)color
 void epd_fill_triangle(int a, int b, int c, int d, int e, int f, uint8_t g, uint8_t *h) {
     (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)g; (void)h;
 }
+void epd_draw_circle(int x, int y, int r, uint8_t c, uint8_t *fb) { (void)x; (void)y; (void)r; (void)c; (void)fb; }
+void epd_fill_circle(int x, int y, int r, uint8_t c, uint8_t *fb) { (void)x; (void)y; (void)r; (void)c; (void)fb; }
 void epd_poweron(void) {}
 
 static int s_du_marks = 0;
@@ -165,7 +170,23 @@ void ui_fill_round_rect(uint8_t *fb, EpdRect r, int rad, uint8_t c) {
     s_filled_round_rects++;
 }
 void ui_draw_pressed_round_rect(uint8_t *fb, EpdRect r, int rad) { (void)fb; (void)r; (void)rad; }
+void ui_draw_selected_round_rect(uint8_t *fb, EpdRect r, int rad) { (void)fb; (void)r; (void)rad; }
 void ui_draw_choice_round_rect(uint8_t *fb, EpdRect r, int rad, bool on) { (void)fb; (void)r; (void)rad; (void)on; }
+EpdRect ui_inset_rect(EpdRect r, int d) {
+    return (EpdRect){ r.x + d, r.y + d, r.width - 2 * d, r.height - 2 * d };
+}
+ui_header_skel_t ui_header_skel_box(const char *t, const char *s, int aw, int ah) {
+    (void)t; (void)s;
+    return (ui_header_skel_t){
+        .text = { UI_MARGIN, 0, UI_LOCK_WIDTH - 2 * UI_MARGIN - aw, UI_HEADER_RULE_Y },
+        .accessory = { UI_LOCK_WIDTH - UI_MARGIN - aw, 64, aw, ah },
+    };
+}
+int ui_draw_header_skel(uint8_t *fb, const ui_header_skel_t *sk, const char *title, const char *sub) {
+    (void)sk;
+    return ui_draw_header(fb, title, sub);
+}
+void ui_draw_no_font_page(uint8_t *fb, bool c, bool f) { (void)fb; (void)c; (void)f; }
 void ui_draw_button(uint8_t *fb, EpdRect r, const char *label, bool on) { (void)fb; (void)r; (void)on; record_text(label); }
 void ui_hairline(uint8_t *fb, int y, int x, int w, uint8_t c) { (void)fb; (void)y; (void)x; (void)w; (void)c; }
 void ui_draw_key_hints(uint8_t *fb, const ui_key_hints_t *h) { (void)fb; (void)h; }
@@ -217,6 +238,13 @@ static bool s_book_top = true;
 static bool s_book_bot = true;
 static uint8_t s_book_para = 1;
 static uint8_t s_book_ind = 0;
+static uint8_t s_book_rot = 0;
+static uint8_t s_book_gest = 0;
+static uint8_t s_book_shelf = 0;
+static uint8_t s_book_cbz_dir = 0;
+static bool s_book_cbz_dith = true;
+static bool s_pickup_wake = false;
+static bool s_onboarding_done = false;
 static app_sleep_mode_t s_sleep_mode = APP_SLEEP_DEEP;
 static uint16_t s_auto_sleep = 120;
 static app_saver_style_t s_saver = APP_SAVER_BUILTIN;
@@ -249,6 +277,46 @@ uint8_t app_settings_book_para_gap(void) { return s_book_para; }
 void app_settings_set_book_para_gap(uint8_t v) { s_book_para = v; }
 uint8_t app_settings_book_indent(void) { return s_book_ind; }
 void app_settings_set_book_indent(uint8_t v) { s_book_ind = v; }
+uint8_t app_settings_book_rotation(void) { return s_book_rot; }
+void app_settings_set_book_rotation(uint8_t v) { s_book_rot = v; }
+uint8_t app_settings_book_gesture(void) { return s_book_gest; }
+void app_settings_set_book_gesture(uint8_t v) { s_book_gest = v; }
+uint8_t app_settings_book_shelf_view(void) { return s_book_shelf; }
+void app_settings_set_book_shelf_view(uint8_t v) { s_book_shelf = v; }
+uint8_t app_settings_book_cbz_dir(void) { return s_book_cbz_dir; }
+void app_settings_set_book_cbz_dir(uint8_t v) { s_book_cbz_dir = v; }
+bool app_settings_book_cbz_dither(void) { return s_book_cbz_dith; }
+void app_settings_set_book_cbz_dither(bool v) { s_book_cbz_dith = v; }
+bool app_settings_pickup_wake(void) { return s_pickup_wake; }
+void app_settings_set_pickup_wake(bool v) { s_pickup_wake = v; }
+bool app_settings_onboarding_done(void) { return s_onboarding_done; }
+void app_settings_set_onboarding_done(bool v) { s_onboarding_done = v; }
+void app_settings_reset_defaults(void) {
+    s_tz_min = 480;
+    s_book_px = 48;
+    s_book_refresh = 1;
+    s_book_weight = 0;
+    s_book_lh = 1;
+    s_book_margin = 1;
+    s_book_top = true;
+    s_book_bot = true;
+    s_book_para = 1;
+    s_book_ind = 0;
+    s_book_rot = 0;
+    s_book_gest = 0;
+    s_book_shelf = 0;
+    s_book_cbz_dir = 0;
+    s_book_cbz_dith = true;
+    s_pickup_wake = false;
+    s_sleep_mode = APP_SLEEP_DEEP;
+    s_auto_sleep = 120;
+    s_saver = APP_SAVER_BUILTIN;
+    s_charge_led = true;
+    s_low_soc = 10;
+    s_muted = false;
+    s_ble_enabled = true;
+    s_ble_pin_required = false;
+}
 app_sleep_mode_t app_settings_sleep_mode(void) { return s_sleep_mode; }
 void app_settings_set_sleep_mode(app_sleep_mode_t v) { s_sleep_mode = v; }
 uint16_t app_settings_auto_sleep_sec(void) { return s_auto_sleep; }
@@ -399,24 +467,39 @@ void ota_update_cancel(void) { s_ota.state = OTA_UPDATE_CANCELLED; }
 void ota_update_get_status(ota_update_status_t *out) { *out = s_ota; }
 
 /* ---- 占位应用与主循环驱动 / Dummy sibling apps & real app_loop harness ---- */
-const app_desc_t app_transfer = { .title = "transfer" };
-const app_desc_t app_sleep = { .title = "sleep" };
-const app_desc_t app_home = { .title = "home" };
-const app_desc_t app_sd = { .title = "sd" };
-const app_desc_t app_book = { .title = "book" };
-static const app_desc_t s_font_app = { .title = "font" };
-static const app_desc_t s_self_app = { .title = "selftest" };
-static const app_desc_t s_pico_home = { .title = "pico_home" };
+static int s_book_sync_calls = 0;
+static bool s_book_sync_last_px = false;
+static void dummy_book_render(app_ctx_t *ctx, uint8_t *fb) {
+    (void)ctx;
+    ui_clear_page(fb);
+    ui_draw_header(fb, "图书", "书架与阅读");
+}
+void app_book_queue_open(const char *path) { (void)path; }
+void app_book_sync_runtime_settings(app_ctx_t *ctx, bool apply_px) {
+    (void)ctx;
+    s_book_sync_calls++;
+    s_book_sync_last_px = apply_px;
+}
+
+const app_desc_t app_transfer = { .title = "传书" };
+const app_desc_t app_sleep = { .title = "睡眠唤醒" };
+const app_desc_t app_home = { .title = "设备概览" };
+const app_desc_t app_sd = { .title = "存储与蜂鸣" };
+const app_desc_t app_book = { .title = "图书", .render = dummy_book_render };
+static const app_desc_t s_font_app = { .title = "字体管理" };
+static const app_desc_t s_self_app = { .title = "设备自检" };
 
 int app_count(void) { return 2; }
-const app_desc_t *app_at(int i) { return i == 0 ? &s_pico_home : i == 1 ? &app_settings : NULL; }
-int app_index_of(const app_desc_t *a) { return a == &s_pico_home ? 0 : a == &app_settings ? 1 : -1; }
-const app_desc_t *app_home_page(void) { return &s_pico_home; }
+const app_desc_t *app_at(int i) { return i == 0 ? &app_book : i == 1 ? &app_settings : NULL; }
+int app_index_of(const app_desc_t *a) { return a == &app_book ? 0 : a == &app_settings ? 1 : -1; }
+const app_desc_t *app_home_page(void) { return &app_pico_home; }
 const app_desc_t *app_personal_page(void) { return &app_personal; }
 const app_desc_t *app_selftest_page(void) { return &s_self_app; }
 const app_desc_t *app_font_page(void) { return &s_font_app; }
 const app_desc_t *app_settings_page(void) { return &app_settings; }
+const app_desc_t *app_onboarding_page(void) { return &app_onboarding; }
 
+static int s_area_du_updates = 0;
 int ui_key_hit_test(uint16_t x, uint16_t y) { return y >= UI_KEY_AREA_TOP && x < 480 ? x / 160 : -1; }
 
 void guard_draw_result(EpdiyHighlevelState *hl, enum EpdDrawError err) { (void)hl; assert(err == EPD_DRAW_SUCCESS); }
@@ -424,7 +507,8 @@ enum EpdDrawError update_display_full(EpdiyHighlevelState *hl) { (void)hl; retur
 enum EpdDrawError update_display_mode(EpdiyHighlevelState *hl, enum EpdDrawMode m) { (void)hl; (void)m; return EPD_DRAW_SUCCESS; }
 enum EpdDrawError update_display_white(EpdiyHighlevelState *hl) { (void)hl; return EPD_DRAW_SUCCESS; }
 enum EpdDrawError update_display_area_with(EpdiyHighlevelState *hl, const EpdWaveform *w, enum EpdDrawMode m, EpdRect a) {
-    (void)hl; (void)w; (void)m; (void)a;
+    (void)hl; (void)w; (void)a;
+    if (m == MODE_DU) s_area_du_updates++;
     return EPD_DRAW_SUCCESS;
 }
 bool display_take_white_exit(void) { return false; }
@@ -464,6 +548,11 @@ static void push_tap(int x, int y) {
     s_steps[s_step_count++] = (touch_step_t){ 0, 0, 0 };
 }
 static void push_idle(void) { s_steps[s_step_count++] = (touch_step_t){ 0, 0, 0 }; }
+static void push_swipe(int x0, int y0, int x1, int y1) {
+    s_steps[s_step_count++] = (touch_step_t){ (uint16_t)x0, (uint16_t)y0, 1 };
+    s_steps[s_step_count++] = (touch_step_t){ (uint16_t)x1, (uint16_t)y1, 1 };
+    s_steps[s_step_count++] = (touch_step_t){ 0, 0, 0 };
+}
 
 static void test_time_math_and_unified_clock(void) {
     assert(app_time_days_in_month(2024, 2) == 29);
@@ -938,12 +1027,137 @@ static void test_sntp_callback_and_pmu_drift_guard(void) {
     puts("sntp_callback & pmu_drift_guard: passed");
 }
 
+static void test_quick_menu_and_onboarding_and_home(void) {
+    uint8_t *fb = malloc(1216 * 684 / 2);
+    uint8_t *back = malloc(1216 * 684 / 2);
+    assert(fb && back);
+    EpdiyHighlevelState hl = { .front_fb = fb, .back_fb = back };
+
+    // 1) 在图书页从顶边下滑打开快捷控制菜单 -> 切换静音、字号+、阅读栏、方向 -> 上滑收起并同步 app_book！
+    // Pull down from top edge on Books -> toggle mute, size+, HUD, rotation -> swipe up to close and sync Books!
+    s_muted = false;
+    s_book_px = 48;
+    s_book_top = true;
+    s_book_bot = true;
+    s_book_rot = 0;
+    s_book_sync_calls = 0;
+    s_book_sync_last_px = false;
+
+    reset_steps();
+    push_idle();
+    push_swipe(340, 20, 340, 160); // 顶部边缘下滑呼出控制中心
+    EpdRect mute_tile = ui_row_rect(1, 2, 180, 82);
+    push_tap(mute_tile.x + 40, mute_tile.y + 40); // 全局静音
+    EpdRect px_inc = ui_row_rect(1, 3, 508, 80);
+    push_tap(px_inc.x + 40, px_inc.y + 40); // 字号 + (48 -> 52)
+    EpdRect hud_btn = ui_row_rect(0, 2, 508 + 80 + UI_GAP, 80);
+    push_tap(hud_btn.x + 40, hud_btn.y + 40); // 阅读栏：全显 -> 仅顶栏
+    EpdRect rot_btn = ui_row_rect(1, 2, 508 + 80 + UI_GAP, 80);
+    push_tap(rot_btn.x + 40, rot_btn.y + 40); // 方向：竖屏 -> 横屏
+    push_swipe(340, 700, 340, 500); // 上滑收起控制中心
+    push_idle();
+
+    app_loop_config_t book_cfg = { .hl = &hl, .fb = fb, .first_app = &app_book };
+    if (!setjmp(s_loop_exit)) app_loop_run(&book_cfg);
+    assert(s_muted == true);
+    assert(s_book_px == 52);
+    assert(s_book_top == true && s_book_bot == false);
+    assert(s_book_rot == 1);
+    assert(s_book_sync_calls == 1 && s_book_sync_last_px == true);
+    assert(strcmp(s_last_header, "图书") == 0);
+
+    // 2) 在快捷控制菜单中点按左上角时间区域 -> 直达时间校准页 -> 点保存后弹栈返回原图书页！
+    // Tapping clock in Quick Control Menu opens Time Calibration directly -> Save returns right back to Books!
+    reset_steps();
+    push_idle();
+    push_swipe(340, 20, 340, 160); // 打开控制中心
+    push_tap(120, 60); // 点按左上角时间块
+    EpdRect save_btn = ui_bar_rect(1, 2);
+    push_tap(save_btn.x + 40, save_btn.y + 40); // 保存时间并返回原页
+    push_idle();
+    if (!setjmp(s_loop_exit)) app_loop_run(&book_cfg);
+    assert(strcmp(s_last_header, "图书") == 0);
+
+    // 3) 首次开机使用引导五步完整体验：调时区、呼出快捷菜单试用、完成并进入桌面。
+    // First-boot 5-step onboarding: adjust timezone, test Quick Control Menu on step 3, finish into Desktop.
+    s_onboarding_done = false;
+    s_tz_min = 480;
+    reset_steps();
+    push_idle();
+    int s0_btn_y = 360 + UI_ROW_H + 16;
+    EpdRect tz_inc = ui_row_rect(1, 2, s0_btn_y, UI_BTN_H);
+    push_tap(tz_inc.x + 40, tz_inc.y + 40); // 时区 +30分 (480 -> 510)
+    EpdRect next_btn = ui_bar_rect(1, 2);
+    push_tap(next_btn.x + 40, next_btn.y + 40); // 1/5 -> 2/5
+    push_tap(next_btn.x + 40, next_btn.y + 40); // 2/5 -> 3/5
+    push_tap(340, 910); // 第 3 步：立即体验呼出快捷控制中心
+    push_tap(80, 1500); // KEY1 收起控制中心
+    push_tap(next_btn.x + 40, next_btn.y + 40); // 3/5 -> 4/5
+    push_tap(next_btn.x + 40, next_btn.y + 40); // 4/5 -> 5/5
+    EpdRect start_btn = ui_bar_rect(2, 3);
+    push_tap(start_btn.x + 40, start_btn.y + 40); // 开始使用 -> 进入桌面
+    push_idle();
+
+    app_loop_config_t ob_cfg = { .hl = &hl, .fb = fb, .first_app = &app_onboarding };
+    if (!setjmp(s_loop_exit)) app_loop_run(&ob_cfg);
+    assert(s_onboarding_done == true);
+    assert(s_tz_min == 510);
+    assert(ui_saw_text("小纸 Pico"));
+
+    // 4) 从「设置 → 设备与诊断」重看新手使用引导并跳过返回设置，随后验证两步确认恢复默认偏好。
+    // Reopen onboarding from Settings -> Device & Diagnostics -> Skip back to Settings, then test 2-step reset defaults.
+    reset_steps();
+    push_idle();
+    push_tap(300, UI_CONTENT_TOP + 4 * (UI_BTN_H + UI_GAP) + 40); // Row 4: 设备与系统工具
+    int dev_btn_y = UI_CONTENT_TOP + UI_SEC_HEAD + 3 * UI_ROW_H + UI_SECTION_GAP;
+    push_tap(300, dev_btn_y + 3 * (UI_BTN_H + UI_GAP) + 40); // 新手使用引导
+    push_tap(UI_LOCK_WIDTH - UI_MARGIN - 60, 88); // 顶栏右侧「跳过 ›」
+    push_tap(300, dev_btn_y + 4 * (UI_BTN_H + UI_GAP) + 40); // 第一次点按恢复默认偏好（进确认态）
+    push_tap(300, dev_btn_y + 4 * (UI_BTN_H + UI_GAP) + 40); // 第二次点按确认执行
+    push_idle();
+
+    app_loop_config_t set_cfg = { .hl = &hl, .fb = fb, .first_app = &app_settings };
+    if (!setjmp(s_loop_exit)) app_loop_run(&set_cfg);
+    assert(strcmp(s_last_header, "设备与诊断") == 0);
+    assert(ui_saw_text("已恢复默认偏好设置"));
+    assert(s_tz_min == 480 && s_book_px == 48 && s_muted == false && s_book_rot == 0);
+
+    // 5) 桌面顶栏点按呼出快捷控制中心，以及桌面分钟变化触发局部 DU 刷新。
+    // Desktop top-bar tap opens Quick Control Menu, and minute rollover triggers local DU status-bar refresh.
+    uint32_t base_utc = 0;
+    assert(app_time_make_utc(2026, 11, 27, 9, 41, 480, &base_utc));
+    s_fake_sys_time = (time_t)base_utc;
+    app_ctx_t hctx = { .fb = fb, .hl = &hl, .now_ms = 1000 };
+    app_pico_home.on_enter(&hctx);
+    app_pico_home.render(&hctx, fb);
+    assert(ui_saw_text("09:41"));
+    hctx.now_ms = 7000;
+    assert(app_pico_home.on_tick(&hctx) == APP_REDRAW_NONE);
+    s_fake_sys_time = (time_t)(base_utc + 60U);
+    hctx.now_ms = 13000;
+    assert(app_pico_home.on_tick(&hctx) == APP_REDRAW_AREA);
+    assert(ui_saw_text("09:42"));
+
+    reset_steps();
+    push_idle();
+    push_tap(340, 28); // 点按桌面顶部状态栏呼出快捷控制中心
+    push_idle();
+    app_loop_config_t home_cfg = { .hl = &hl, .fb = fb, .first_app = &app_pico_home };
+    if (!setjmp(s_loop_exit)) app_loop_run(&home_cfg);
+    assert(ui_saw_text("快捷控制") && ui_saw_text("快捷操作"));
+
+    free(fb);
+    free(back);
+    puts("quick_menu, onboarding & pico_home live status: passed");
+}
+
 int main(void) {
     test_time_math_and_unified_clock();
     test_settings_real_loop_navigation();
     test_sketch_drag_and_coordinates();
     test_personal_heatmap_and_lock_saver();
     test_sntp_callback_and_pmu_drift_guard();
+    test_quick_menu_and_onboarding_and_home();
     puts("ALL ui_fixes host regression tests passed!");
     return 0;
 }

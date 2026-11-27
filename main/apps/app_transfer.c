@@ -120,6 +120,13 @@ static bool transfer_settings_get(read_pico_device_settings_t* out, void* ctx) {
     out->book_weight = app_settings_book_weight();
     out->book_rotation = app_settings_book_rotation();
     out->book_gesture = app_settings_book_gesture();
+    out->book_top_bar = app_settings_book_top_bar();
+    out->book_bottom_bar = app_settings_book_bottom_bar();
+    out->book_para_gap = app_settings_book_para_gap();
+    out->book_indent = app_settings_book_indent();
+    out->book_shelf_view = app_settings_book_shelf_view();
+    out->book_cbz_dir = app_settings_book_cbz_dir();
+    out->book_cbz_dither = app_settings_book_cbz_dither();
     out->saver_style = (uint8_t)app_settings_saver_style();
     out->dashboard_items = app_settings_dashboard_items();
     out->timezone_min = app_settings_timezone_min();
@@ -147,6 +154,13 @@ static esp_err_t transfer_settings_set(const read_pico_device_settings_t* next, 
     app_settings_set_book_weight(next->book_weight);
     app_settings_set_book_rotation(next->book_rotation);
     app_settings_set_book_gesture(next->book_gesture);
+    app_settings_set_book_top_bar(next->book_top_bar);
+    app_settings_set_book_bottom_bar(next->book_bottom_bar);
+    app_settings_set_book_para_gap(next->book_para_gap);
+    app_settings_set_book_indent(next->book_indent);
+    app_settings_set_book_shelf_view(next->book_shelf_view);
+    app_settings_set_book_cbz_dir(next->book_cbz_dir);
+    app_settings_set_book_cbz_dither(next->book_cbz_dither);
     app_settings_set_saver_style((app_saver_style_t)next->saver_style);
     app_settings_set_dashboard_items(next->dashboard_items);
     app_settings_set_timezone_min_deferred(next->timezone_min);

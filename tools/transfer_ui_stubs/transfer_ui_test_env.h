@@ -189,6 +189,20 @@ static inline uint8_t app_settings_book_rotation(void) { return test_settings.bo
 static inline void app_settings_set_book_rotation(uint8_t r) { test_settings.book_rotation = r; }
 static inline uint8_t app_settings_book_gesture(void) { return test_settings.book_gesture; }
 static inline void app_settings_set_book_gesture(uint8_t g) { test_settings.book_gesture = g; }
+static inline bool app_settings_book_top_bar(void) { return test_settings.book_top_bar; }
+static inline void app_settings_set_book_top_bar(bool on) { test_settings.book_top_bar = on; }
+static inline bool app_settings_book_bottom_bar(void) { return test_settings.book_bottom_bar; }
+static inline void app_settings_set_book_bottom_bar(bool on) { test_settings.book_bottom_bar = on; }
+static inline uint8_t app_settings_book_para_gap(void) { return test_settings.book_para_gap; }
+static inline void app_settings_set_book_para_gap(uint8_t p) { test_settings.book_para_gap = p; }
+static inline uint8_t app_settings_book_indent(void) { return test_settings.book_indent; }
+static inline void app_settings_set_book_indent(uint8_t m) { test_settings.book_indent = m; }
+static inline uint8_t app_settings_book_shelf_view(void) { return test_settings.book_shelf_view; }
+static inline void app_settings_set_book_shelf_view(uint8_t v) { test_settings.book_shelf_view = v; }
+static inline uint8_t app_settings_book_cbz_dir(void) { return test_settings.book_cbz_dir; }
+static inline void app_settings_set_book_cbz_dir(uint8_t d) { test_settings.book_cbz_dir = d; }
+static inline bool app_settings_book_cbz_dither(void) { return test_settings.book_cbz_dither; }
+static inline void app_settings_set_book_cbz_dither(bool on) { test_settings.book_cbz_dither = on; }
 static inline app_saver_style_t app_settings_saver_style(void) { return (app_saver_style_t)test_settings.saver_style; }
 static inline void app_settings_set_saver_style(app_saver_style_t s) { test_settings.saver_style = (uint8_t)s; }
 static inline uint8_t app_settings_dashboard_items(void) { return test_settings.dashboard_items; }

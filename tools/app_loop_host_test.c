@@ -6,6 +6,7 @@
 #include "ui_gesture.h"
 #include "ui_kit.h"
 #include "ui_menu.h"
+#include "ui_quick_menu.h"
 #include <assert.h>
 #include <setjmp.h>
 #include <stdio.h>
@@ -69,7 +70,45 @@ void read_pico_sd_start_probe(void) {probes++;}
 static void lost(app_ctx_t*c) {(void)c;media_lost++;loss_step=step;}
 EpdRect ui_content_refresh_area(void) {return (EpdRect){0,0,684,1000};}
 const app_desc_t* app_home_page(void) {return &first;}
+const app_desc_t* app_settings_page(void) {return &third;}
 const app_desc_t* app_at(int i) {return i==0?&first:i==1?&second:i==2?&third:NULL;}
+static int qm_opens, qm_closes, qm_renders, qm_gestures;
+static bool qm_request_on_touch;
+void ui_quick_menu_reset(ui_quick_menu_t *qm) { if (qm) { memset(qm, 0, sizeof(*qm)); qm->pressed_ctrl = -1; } }
+void ui_quick_menu_open(ui_quick_menu_t *qm) { if (qm) { qm->open = true; qm_opens++; } }
+void ui_quick_menu_close(ui_quick_menu_t *qm, app_ctx_t *ctx, const app_desc_t *cur) {
+    (void)ctx; (void)cur;
+    if (qm && qm->open) { qm->open = false; qm_closes++; }
+}
+void ui_quick_menu_render(const ui_quick_menu_t *qm, app_ctx_t *ctx, const app_desc_t *cur, uint8_t *fb) {
+    (void)qm; (void)ctx; (void)cur; (void)fb;
+    qm_renders++;
+}
+void ui_quick_menu_key_hints(ui_key_hints_t *out) {
+    out->left = "收起"; out->center = "刷新 · 长按桌面"; out->right = "设置"; out->hidden = false;
+}
+app_redraw_t ui_quick_menu_on_gesture(ui_quick_menu_t *qm, app_ctx_t *ctx, const app_desc_t *cur,
+                                      const ui_gesture_event_t *ev, bool *out_close) {
+    (void)qm; (void)ctx; (void)cur;
+    if (out_close) *out_close = false;
+    qm_gestures++;
+    if (ev->type == UI_GESTURE_SWIPE_U || (ev->type == UI_GESTURE_TAP && ev->y >= UI_QM_CARD_BOTTOM)) {
+        if (out_close) *out_close = true;
+    }
+    return APP_REDRAW_NONE;
+}
+app_redraw_t ui_quick_menu_on_key(ui_quick_menu_t *qm, app_ctx_t *ctx, const app_desc_t *cur,
+                                  int k, bool *out_close) {
+    (void)qm;
+    if (out_close) *out_close = false;
+    if (k == UI_KEY_1) { ctx->key_handled = true; if (out_close) *out_close = true; }
+    else if (k == UI_KEY_3) {
+        ctx->key_handled = true;
+        if (out_close) *out_close = true;
+        if (cur != app_settings_page()) ctx->request_app = app_settings_page();
+    }
+    return APP_REDRAW_NONE;
+}
 int ui_key_hit_test(uint16_t x,uint16_t y) {return y>=1300 && x<480?x/160:-1;}
 int ui_key_hint_hit_test(uint16_t x,uint16_t y,const ui_key_hints_t* h) {
     if (!h || h->hidden || y < UI_KEY_HINT_RULE_Y || y >= UI_LOCK_HEIGHT || x >= UI_LOCK_WIDTH) return -1;
@@ -95,6 +134,7 @@ static app_redraw_t touch(app_ctx_t*c,const cst836u_touch_t*t) {
     (void)t;touch_calls++;assert(c->pressed&&c->consumed);
     if(request_on_touch)c->request_app=&second;
     if(home_on_touch)c->request_return=true;
+    if(qm_request_on_touch)c->request_quick_menu=true;
     return response;
 }
 static app_redraw_t gesture(app_ctx_t*c,const ui_gesture_event_t*e) {
@@ -128,6 +168,7 @@ static void reset(void) {
     key_handles_all=long_handles_all=tick_keep_awake=hide_hints=false;
     home_on_touch=home_on_tick=home_on_key=start_second=false;
     home_enters=home_renders=0;rendered_leaf=-1;hint_draws=0;
+    qm_opens=qm_closes=qm_renders=qm_gestures=0;qm_request_on_touch=false;
     memset(&last_hints,0,sizeof(last_hints));
     full_tick=lock_due=font_due=false;time_offset=0;time_step=10000;du_areas=gl_areas=0;
     memset(samples,0,sizeof(samples));memset(keys,0,sizeof(keys));memset(long_keys,0,sizeof(long_keys));
@@ -331,6 +372,36 @@ int main(void) {
     reset();first.key_hints=hints_cb;hide_hints=true;add(100,1190,1,0);add(0,0,0,0);run();
     assert(touch_calls==1&&keys[0]==0);
 
-    puts("app_loop: v3.2 scheduler, nav stack and 3-key scenarios passed");
+    // 13. 顶边（y < UI_QUICK_PULL_TOP_Y）下滑呼出快捷控制菜单：不触发 on_exit，不劫持顶栏点按或中部下滑。
+    // Top-edge pull-down opens Quick Control Menu without calling on_exit or stealing top taps / body swipes.
+    reset();first.on_gesture=gesture;
+    add(300,20,1,0);add(305,180,1,0);add(0,0,0,0); // 顶边下滑打开
+    add(300,600,1,0);add(300,420,1,0);add(0,0,0,0); // 上滑收起
+    run();
+    assert(qm_opens==1&&qm_closes==1&&qm_renders==1&&exits==0&&!events[UI_GESTURE_SWIPE_D]);
+
+    // 顶栏纯点按与中部区域下滑均正常交给页面。
+    // Top-bar tap and mid-screen downward swipe pass straight through to the page.
+    reset();first.on_gesture=gesture;
+    add(300,20,1,0);add(0,0,0,0);
+    add(300,300,1,0);add(300,460,1,0);add(0,0,0,0);
+    run();
+    assert(qm_opens==0&&events[UI_GESTURE_TAP]==1&&events[UI_GESTURE_SWIPE_D]==1);
+
+    // 旧 on_touch 页面同样支持顶边下滑，且 KEY1 收起 / KEY3 跳设置；holds_pmu 页面禁止呼出。
+    // Legacy on_touch pages also support top pull-down, KEY1 dismiss, KEY3 -> Settings; holds_pmu blocks it.
+    reset();
+    add(200,24,1,0);add(200,180,1,0);add(0,0,0,0); // 打开控制中心
+    add(240,1500,1,0);add(0,0,0,0); // KEY2 强刷控制中心
+    add(400,1500,1,0);add(0,0,0,0); // KEY3 跳往设置页（third）
+    run();
+    assert(qm_opens==1&&qm_closes==1&&qm_renders==2&&enters==2&&exits==1);
+
+    reset();first.holds_pmu=true;qm_request_on_touch=true;
+    add(200,24,1,0);add(200,180,1,0);add(0,0,0,0);
+    run();
+    assert(qm_opens==0);
+
+    puts("app_loop: v3.2 scheduler, nav stack, 3-key and quick-menu scenarios passed");
     return 0;
 }

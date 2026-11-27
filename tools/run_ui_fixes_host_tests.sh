@@ -9,10 +9,14 @@ cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g \
   -Icomponents/read_pico_transfer/include \
   tools/ui_fixes_host_test.c \
   main/time_sync.c \
+  main/ui/ui_icons.c \
   main/ui/ui_time_edit.c \
   main/ui/ui_heatmap.c \
   main/ui/ui_gesture.c \
+  main/ui/ui_quick_menu.c \
   main/app/app_loop.c \
+  main/apps/app_pico_home.c \
+  main/apps/app_onboarding.c \
   main/apps/app_settings.c \
   main/apps/app_focus.c \
   main/apps/app_personal.c \

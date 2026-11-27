@@ -47,6 +47,7 @@
 #include <time.h>
 
 #include "app.h"
+#include "app_book.h"
 #include "app_registry.h"
 #include "book_cover.h"
 #include "book_layout.h"
@@ -3367,6 +3368,39 @@ void app_book_queue_open(const char *path) {
         return;
     }
     copy_text(s_queued_open_path, sizeof(s_queued_open_path), path);
+}
+
+void app_book_sync_runtime_settings(app_ctx_t *ctx, bool apply_px_to_open_book) {
+    s_shake_enabled = app_settings_book_gesture() == 1;
+    const uint8_t rot = app_settings_book_rotation();
+    if (rot != 2) s_reader_landscape = (rot == 1);
+    if (apply_px_to_open_book) {
+        s_px = app_settings_book_px();
+        if (s_view == READING && s_path[0]) s_unsaved = 1;
+    }
+    if (s_view == READING) {
+        if (ctx) sensor_set(ctx, app_settings_book_gesture() != 0 || rot == 2);
+        invalidate_prep();
+        s_pages_since_clean = 0;
+        if (!s_cbz_mode && s_text && s_blocks) {
+            size_t off = book_layout_page_start_offset(s_page);
+            lock_draw();
+            apply_layout_opts();
+            if (book_layout_build_blocks_metrics(s_text, s_text_len, s_blocks, s_block_count,
+                                                 body_rect(), s_px, line_height_percent())) {
+                s_page = book_layout_page_for_offset(off);
+            }
+            unlock_draw();
+        } else if (s_cbz_mode) {
+            lock_draw();
+            cbz_decode_into_cache(s_cbz_page);
+            unlock_draw();
+        }
+        s_full = true;
+    } else if (s_view == SHELF && ctx) {
+        int total_leaves = leaves();
+        if (ctx->leaf >= total_leaves) ctx->leaf = total_leaves > 0 ? total_leaves - 1 : 0;
+    }
 }
 
 const app_desc_t app_book = {

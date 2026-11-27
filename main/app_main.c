@@ -207,9 +207,11 @@ void app_main(void) {
         .acc = hw.sensor,
         .tp = hw.touch,
         .sensor_ready = hw.sensor_ready,
-        // 自检跑到一半断电的话，重新上电直接回自检页接着跑。
-        // Resume the self-test page if a power-cut interrupted it.
-        .first_app = st_resume ? app_selftest_page() : app_home_page(),
+        // 自检跑到一半断电的话，重新上电直接回自检页接着跑；首次开机进入使用引导。
+        // Resume self-test after a power-cut; launch onboarding on first boot, else Home.
+        .first_app = st_resume
+            ? app_selftest_page()
+            : (app_settings_onboarding_done() ? app_home_page() : app_onboarding_page()),
         .on_bg_tick = app_ble_poll,
     });
 }

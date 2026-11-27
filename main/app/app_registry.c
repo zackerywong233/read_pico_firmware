@@ -16,6 +16,7 @@
 #include "app_registry.h"
 
 extern const app_desc_t app_pico_home;
+extern const app_desc_t app_onboarding;
 extern const app_desc_t app_book;
 extern const app_desc_t app_transfer;
 extern const app_desc_t app_web;
@@ -108,4 +109,8 @@ const app_desc_t* app_font_page(void) {
 
 const app_desc_t* app_settings_page(void) {
     return &app_settings;
+}
+
+const app_desc_t* app_onboarding_page(void) {
+    return &app_onboarding;
 }

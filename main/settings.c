@@ -55,6 +55,7 @@
 #define NVS_KEY_TRANSFER_PIN "tr_pin"
 #define NVS_KEY_BLE_EN "ble_en"
 #define NVS_KEY_BLE_PIN "ble_pin"
+#define NVS_KEY_ONBOARD "onboard"
 #define FONT_PATH_MAX 160
 #define AMBIENT_NS "rp_ambient"
 #define AMBIENT_KEY_ENABLED "enabled"
@@ -106,6 +107,7 @@ static bool s_muted;
 static bool s_transfer_pin_required;
 static bool s_ble_enabled = true;
 static bool s_ble_pin_required;
+static bool s_onboarding_done;
 
 static void apply_timezone(void) {
     int minutes = s_tz_min;
@@ -213,13 +215,14 @@ void app_settings_init(void) {
     }
     int16_t tz = 480;
     if (nvs_get_i16(h, NVS_KEY_TZ_MIN, &tz) == ESP_OK && tz >= -720 && tz <= 840) s_tz_min = tz;
-    uint8_t led = 1, low = 10, mute = 0, tr_pin = 0, ble_en = 1, ble_pin = 0;
+    uint8_t led = 1, low = 10, mute = 0, tr_pin = 0, ble_en = 1, ble_pin = 0, onboard = 0;
     if (nvs_get_u8(h, NVS_KEY_CHARGE_LED, &led) == ESP_OK) s_charge_led = led != 0;
     if (nvs_get_u8(h, NVS_KEY_LOW_SOC, &low) == ESP_OK && (low == 0 || (low >= 5 && low <= 30 && low % 5 == 0))) s_low_soc = low;
     if (nvs_get_u8(h, NVS_KEY_MUTE, &mute) == ESP_OK) s_muted = mute != 0;
     if (nvs_get_u8(h, NVS_KEY_TRANSFER_PIN, &tr_pin) == ESP_OK) s_transfer_pin_required = tr_pin != 0;
     if (nvs_get_u8(h, NVS_KEY_BLE_EN, &ble_en) == ESP_OK) s_ble_enabled = ble_en != 0;
     if (nvs_get_u8(h, NVS_KEY_BLE_PIN, &ble_pin) == ESP_OK) s_ble_pin_required = ble_pin != 0;
+    if (nvs_get_u8(h, NVS_KEY_ONBOARD, &onboard) == ESP_OK) s_onboarding_done = onboard != 0;
     nvs_close(h);
     if (nvs_open(AMBIENT_NS, NVS_READONLY, &h) == ESP_OK) {
         uint8_t enabled = 0, start = 23, end = 7, source = 2, last_ok = 0;
@@ -615,6 +618,82 @@ void app_settings_set_ble_pin_required(bool required) {
     if (s_ble_pin_required == required) return;
     s_ble_pin_required = required;
     nvs_put_u8(NVS_KEY_BLE_PIN, required ? 1 : 0);
+}
+
+bool app_settings_onboarding_done(void) { return s_onboarding_done; }
+void app_settings_set_onboarding_done(bool done) {
+    if (s_onboarding_done == done) return;
+    s_onboarding_done = done;
+    nvs_put_u8(NVS_KEY_ONBOARD, done ? 1 : 0);
+}
+
+void app_settings_reset_defaults(void) {
+    const uint8_t default_dash = APP_DASH_TIME | APP_DASH_BATTERY | APP_DASH_LAST_BOOK |
+                                 APP_DASH_NOTE | APP_DASH_HEATMAP;
+    s_sleep = APP_SLEEP_DEEP;
+    s_auto_sleep_sec = 120;
+    s_font[0] = '\0';
+    s_pickup_wake = false;
+    s_book_px = 48;
+    s_book_shake = false;
+    s_book_gesture = 0;
+    s_book_refresh = 1;
+    s_book_line_height = 1;
+    s_book_margin = 1;
+    s_book_weight = 0;
+    s_book_rotation = 0;
+    s_book_top = true;
+    s_book_bot = true;
+    s_book_para = 1;
+    s_book_indent = 0;
+    s_book_shelf = 0;
+    s_book_cbz_dir = 0;
+    s_book_cbz_dith = true;
+    s_saver = APP_SAVER_BUILTIN;
+    s_dashboard = default_dash;
+    s_tz_min = 480;
+    s_charge_led = true;
+    s_low_soc = 10;
+    s_muted = false;
+    s_transfer_pin_required = false;
+    s_ble_enabled = true;
+    s_ble_pin_required = false;
+
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, NVS_KEY_SLEEP, (uint8_t)s_sleep);
+        nvs_set_u16(h, NVS_KEY_AUTO_SLEEP, s_auto_sleep_sec);
+        nvs_set_str(h, NVS_KEY_FONT, s_font);
+        nvs_set_u8(h, NVS_KEY_PICKUP, 0);
+        nvs_set_u8(h, NVS_KEY_BOOK_PX, s_book_px);
+        nvs_set_u8(h, NVS_KEY_BOOK_SHAKE, 0);
+        nvs_set_u8(h, NVS_KEY_BOOK_GESTURE, s_book_gesture);
+        nvs_set_u8(h, NVS_KEY_BOOK_REFRESH, s_book_refresh);
+        nvs_set_u8(h, NVS_KEY_BOOK_LINE_HEIGHT, s_book_line_height);
+        nvs_set_u8(h, NVS_KEY_BOOK_MARGIN, s_book_margin);
+        nvs_set_u16(h, NVS_KEY_BOOK_WEIGHT, s_book_weight);
+        nvs_set_u8(h, NVS_KEY_BOOK_ROTATION, s_book_rotation);
+        nvs_set_u8(h, NVS_KEY_BOOK_TOP, 1);
+        nvs_set_u8(h, NVS_KEY_BOOK_BOT, 1);
+        nvs_set_u8(h, NVS_KEY_BOOK_PARA, s_book_para);
+        nvs_set_u8(h, NVS_KEY_BOOK_INDENT, s_book_indent);
+        nvs_set_u8(h, NVS_KEY_BOOK_SHELF, s_book_shelf);
+        nvs_set_u8(h, NVS_KEY_BOOK_CBZ_DIR, s_book_cbz_dir);
+        nvs_set_u8(h, NVS_KEY_BOOK_CBZ_DITH, 1);
+        nvs_set_u8(h, NVS_KEY_SAVER, (uint8_t)s_saver);
+        nvs_set_u8(h, NVS_KEY_DASH, s_dashboard);
+        nvs_set_u8(h, NVS_KEY_DASH_VER, NVS_DASH_VERSION);
+        nvs_set_i16(h, NVS_KEY_TZ_MIN, s_tz_min);
+        nvs_set_u8(h, NVS_KEY_CHARGE_LED, 1);
+        nvs_set_u8(h, NVS_KEY_LOW_SOC, s_low_soc);
+        nvs_set_u8(h, NVS_KEY_MUTE, 0);
+        nvs_set_u8(h, NVS_KEY_TRANSFER_PIN, 0);
+        nvs_set_u8(h, NVS_KEY_BLE_EN, 1);
+        nvs_set_u8(h, NVS_KEY_BLE_PIN, 0);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    app_settings_apply_runtime();
 }
 
 void app_settings_sync_pmu(void) {

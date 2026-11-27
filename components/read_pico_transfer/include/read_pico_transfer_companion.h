@@ -28,6 +28,13 @@ typedef struct {
     uint16_t book_weight;           ///< 字重 0 或 300..800 / Font weight 0 or 300..800
     uint8_t book_rotation;          ///< 阅读方向 0..2 / Reader orientation 0..2
     uint8_t book_gesture;           ///< 翻页手势 0..2 / Page-turn gesture 0..2
+    bool book_top_bar;              ///< 阅读顶部状态栏开关 / Reader top status bar switch
+    bool book_bottom_bar;           ///< 阅读底部信息栏开关 / Reader bottom info bar switch
+    uint8_t book_para_gap;          ///< 阅读段间距档位 0..2 / Paragraph gap preset 0..2
+    uint8_t book_indent;            ///< 阅读段首缩进 0..1 / First-line indent mode 0..1
+    uint8_t book_shelf_view;        ///< 书架视图 0=封面网格 1=列表 / Shelf view 0=grid 1=list
+    uint8_t book_cbz_dir;           ///< CBZ 翻页方向 0=右翻 1=左翻 / CBZ direction 0=RTL 1=manga
+    bool book_cbz_dither;           ///< CBZ 16 灰阶有序抖动 / CBZ ordered dithering
     uint8_t saver_style;            ///< 锁屏样式 0..4 / Lock-screen style 0..4
     uint8_t dashboard_items;        ///< 看板开关位掩码 0..31 / Dashboard item bitmask 0..31
     int16_t timezone_min;           ///< 全局时区偏移分钟 -720..840 / Timezone offset minutes -720..840

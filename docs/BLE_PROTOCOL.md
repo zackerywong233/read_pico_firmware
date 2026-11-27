@@ -114,14 +114,14 @@ Lightweight Bluetooth Low Energy (BLE) control protocol for companion iOS apps (
 ### 4.4 远程操控与网页直达
 
 - **`webopen`**：`{"id":8,"cmd":"webopen","url":"https://example.com/article"}`；排队 URL 并切入「网页阅读」页在连上已保存 Wi-Fi 后自动抓取打开。
-- **`open_app`**：`{"id":9,"cmd":"open_app","app":"home"|"books"|"transfer"|"web"|"sketch"|"focus"|"agent"|"personal"|"settings"}`；远程切换设备当前应用页（自检/OTA/上传中返回 `code: "busy"`）。
+- **`open_app`**：`{"id":9,"cmd":"open_app","app":"home"|"books"|"transfer"|"web"|"feeds"|"files"|"sketch"|"focus"|"agent"|"personal"|"settings"}`；远程切换设备当前应用页（自检/OTA/上传中返回 `code: "busy"`）。
 - **`refresh_screen`**：`{"id":10,"cmd":"refresh_screen"}`；对当前页触发一次整屏 GC16 强刷清残影。
 - **`lock`**：`{"id":11,"cmd":"lock"}`；触发与短按侧边电源键一致的全局锁屏/睡眠流程（先回包 `ok: true`，约 100 ms 后进入锁屏并自动断开 BLE）。
 
 ### 4.5 对时、系统设置、Agent 与定时看板配置
 
 - **`time_sync`**：`{"id":12,"cmd":"time_sync","unix_sec":1795190000,"timezone_min":480}`；无需 Wi-Fi 同步主机时钟与主板 PMU RTC，当前在专注时钟或个人看板页时自动重绘刷新。
-- **`settings_get`** / **`settings_patch`**：读写设备设置快照（含 `ble_enabled`、`ble_pin_required`、`saver_style` 0..4、`dashboard_items` 0..31，与 HTTP `/settings` 共享原子校验，拒绝 `vcom` 与 `font_path`）。
+- **`settings_get`** / **`settings_patch`**：读写设备设置快照（含 `ble_enabled`、`ble_pin_required`、`book_top_bar`、`book_bottom_bar`、`book_para_gap`、`book_indent`、`book_shelf_view`、`book_cbz_dir`、`book_cbz_dither`、`saver_style` 0..4、`dashboard_items` 0..31，与 HTTP `/settings` 共享原子校验，拒绝 `vcom` 与 `font_path`）。
   - 请求：`{"id":13,"cmd":"settings_patch","settings":{"book_px":52,"muted":true}}`
 - **`agent_get`** / **`agent_set`**：离线配置 MQTT/TLS Agent（密码永不回显；`{"clear":true}` 清除配置；不传 `password` 且 `clear_password` 不为 `true` 时保留原密码）。
   - 请求：`{"id":14,"cmd":"agent_set","uri":"mqtts://broker.example.com:8883","username":"u","password":"p","topic":"pico/inbox"}`

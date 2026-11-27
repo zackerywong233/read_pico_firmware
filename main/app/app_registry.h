@@ -29,6 +29,9 @@ const app_desc_t* app_selftest_page(void);
 const app_desc_t* app_font_page(void);
 /// 一级设置页，供桌面入口跳转。/ Root Settings page for the home launcher.
 const app_desc_t* app_settings_page(void);
+/// 初始使用引导页，首次开机自动进入，也可从设置页重看。
+/// Onboarding guide page: entered automatically on first boot and accessible from Settings.
+const app_desc_t* app_onboarding_page(void);
 
 #ifdef __cplusplus
 }

@@ -16,6 +16,7 @@
 
 #include "ambient_sync.h"
 #include "app_registry.h"
+#include "app_settings.h"
 #include "ble_service.h"
 #include "esp_app_desc.h"
 #include "ota_update.h"
@@ -56,8 +57,26 @@ static int s_pressed = CTRL_NONE;
 static EpdRect s_dirty_area;
 static char s_notice[96];
 static ui_time_edit_t s_time_editor;
+static bool s_open_time_edit_pending;
+static bool s_time_edit_direct;
+static bool s_reset_confirm;
 static ota_update_state_t s_ota_last_state;
 static unsigned s_ota_last_progress;
+
+void app_settings_open_time_edit_next(void) {
+    s_open_time_edit_pending = true;
+}
+
+static void sync_view_from_ctx(const app_ctx_t *ctx) {
+    if (ctx && ctx->leaf >= (int)SETTINGS_VIEW_ROOT && ctx->leaf <= (int)SETTINGS_VIEW_UPDATE) {
+        s_view = (settings_view_t)ctx->leaf;
+    }
+}
+
+static void set_view(app_ctx_t *ctx, settings_view_t v) {
+    s_view = v;
+    if (ctx) ctx->leaf = (int)v;
+}
 
 static const uint16_t k_sleep_timeouts[] = {
     30, 60, 120, 300, 600, 900, 1800, 3600, 0,
@@ -296,6 +315,22 @@ static void render_display(uint8_t *fb) {
                     para_names[app_settings_book_para_gap() % 3], s_pressed == 9);
     draw_action_btn(fb, ui_row_rect(1, 2, y7, UI_BTN_H),
                     app_settings_book_indent() ? "缩进 强制两格" : "缩进 跟随原文", s_pressed == 10);
+
+    int y8 = UI_CONTENT_TOP + 8 * (UI_BTN_H + UI_GAP);
+    static const char *rot_names[3] = { "方向 竖屏", "方向 横屏", "方向 自动" };
+    static const char *gest_names[3] = { "手势 关闭", "手势 晃动", "手势 轻敲" };
+    draw_action_btn(fb, ui_row_rect(0, 2, y8, UI_BTN_H),
+                    rot_names[app_settings_book_rotation() % 3], s_pressed == 11);
+    draw_action_btn(fb, ui_row_rect(1, 2, y8, UI_BTN_H),
+                    gest_names[app_settings_book_gesture() % 3], s_pressed == 12);
+
+    int y9 = UI_CONTENT_TOP + 9 * (UI_BTN_H + UI_GAP);
+    draw_action_btn(fb, ui_row_rect(0, 2, y9, UI_BTN_H),
+                    app_settings_book_shelf_view() ? "书架 紧凑列表" : "书架 封面网格",
+                    s_pressed == 13);
+    draw_action_btn(fb, ui_row_rect(1, 2, y9, UI_BTN_H),
+                    app_settings_book_cbz_dir() ? "漫画 日漫左翻" : "漫画 常规右翻",
+                    s_pressed == 14);
 }
 
 static void render_sleep(uint8_t *fb) {
@@ -365,6 +400,14 @@ static void render_device(uint8_t *fb) {
     draw_kv_btn(fb, sub_row_rect(btn_y, 0), "设备概览与识别码", "打开 ›", s_pressed == 0);
     draw_kv_btn(fb, sub_row_rect(btn_y, 1), "存储与蜂鸣", "打开 ›", s_pressed == 1);
     draw_kv_btn(fb, sub_row_rect(btn_y, 2), "设备自检", "打开 ›", s_pressed == 2);
+    draw_kv_btn(fb, sub_row_rect(btn_y, 3), "新手使用引导", "查看 ›", s_pressed == 3);
+    draw_kv_btn(fb, sub_row_rect(btn_y, 4),
+                s_reset_confirm ? "确认恢复默认偏好" : "恢复默认偏好",
+                s_reset_confirm ? "立即执行" : "重置 ›", s_pressed == 4);
+    if (s_notice[0]) {
+        ui_text(fb, UI_MARGIN, btn_y + 5 * (UI_BTN_H + UI_GAP) + 8, UI_PX_CAPTION,
+                s_notice, EPD_DRAW_ALIGN_LEFT, false);
+    }
 }
 
 static void render_update(uint8_t *fb) {
@@ -389,7 +432,7 @@ static void render_update(uint8_t *fb) {
 }
 
 static void render(app_ctx_t *ctx, uint8_t *fb) {
-    (void)ctx;
+    sync_view_from_ctx(ctx);
     if (s_view == SETTINGS_VIEW_TIME_EDIT) {
         ui_time_edit_render(&s_time_editor, fb);
         return;
@@ -445,7 +488,9 @@ static int hit_control(uint16_t x, uint16_t y, EpdRect *out_rect) {
         int y1 = UI_CONTENT_TOP + (UI_BTN_H + UI_GAP);
         int y6 = UI_CONTENT_TOP + 6 * (UI_BTN_H + UI_GAP);
         int y7 = UI_CONTENT_TOP + 7 * (UI_BTN_H + UI_GAP);
-        EpdRect rects[11] = {
+        int y8 = UI_CONTENT_TOP + 8 * (UI_BTN_H + UI_GAP);
+        int y9 = UI_CONTENT_TOP + 9 * (UI_BTN_H + UI_GAP);
+        EpdRect rects[15] = {
             row_rect(0),
             ui_row_rect(0, 2, y1, UI_BTN_H),
             ui_row_rect(1, 2, y1, UI_BTN_H),
@@ -457,8 +502,12 @@ static int hit_control(uint16_t x, uint16_t y, EpdRect *out_rect) {
             ui_row_rect(1, 2, y6, UI_BTN_H),
             ui_row_rect(0, 2, y7, UI_BTN_H),
             ui_row_rect(1, 2, y7, UI_BTN_H),
+            ui_row_rect(0, 2, y8, UI_BTN_H),
+            ui_row_rect(1, 2, y8, UI_BTN_H),
+            ui_row_rect(0, 2, y9, UI_BTN_H),
+            ui_row_rect(1, 2, y9, UI_BTN_H),
         };
-        for (int i = 0; i < 11; ++i) {
+        for (int i = 0; i < 15; ++i) {
             if (ui_rect_hit(rects[i], x, y)) {
                 if (out_rect) *out_rect = rects[i];
                 return i;
@@ -492,7 +541,7 @@ static int hit_control(uint16_t x, uint16_t y, EpdRect *out_rect) {
 
     if (s_view == SETTINGS_VIEW_DEVICE) {
         int btn_y = UI_CONTENT_TOP + UI_SEC_HEAD + 3 * UI_ROW_H + UI_SECTION_GAP;
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 5; ++i) {
             EpdRect r = sub_row_rect(btn_y, i);
             if (ui_rect_hit(r, x, y)) {
                 if (out_rect) *out_rect = r;
@@ -517,27 +566,47 @@ static int hit_control(uint16_t x, uint16_t y, EpdRect *out_rect) {
 }
 
 static void on_enter(app_ctx_t *ctx) {
-    (void)ctx;
     (void)read_pico_transfer_get_saved_wifi_list(s_networks, &s_network_count);
     (void)read_pico_pmu_refresh();
     app_time_sync_from_pmu();
-    s_view = SETTINGS_VIEW_ROOT;
     s_pressed = CTRL_NONE;
     s_dirty_area = (EpdRect){ 0 };
     s_notice[0] = '\0';
+    s_reset_confirm = false;
+    if (s_open_time_edit_pending) {
+        s_open_time_edit_pending = false;
+        s_time_edit_direct = true;
+        ui_time_edit_open(&s_time_editor);
+        set_view(ctx, SETTINGS_VIEW_TIME_EDIT);
+    } else {
+        s_time_edit_direct = false;
+        set_view(ctx, SETTINGS_VIEW_ROOT);
+    }
 }
 
 static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t y) {
     if (s_view == SETTINGS_VIEW_TIME_EDIT) {
         ui_time_edit_result_t res = ui_time_edit_tap(&s_time_editor, x, y);
         if (res == UI_TIME_EDIT_SAVED) {
+            if (s_time_edit_direct) {
+                s_time_edit_direct = false;
+                set_view(ctx, SETTINGS_VIEW_ROOT);
+                ctx->request_return = true;
+                return APP_REDRAW_NONE;
+            }
             snprintf(s_notice, sizeof(s_notice), "%s",
                      s_time_editor.pmu_synced ? "时间已保存并同步主板 RTC" : "时间已保存至主机");
-            s_view = SETTINGS_VIEW_NETWORK_TIME;
+            set_view(ctx, SETTINGS_VIEW_NETWORK_TIME);
             return APP_REDRAW_FULL;
         }
         if (res == UI_TIME_EDIT_CANCELLED) {
-            s_view = SETTINGS_VIEW_NETWORK_TIME;
+            if (s_time_edit_direct) {
+                s_time_edit_direct = false;
+                set_view(ctx, SETTINGS_VIEW_ROOT);
+                ctx->request_return = true;
+                return APP_REDRAW_NONE;
+            }
+            set_view(ctx, SETTINGS_VIEW_NETWORK_TIME);
             return APP_REDRAW_FULL;
         }
         return res == UI_TIME_EDIT_CHANGED ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
@@ -548,27 +617,27 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
         switch (hit) {
             case 0:
                 (void)read_pico_transfer_get_saved_wifi_list(s_networks, &s_network_count);
-                s_view = SETTINGS_VIEW_NETWORK_TIME;
+                set_view(ctx, SETTINGS_VIEW_NETWORK_TIME);
                 return APP_REDRAW_PAGE;
             case 1:
-                s_view = SETTINGS_VIEW_DISPLAY;
+                set_view(ctx, SETTINGS_VIEW_DISPLAY);
                 return APP_REDRAW_PAGE;
             case 2:
-                s_view = SETTINGS_VIEW_SLEEP;
+                set_view(ctx, SETTINGS_VIEW_SLEEP);
                 return APP_REDRAW_PAGE;
             case 3:
                 (void)read_pico_pmu_refresh();
-                s_view = SETTINGS_VIEW_POWER;
+                set_view(ctx, SETTINGS_VIEW_POWER);
                 return APP_REDRAW_PAGE;
             case 4:
                 (void)read_pico_pmu_refresh();
-                s_view = SETTINGS_VIEW_DEVICE;
+                set_view(ctx, SETTINGS_VIEW_DEVICE);
                 return APP_REDRAW_PAGE;
             case 5:
                 ctx->request_app = app_personal_page();
                 return APP_REDRAW_NONE;
             case 6:
-                s_view = SETTINGS_VIEW_UPDATE;
+                set_view(ctx, SETTINGS_VIEW_UPDATE);
                 s_ota_last_state = OTA_UPDATE_IDLE;
                 s_ota_last_progress = ~0u;
                 return APP_REDRAW_PAGE;
@@ -593,8 +662,9 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
             return APP_REDRAW_PAGE;
         }
         if (hit == 2) {
+            s_time_edit_direct = false;
             ui_time_edit_open(&s_time_editor);
-            s_view = SETTINGS_VIEW_TIME_EDIT;
+            set_view(ctx, SETTINGS_VIEW_TIME_EDIT);
             return APP_REDRAW_FULL;
         }
         if (hit == 3 || hit == 4) {
@@ -640,6 +710,14 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
             app_settings_set_book_para_gap((uint8_t)((app_settings_book_para_gap() + 1) % 3));
         } else if (hit == 10) {
             app_settings_set_book_indent((uint8_t)((app_settings_book_indent() + 1) % 2));
+        } else if (hit == 11) {
+            app_settings_set_book_rotation((uint8_t)((app_settings_book_rotation() + 1) % 3));
+        } else if (hit == 12) {
+            app_settings_set_book_gesture((uint8_t)((app_settings_book_gesture() + 1) % 3));
+        } else if (hit == 13) {
+            app_settings_set_book_shelf_view((uint8_t)((app_settings_book_shelf_view() + 1) % 2));
+        } else if (hit == 14) {
+            app_settings_set_book_cbz_dir((uint8_t)((app_settings_book_cbz_dir() + 1) % 2));
         }
         return APP_REDRAW_PAGE;
     }
@@ -685,9 +763,25 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
     }
 
     if (s_view == SETTINGS_VIEW_DEVICE) {
+        if (hit == 4) {
+            if (!s_reset_confirm) {
+                s_reset_confirm = true;
+                snprintf(s_notice, sizeof(s_notice), "再次点按确认恢复默认偏好（保留 Wi-Fi 与图书）");
+                return APP_REDRAW_PAGE;
+            }
+            s_reset_confirm = false;
+            app_settings_reset_defaults();
+            app_ble_set_enabled(app_settings_ble_enabled());
+            app_ble_set_pin_required(app_settings_ble_pin_required());
+            snprintf(s_notice, sizeof(s_notice), "已恢复默认偏好设置");
+            return APP_REDRAW_PAGE;
+        }
+        s_reset_confirm = false;
+        s_notice[0] = '\0';
         if (hit == 0) ctx->request_app = &app_home;
         else if (hit == 1) ctx->request_app = &app_sd;
         else if (hit == 2) ctx->request_app = app_selftest_page();
+        else if (hit == 3) ctx->request_app = app_onboarding_page();
         return APP_REDRAW_NONE;
     }
 
@@ -721,7 +815,7 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
             if (status.state == OTA_UPDATE_DOWNLOADING || status.state == OTA_UPDATE_CHECKING) {
                 ota_update_cancel();
             } else {
-                s_view = SETTINGS_VIEW_ROOT;
+                set_view(ctx, SETTINGS_VIEW_ROOT);
                 s_notice[0] = '\0';
             }
             return APP_REDRAW_PAGE;
@@ -735,6 +829,7 @@ static app_redraw_t commit_action(app_ctx_t *ctx, int hit, uint16_t x, uint16_t 
 // Press uses local DU only so the loop does not cancel the active gesture; release commits navigation or changes.
 static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) {
     if (!event) return APP_REDRAW_NONE;
+    sync_view_from_ctx(ctx);
 
     if (event->type == UI_GESTURE_PRESS) {
         EpdRect rect = { 0 };
@@ -782,11 +877,18 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
 }
 
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
-    (void)ctx;
+    sync_view_from_ctx(ctx);
     if (key != UI_KEY_1) return APP_REDRAW_NONE;
     s_pressed = CTRL_NONE;
+    s_reset_confirm = false;
     if (s_view == SETTINGS_VIEW_TIME_EDIT) {
-        s_view = SETTINGS_VIEW_NETWORK_TIME;
+        if (s_time_edit_direct) {
+            s_time_edit_direct = false;
+            set_view(ctx, SETTINGS_VIEW_ROOT);
+            ctx->request_return = true;
+            return APP_REDRAW_NONE;
+        }
+        set_view(ctx, SETTINGS_VIEW_NETWORK_TIME);
         return APP_REDRAW_FULL;
     }
     if (s_view != SETTINGS_VIEW_ROOT) {
@@ -798,7 +900,7 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
                 return APP_REDRAW_PAGE;
             }
         }
-        s_view = SETTINGS_VIEW_ROOT;
+        set_view(ctx, SETTINGS_VIEW_ROOT);
         s_notice[0] = '\0';
         return APP_REDRAW_PAGE;
     }
@@ -816,6 +918,7 @@ static void settings_on_exit(app_ctx_t *ctx) {
 }
 
 static app_redraw_t on_tick(app_ctx_t *ctx) {
+    sync_view_from_ctx(ctx);
     ota_update_status_t status;
     ota_update_get_status(&status);
     if (status.state == OTA_UPDATE_CHECKING || status.state == OTA_UPDATE_DOWNLOADING) {
@@ -845,7 +948,7 @@ static EpdRect area_hint(app_ctx_t *ctx) {
 }
 
 static void key_hints(app_ctx_t *ctx, ui_key_hints_t *out) {
-    (void)ctx;
+    sync_view_from_ctx(ctx);
     if (s_view == SETTINGS_VIEW_UPDATE) {
         ota_update_status_t status;
         ota_update_get_status(&status);

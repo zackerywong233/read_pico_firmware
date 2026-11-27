@@ -13,4 +13,6 @@ int epd_rotated_display_height(void);
 void epd_draw_pixel(int x, int y, uint8_t color, uint8_t *fb);
 void epd_fill_rect(EpdRect r, uint8_t color, uint8_t *fb);
 void epd_fill_triangle(int x0, int y0, int x1, int y1, int x2, int y2, uint8_t c, uint8_t *fb);
+void epd_draw_circle(int x, int y, int r, uint8_t color, uint8_t *fb);
+void epd_fill_circle(int x, int y, int r, uint8_t color, uint8_t *fb);
 void epd_poweron(void);

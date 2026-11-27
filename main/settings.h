@@ -155,6 +155,14 @@ void app_settings_set_ble_enabled(bool enabled);
 bool app_settings_ble_pin_required(void);
 /// 保存 BLE 配对码鉴权开关。/ Persist the BLE PIN authentication switch.
 void app_settings_set_ble_pin_required(bool required);
+/// 首次开机使用引导是否已完成；未完成时默认开机先进入引导流程。
+/// Whether the first-boot onboarding guide has been completed; false launches onboarding on boot.
+bool app_settings_onboarding_done(void);
+/// 保存初始使用引导完成标记。/ Persist the onboarding completion flag.
+void app_settings_set_onboarding_done(bool done);
+/// 恢复用户偏好为出厂默认值并同步主机与 PMU（保留 VCOM、Wi-Fi 凭据、图书、笔记与引导完成状态）。
+/// Reset user preferences to defaults and sync host/PMU (preserving VCOM, Wi-Fi credentials, books, notes, and onboarding state).
+void app_settings_reset_defaults(void);
 /// 开机同步低电阈值与充电灯到 PMU。/ Sync the low-battery threshold and charge LED to the PMU at boot.
 void app_settings_sync_pmu(void);
 /// 仅保存时区到 NVS，由主循环调用 app_settings_apply_runtime 应用。

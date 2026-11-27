@@ -11,11 +11,13 @@
 
 Read Pico is an ESP32-S3 development board in the Read series with a 4.7" monochrome e-paper panel,
 made by Shenzhen MindReset Technology Co., Ltd. This repository provides Pico OS, the firmware
-that runs on the board, with native apps for books, WiFi transfer, the device dashboard and system status.
+that runs on the board, featuring a 3-page 24-app 3×3 grid launcher, a 5-step interactive first-run
+Onboarding Guide, a top pull-down Quick Control Menu, and native apps for books, Wi-Fi/BLE companion
+transfer, OPDS/RSS feeds, web reading, TF file management, sketch pad, Pomodoro clock, dashboard,
+Agent inbox, and unified system settings.
 
-Device self-test stays in the root app menu. Lower-level display, touch, sensor, power, key,
-storage, font and sleep diagnostics are grouped under System Tools. The board support package,
-PMU protocol host and chip drivers remain reusable foundations for extending Pico OS.
+The board support package, lightweight BLE companion service, PMU protocol host and chip drivers
+remain reusable foundations for extending Pico OS.
 
 Agent-facing layout, `app_desc_t` contract, glossary and comment style are in
 [AGENTS.md](AGENTS.md).
@@ -67,30 +69,22 @@ The panel VCOM is calibrated at the factory and stored in the PMU. The firmware
 reads it once at boot to configure the driver; it is neither stored locally nor
 user-editable.
 
-## Pico OS Apps
+## Pico OS Apps & Interaction
 
-Pico OS boots to its launcher. The root app menu presents daily features, device status,
-self-test and a System Tools entry; hardware diagnostics are one level deeper.
+On first boot, Pico OS opens a 5-step interactive Onboarding Guide covering timezone/clock calibration and core gestures before entering the 3-page 3×3 grid launcher (all 24 apps and hardware diagnostics laid out as `9 + 9 + 6` beneath a live clock and battery status bar). Pulling down from the top screen edge on any non-PMU-exclusive page (or tapping the Home status bar) opens the Quick Control Menu overlay to toggle BLE, global mute, charge LED, pickup wake, auto-sleep, and lock-screen saver style, adjust live reader font size, refresh profile, HUD bars, and orientation, or trigger full GC16 refresh, lock, and Wi-Fi transfer without leaving the current page.
 
-| Root app | Content |
+| App | Content |
 | --- | --- |
-| Books | UTF-8 / GBK TXT and EPUB from TF or internal storage; chapters, font size, per-book resume, bookmarks and excerpts, shelf filters/sorting/search and management. Notes are stored beside the books without per-book item-count or excerpt-length caps; physical storage and memory are the practical limits. Tap an entry to return to its text. Open the reader toolbar to tap the bottom progress track to seek (taps on the bottom bar are ignored during clean reading to prevent accidental jumps); cross-chapter jumps paginate through the target. Each page turn uses full-screen GC16. EPUB navigation supports NCX and nav documents. |
-| Transfer | Upload TXT/EPUB and TTF fonts over the device hotspot or existing WiFi. When TF and internal storage are both available, tap the capacity row to switch the book destination while idle; fonts remain TF-only. Includes touchscreen provisioning, QR connection, browser book management, confirmed replacement/deletion, cancellation and retry. Networking stops on exit. |
-| Web Reader | Enter an HTTP/HTTPS address to read extracted page text. A browser bookmark on the same WiFi can save a page as a TXT book. Static extraction does not run scripts or load CSS/images; networking stops on page exit or device lock. |
-| Agent Inbox | Configure an MQTT/TLS broker and topic on the local transfer page. Open Agent Inbox from the app menu to receive JSON text or HTTPS images; text is paginated and images can become the lock-screen saver. Networking runs only while the app is active. |
-| Device Status | Boot I2C scan, IDs, battery and charging status, build time. |
-| Dashboard | Optional date, battery, recent reading and personal text; lock-screen theme. |
-| Device Self-Test | Device probes and command ACKs; power-cut items are recorded in the backend only. |
-| System Tools | Open the hardware diagnostics and development helpers below. |
-
-System Tools contains EPD refresh, built-in reading, touch, accelerometer and IMU lab,
-power, PMU, key events, sleep/wake, storage and buzzer, font management and IO expander.
-The sleep tool covers deep sleep, light sleep and power-off; the default lock uses soft
-sleep and wakes on a short power-key press, while explicit power-off requires a long press.
+| Books | UTF-8 / GBK `TXT`, `EPUB`, `MD`, and `CBZ` manga from TF or internal storage; Recent Reading card, 3×2 cover grid / compact list, multi-condition filtering, 4 sort modes, pinyin search, and batch management; adjustable size, weight, line spacing, margins, paragraph gap, 2-em indent, and independent top/bottom HUD bars; long-press sentence excerpts and toolbar progress-bar seeking. |
+| Transfer & Companion | Upload books and TF `.ttf` fonts over SoftAP or existing Wi-Fi via browser or Companion LAN HTTP API v2, paired with the `ReadPico-XXXX` BLE control channel for Wi-Fi-free time sync, Wi-Fi provisioning, reading progress/notes/stats backup & restore, web bookmarks, and feed configuration. |
+| Web Reader & Feeds | Read statically extracted HTTP/HTTPS articles (with LAN browser clipping and synced bookmarks), browse multi-level OPDS 1.2 catalogs with streaming book downloads, and read cached RSS 2.0 / Atom 1.0 feeds. |
+| Files, Sketch & Focus | Standalone TF card file manager with safety guardrails, image wallpaper preview, and text preview; continuous-DU handwritten sketch pad with upright PNG export; desk clock and 15/25/45-minute foreground Pomodoro timer. |
+| Dashboard, Agent & Settings | Personal Dashboard with date/time, battery, recent book, 26-week reading heatmap, personal note, 5 lock-screen styles, and scheduled PMU wake sync; MQTT/TLS Agent Inbox for paginated text and HTTPS saver images; unified Settings with Network/Time, Display/Reading, Sleep/Saver, Power/Alerts, Onboarding replay, Reset Preferences, and Wi-Fi OTA. |
+| Diagnostics (Pages 2–3) | Device Overview, Self-Test, Sleep/Wake, Storage & Buzzer, Font Picker, Power, EPD Refresh, Touch, Built-in Reading, Accelerometer, IMU Lab, PMU Protocol, Key Test, and IO Expander. |
 
 Agent messages use one MQTT JSON object: `{"type":"text","title":"Title","text":"Body"}` or `{"type":"image","url":"https://example.com/image.jpg"}`. Configure the broker, username, password and exact topic on the device's local transfer page. The password is stored unencrypted on device and is never echoed by the webpage. Image delivery requires a mounted TF card and a valid HTTPS certificate.
 
-Physical keys follow one unified scheme across Pico OS: on regular pages and subviews, short-pressing KEY1 / KEY2 / KEY3 triggers Back / full GC16 refresh / App Menu; during active text reading (Books, Web Reader, Agent Inbox and Built-in Reading), short-pressing KEY1 / KEY2 / KEY3 triggers previous page / full GC16 refresh / next page (tap the center of a book page to toggle the reader toolbar). On any page or menu, holding KEY1 / KEY2 / KEY3 for 500 ms triggers Home / full GC16 refresh / App Menu without firing the short-press action. Menu rows select on release; slide away to cancel.
+Physical keys and the bottom touch key-hint strip share one unified OS contract: short `KEY2` runs a full-screen GC16 refresh and holding `KEY2` (500 ms) returns globally to Home Page 1; short `KEY1` / `KEY3` dispatch to the active page first (turning pages in readers and multi-page lists), with unhandled `KEY1` popping the 8-level navigation stack and holding `KEY1` (500 ms) returning directly to the parent page.
 
 ## Repository Layout
 

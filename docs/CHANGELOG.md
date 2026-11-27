@@ -1,5 +1,16 @@
 # 版本变更 / Changelog
 
+## v1.0.9 · 2026-11-27
+
+- 新增全系统顶部边缘下滑快捷控制中心（`ui_quick_menu`）：在任意非独占 PMU 页面从屏幕顶边（`y < 58`）向下拉动（或在桌面点按顶部状态栏），即可在不退出当前图书、联网会话或手写画布的前提下展开控制中心；提供实时本地时钟/日期时区（点按直达校准并返回原页）、电量百分比/电压与存储状态、6 项快捷开关（蓝牙伴侣、全局静音、充电指示灯、拿起唤醒、自动锁屏时长循环、锁屏样式循环）、5 项阅读与显示即时调节（默认字号 `±4`、刷新档位、阅读栏模式、阅读方向）以及 4 项快捷动作（全屏强刷、立即锁屏、无线传书、回到桌面/打开图书），收起时自动将阅读变更实时同步至活动图书页并以整屏 `GC16` 恢复。
+  Add system-wide top-edge pull-down Quick Control Menu (`ui_quick_menu`): swipe down from the top bezel (`y < 58`) on any non-`holds_pmu` page (or tap the Home top status bar) to open the overlay without leaving the active book, Wi-Fi session, or sketch canvas; includes live local clock/timezone (tap to calibrate and return), battery %/voltage and storage summary, 6 quick toggles (BLE, global mute, charge LED, pickup wake, auto-sleep cycle, lock-screen saver cycle), 5 live reader/display controls (font size `±4`, refresh profile, HUD mode, orientation), and 4 quick actions (full GC16 clean, lock, Wi-Fi transfer, Home/Books), syncing active reader layout on dismiss with full-screen `GC16`.
+
+- 新增五步交互式初始使用引导（`app_onboarding`）：首次开机（或擦除 Flash 刷机后）自动进入，涵盖时区调节与手动时钟校准、屏下三键与底部触控说明带图解、顶部下滑控制中心与手势互动体验、无线传书/蓝牙伴侣与外置完整中文字库提示、以及锁屏休眠模式与屏保个性化配置；支持左/右滑屏、`KEY1`/`KEY3` 与任意步一键跳过，并可在「设置 → 设备与诊断 → 新手使用引导」随时重新查看。
+  Add 5-step interactive first-run Onboarding Guide (`app_onboarding`): launches automatically on first boot (or after erasing NVS) covering timezone & manual clock calibration, physical 3-key & bottom touch hint-strip diagram, interactive top pull-down Quick Control Menu & gesture walkthrough, Wi-Fi/BLE transfer & external CJK `.ttf` font guidance, and sleep/saver setup; supports swipe/`KEY1`/`KEY3` paging, 1-tap skip, and reopening anytime from Settings → Device & Diagnostics.
+
+- 完善桌面、系统设置、伴侣协议与内置字库：为九宫格桌面（`app_pico_home`）新增分钟与电量变化驱动的顶栏局部 `DU` 实时刷新（不重置自动休眠计时）；在「设置 → 显示与阅读」补齐阅读方向、翻页手势、书架视图与漫画方向开关，在「设置 → 设备与诊断」新增两步确认「恢复默认偏好」（保留 PMU VCOM、已存 Wi-Fi 与图书笔记）；为局域网 `/settings` 与蓝牙 `settings_get`/`settings_patch` 补齐全部 7 项阅读栏/排版/书架/漫画字段及 `open_app` 的 `feeds`/`files` 目标；重新生成 `builtin.ttf` 修复缺字并达成 100% 界面字形覆盖。
+  Polish Home launcher, Settings, companion protocols, and built-in font: add minute- and battery-change driven local `DU` status-bar updates on `app_pico_home` without resetting idle sleep; add reader orientation, gesture, shelf view, and CBZ direction controls to Settings → Display & Reading plus two-step confirmed Reset Preferences to Defaults in Settings → Device & Diagnostics (preserving PMU VCOM, saved Wi-Fi, and books/notes); expose all 7 reader HUD/typography/shelf/CBZ fields on HTTP `/settings` and BLE `settings_get`/`settings_patch` plus `feeds`/`files` targets on BLE `open_app`; regenerate `builtin.ttf` to 100% UI glyph coverage.
+
 ## v1.0.8 · 2026-11-25
 
 - 合并底部触控导航与屏下三键说明带，简化全仓页面布局：在 `ui_menu` 与 `app_loop` 中为底部三键说明带（`y = 1168..1215`）增加触控命中，点按/500 ms 长按非空格与屏下三键共用同一套短/长按路由，空位吸收误触不透传，全屏阅读隐藏态正常透传；移除图书、文件管理、订阅书库、网页阅读、传书选网、字体管理、设置、我的看板与 Agent 历史页中与说明带重复的翻页/返回触控底栏，补齐各页 `key_hints` 与左右滑翻页，释放约 100 px 纵向内容空间。

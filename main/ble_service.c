@@ -47,9 +47,12 @@
 extern const app_desc_t app_pico_home;
 extern const app_desc_t app_book;
 extern const app_desc_t app_feeds;
+extern const app_desc_t app_files;
 extern const app_desc_t app_sketch;
 extern const app_desc_t app_agent;
 extern const app_desc_t app_settings;
+extern const app_desc_t app_onboarding;
+extern void app_book_sync_runtime_settings(app_ctx_t *ctx, bool apply_px_to_open_book);
 
 static const char *TAG = "ble_service";
 
@@ -153,6 +156,13 @@ static void read_device_settings_snapshot(read_pico_device_settings_t *out) {
     out->book_weight = app_settings_book_weight();
     out->book_rotation = app_settings_book_rotation();
     out->book_gesture = app_settings_book_gesture();
+    out->book_top_bar = app_settings_book_top_bar();
+    out->book_bottom_bar = app_settings_book_bottom_bar();
+    out->book_para_gap = app_settings_book_para_gap();
+    out->book_indent = app_settings_book_indent();
+    out->book_shelf_view = app_settings_book_shelf_view();
+    out->book_cbz_dir = app_settings_book_cbz_dir();
+    out->book_cbz_dither = app_settings_book_cbz_dither();
     out->saver_style = (uint8_t)app_settings_saver_style();
     out->dashboard_items = app_settings_dashboard_items();
     out->timezone_min = app_settings_timezone_min();
@@ -177,6 +187,13 @@ static void apply_device_settings_snapshot(const read_pico_device_settings_t *ne
     app_settings_set_book_weight(next->book_weight);
     app_settings_set_book_rotation(next->book_rotation);
     app_settings_set_book_gesture(next->book_gesture);
+    app_settings_set_book_top_bar(next->book_top_bar);
+    app_settings_set_book_bottom_bar(next->book_bottom_bar);
+    app_settings_set_book_para_gap(next->book_para_gap);
+    app_settings_set_book_indent(next->book_indent);
+    app_settings_set_book_shelf_view(next->book_shelf_view);
+    app_settings_set_book_cbz_dir(next->book_cbz_dir);
+    app_settings_set_book_cbz_dither(next->book_cbz_dither);
     app_settings_set_saver_style((app_saver_style_t)next->saver_style);
     app_settings_set_dashboard_items(next->dashboard_items);
     app_settings_set_timezone_min_deferred(next->timezone_min);
@@ -236,11 +253,13 @@ static const char *active_page_key(const app_desc_t *current) {
     if (current == &app_transfer) return "transfer";
     if (current == &app_web) return "web";
     if (current == &app_feeds) return "feeds";
+    if (current == &app_files) return "files";
     if (current == &app_sketch) return "sketch";
     if (current == &app_focus) return "focus";
     if (current == &app_agent) return "agent";
     if (current == &app_personal) return "personal";
     if (current == &app_settings) return "settings";
+    if (current == &app_onboarding) return "onboarding";
     return "other";
 }
 
@@ -250,6 +269,8 @@ static const app_desc_t *resolve_app_target(ble_app_target_t target) {
         case BLE_APP_TARGET_BOOKS: return &app_book;
         case BLE_APP_TARGET_TRANSFER: return &app_transfer;
         case BLE_APP_TARGET_WEB: return &app_web;
+        case BLE_APP_TARGET_FEEDS: return &app_feeds;
+        case BLE_APP_TARGET_FILES: return &app_files;
         case BLE_APP_TARGET_SKETCH: return &app_sketch;
         case BLE_APP_TARGET_FOCUS: return &app_focus;
         case BLE_APP_TARGET_AGENT: return &app_agent;
@@ -894,7 +915,7 @@ static void handle_command(app_ctx_t *ctx, const app_desc_t *current,
                 cJSON_AddBoolToObject(res, "pmu_synced", pmu_synced);
                 send_json_and_free(res);
             }
-            if (ctx && (current == &app_focus || current == &app_personal)) {
+            if (ctx && (current == &app_focus || current == &app_personal || current == &app_pico_home)) {
                 ctx->request_redraw = true;
             }
             refresh_cached_status(current, true);
@@ -918,6 +939,7 @@ static void handle_command(app_ctx_t *ctx, const app_desc_t *current,
             read_pico_device_settings_t ds;
             read_device_settings_snapshot(&ds);
             bool was_ble_enabled = ds.ble_enabled;
+            uint8_t prev_px = ds.book_px;
             const char *err_msg = NULL;
             if (!companion_settings_patch_object(&ds, patch, &err_msg)) {
                 send_json_and_free(ble_make_error_response(
@@ -925,6 +947,12 @@ static void handle_command(app_ctx_t *ctx, const app_desc_t *current,
                 break;
             }
             apply_device_settings_snapshot(&ds);
+            if (current == &app_book) {
+                app_book_sync_runtime_settings(ctx, ds.book_px != prev_px);
+            }
+            if (ctx && (current == &app_book || current == &app_settings || current == &app_personal)) {
+                ctx->request_redraw = true;
+            }
             cJSON *res = ble_make_response_base(has_id, id, cmd_name, true);
             if (res) {
                 cJSON *settings_json = companion_settings_to_json(&ds);
@@ -1193,7 +1221,7 @@ static void handle_command(app_ctx_t *ctx, const app_desc_t *current,
             if (!page) {
                 send_json_and_free(ble_make_error_response(
                     has_id, id, cmd_name, "invalid_arg",
-                    "app 须为 home/books/transfer/web/sketch/focus/agent/personal/settings"));
+                    "app 须为 home/books/transfer/web/feeds/files/sketch/focus/agent/personal/settings"));
                 break;
             }
             if (ctx && page != current) {

@@ -118,6 +118,8 @@ static void test_command_envelope_and_errors(void) {
     assert(ble_cmd_requires_auth(BLE_CMD_WEBMARKS_ADD));
     assert(ble_cmd_requires_auth(BLE_CMD_FOCUS_START));
     assert(ble_parse_app_target("books") == BLE_APP_TARGET_BOOKS);
+    assert(ble_parse_app_target("feeds") == BLE_APP_TARGET_FEEDS);
+    assert(ble_parse_app_target("files") == BLE_APP_TARGET_FILES);
     assert(ble_parse_app_target("vcom") == BLE_APP_TARGET_NONE);
     assert(ble_valid_http_url("https://example.com/a?b=1", 256));
     assert(!ble_valid_http_url("ftp://example.com", 256));

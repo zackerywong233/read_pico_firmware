@@ -26,7 +26,12 @@
  * when visible, tapping or holding a non-empty hint cell routes through the same KEY1/2/3 path
  * as the capacitive keys to eliminate duplicate in-page navigation buttons.
  * 冻结：主循环维护 8 层导航栈；普通切页入栈（回桌面清空栈），返回弹栈恢复上一页与页码。
+ * 决策扩展：非独占 PMU 页面从屏幕顶边（y < UI_QUICK_PULL_TOP_Y）向下滑动（或置 request_quick_menu）
+ * 呼出全局快捷控制中心覆盖层，不调用当前页 on_exit/on_enter；收起时整屏 GC16 恢复原页面。
  * Frozen: The loop keeps an 8-level nav stack; switching pushes (going Home clears), Return pops page and leaf.
+ * Decision extension: Pulling down from the top edge (y < UI_QUICK_PULL_TOP_Y) on non-holds_pmu pages
+ * (or setting request_quick_menu) opens the global Quick Control Menu overlay without calling on_exit/on_enter;
+ * dismissing restores the active page with full-screen GC16.
  */
 
 #pragma once
@@ -115,6 +120,9 @@ typedef struct {
     /// 本轮末走全局锁屏路径（页面未 holds_pmu 且无切页请求时生效）。
     /// Request the global lock/sleep flow at tick end (ignored when holds_pmu or navigation is pending).
     bool request_lock;
+    /// 本轮末打开顶部下滑快捷控制菜单（页面未 holds_pmu 且无切页/锁屏请求时生效）。
+    /// Request opening the top pull-down Quick Control Menu at tick end (ignored when holds_pmu or navigating).
+    bool request_quick_menu;
 } app_ctx_t;
 
 struct app_desc_s {

@@ -73,7 +73,10 @@ static void test_settings_codec(void) {
     const char *valid_patch =
         "{\"sleep_mode\":0,\"auto_sleep_sec\":300,\"pickup_wake\":true,"
         "\"book_px\":56,\"book_refresh\":2,\"book_line_height\":0,\"book_margin\":2,"
-        "\"book_weight\":500,\"book_rotation\":1,\"book_gesture\":2,\"saver_style\":4,"
+        "\"book_weight\":500,\"book_rotation\":1,\"book_gesture\":2,"
+        "\"book_top_bar\":false,\"book_bottom_bar\":true,\"book_para_gap\":2,"
+        "\"book_indent\":1,\"book_shelf_view\":1,\"book_cbz_dir\":1,\"book_cbz_dither\":false,"
+        "\"saver_style\":4,"
         "\"dashboard_items\":31,\"timezone_min\":-300,\"charge_led\":false,"
         "\"low_soc_notify_percent\":20,\"muted\":true,\"transfer_pin_required\":true,"
         "\"ble_enabled\":true,\"ble_pin_required\":true}";
@@ -81,6 +84,8 @@ static void test_settings_codec(void) {
     assert(s.sleep_mode == 0 && s.auto_sleep_sec == 300 && s.pickup_wake);
     assert(s.book_px == 56 && s.book_refresh == 2 && s.book_line_height == 0 && s.book_margin == 2);
     assert(s.book_weight == 500 && s.book_rotation == 1 && s.book_gesture == 2 && s.saver_style == 4);
+    assert(!s.book_top_bar && s.book_bottom_bar && s.book_para_gap == 2 && s.book_indent == 1);
+    assert(s.book_shelf_view == 1 && s.book_cbz_dir == 1 && !s.book_cbz_dither);
     assert(s.dashboard_items == 31 && s.timezone_min == -300 && !s.charge_led);
     assert(s.low_soc_notify_percent == 20 && s.muted && s.transfer_pin_required &&
            s.ble_enabled && s.ble_pin_required);
@@ -105,6 +110,10 @@ static void test_settings_codec(void) {
         "{\"dashboard_items\":32}",
         "{\"muted\":1}",
         "{\"pickup_wake\":\"true\"}",
+        "{\"book_para_gap\":3}",
+        "{\"book_indent\":2}",
+        "{\"book_shelf_view\":2}",
+        "{\"book_cbz_dir\":2}",
         "{\"unknown_key\":1}",
         "{\"muted\":false}trailing",
     };

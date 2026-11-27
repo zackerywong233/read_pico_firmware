@@ -255,6 +255,12 @@ static EpdRect area(app_ctx_t *ctx) {
     return (EpdRect){ .x = w / 2 - 230, .y = UI_CONTENT_TOP + 105, .width = 460, .height = 240 };
 }
 
+static void key_hints(app_ctx_t *ctx, ui_key_hints_t *out) {
+    (void)ctx;
+    out->left = s_time_edit ? "取消" : "返回";
+    out->right = NULL;
+}
+
 static void enter(app_ctx_t *ctx) {
     done_load();
     s_time_edit = false;
@@ -304,6 +310,7 @@ const app_desc_t app_focus = {
     .on_enter = enter,
     .on_touch = touch,
     .on_key = key,
+    .key_hints = key_hints,
     .on_tick = tick,
     .area_hint = area,
 };

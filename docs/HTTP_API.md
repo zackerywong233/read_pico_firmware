@@ -84,7 +84,7 @@ STA 模式下广播 mDNS 主机名 `readpico.local` 与 `_http._tcp` 80 端口�
 | 方法与路径 | 鉴权 | 说明 |
 | --- | --- | --- |
 | `GET /settings` | 否 | 读取全部可远程管理设置快照（不含 VCOM） |
-| `PATCH /settings` | PIN | 原子校验并局部更新设置：`sleep_mode` (0..2)、`auto_sleep_sec` (0/30/60/120/300/600/900/1800/3600)、`pickup_wake`、`book_px` (36..72 步长 4)、`book_refresh` (0..2)、`book_line_height` (0..2)、`book_margin` (0..2)、`book_weight` (0 或 300..800 步长 100)、`book_rotation` (0..2)、`book_gesture` (0..2)、`saver_style` (0..4，3=当前书封面，4=阅读热力图)、`dashboard_items` (0..31，bit 4=阅读热力图)、`timezone_min` (-720..840)、`charge_led`、`low_soc_notify_percent` (0 或 5..30 步长 5)、`muted`、`transfer_pin_required`、`ble_enabled`、`ble_pin_required`。未知键、越界值、`font_path` 与 `vcom` 均返回 `400` |
+| `PATCH /settings` | PIN | 原子校验并局部更新设置：`sleep_mode` (0..2)、`auto_sleep_sec` (0/30/60/120/300/600/900/1800/3600)、`pickup_wake`、`book_px` (36..72 步长 4)、`book_refresh` (0..2)、`book_line_height` (0..2)、`book_margin` (0..2)、`book_weight` (0 或 300..800 步长 100)、`book_rotation` (0..2)、`book_gesture` (0..2)、`book_top_bar`、`book_bottom_bar`、`book_para_gap` (0..2)、`book_indent` (0..1)、`book_shelf_view` (0..1)、`book_cbz_dir` (0..1)、`book_cbz_dither`、`saver_style` (0..4，3=当前书封面，4=阅读热力图)、`dashboard_items` (0..31，bit 4=阅读热力图)、`timezone_min` (-720..840)、`charge_led`、`low_soc_notify_percent` (0 或 5..30 步长 5)、`muted`、`transfer_pin_required`、`ble_enabled`、`ble_pin_required`。未知键、越界值、`font_path` 与 `vcom` 均返回 `400` |
 | `GET /time` | 否 | 读取设备 UTC 时间戳、有效标志与时区偏移分钟 |
 | `POST /time` | PIN | JSON `{"unix_sec":1795190000,"timezone_min":480}`（`timezone_min` 可选），同步主机时钟与主板 PMU RTC |
 | `GET /dashboard` | 否 | 返回看板文字（`/sdcard/dashboard.txt`）、`total_reading_sec`、`last_book`、`excerpt` 与可选 `last_book_path` |

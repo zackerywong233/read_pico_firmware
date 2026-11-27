@@ -78,6 +78,13 @@ static inline cJSON *companion_settings_to_json(const read_pico_device_settings_
     cJSON_AddNumberToObject(json, "book_weight", s->book_weight);
     cJSON_AddNumberToObject(json, "book_rotation", s->book_rotation);
     cJSON_AddNumberToObject(json, "book_gesture", s->book_gesture);
+    cJSON_AddBoolToObject(json, "book_top_bar", s->book_top_bar);
+    cJSON_AddBoolToObject(json, "book_bottom_bar", s->book_bottom_bar);
+    cJSON_AddNumberToObject(json, "book_para_gap", s->book_para_gap);
+    cJSON_AddNumberToObject(json, "book_indent", s->book_indent);
+    cJSON_AddNumberToObject(json, "book_shelf_view", s->book_shelf_view);
+    cJSON_AddNumberToObject(json, "book_cbz_dir", s->book_cbz_dir);
+    cJSON_AddBoolToObject(json, "book_cbz_dither", s->book_cbz_dither);
     cJSON_AddNumberToObject(json, "saver_style", s->saver_style);
     cJSON_AddNumberToObject(json, "dashboard_items", s->dashboard_items);
     cJSON_AddNumberToObject(json, "timezone_min", s->timezone_min);
@@ -163,6 +170,34 @@ static inline bool companion_settings_patch_object(read_pico_device_settings_t *
             ok = companion_json_int_range(item, 0, 2, &iv);
             if (ok) next.book_gesture = (uint8_t)iv;
             else err = "book_gesture 须为 0..2";
+        } else if (!strcmp(key, "book_top_bar")) {
+            ok = cJSON_IsBool(item);
+            if (ok) next.book_top_bar = cJSON_IsTrue(item);
+            else err = "book_top_bar 须为布尔值";
+        } else if (!strcmp(key, "book_bottom_bar")) {
+            ok = cJSON_IsBool(item);
+            if (ok) next.book_bottom_bar = cJSON_IsTrue(item);
+            else err = "book_bottom_bar 须为布尔值";
+        } else if (!strcmp(key, "book_para_gap")) {
+            ok = companion_json_int_range(item, 0, 2, &iv);
+            if (ok) next.book_para_gap = (uint8_t)iv;
+            else err = "book_para_gap 须为 0..2";
+        } else if (!strcmp(key, "book_indent")) {
+            ok = companion_json_int_range(item, 0, 1, &iv);
+            if (ok) next.book_indent = (uint8_t)iv;
+            else err = "book_indent 须为 0..1";
+        } else if (!strcmp(key, "book_shelf_view")) {
+            ok = companion_json_int_range(item, 0, 1, &iv);
+            if (ok) next.book_shelf_view = (uint8_t)iv;
+            else err = "book_shelf_view 须为 0..1";
+        } else if (!strcmp(key, "book_cbz_dir")) {
+            ok = companion_json_int_range(item, 0, 1, &iv);
+            if (ok) next.book_cbz_dir = (uint8_t)iv;
+            else err = "book_cbz_dir 须为 0..1";
+        } else if (!strcmp(key, "book_cbz_dither")) {
+            ok = cJSON_IsBool(item);
+            if (ok) next.book_cbz_dither = cJSON_IsTrue(item);
+            else err = "book_cbz_dither 须为布尔值";
         } else if (!strcmp(key, "saver_style")) {
             ok = companion_json_int_range(item, 0, 4, &iv);
             if (ok) next.saver_style = (uint8_t)iv;

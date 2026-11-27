@@ -67,6 +67,8 @@ typedef enum {
     BLE_APP_TARGET_AGENT,
     BLE_APP_TARGET_PERSONAL,
     BLE_APP_TARGET_SETTINGS,
+    BLE_APP_TARGET_FEEDS,
+    BLE_APP_TARGET_FILES,
 } ble_app_target_t;
 
 typedef enum {
@@ -235,6 +237,8 @@ static inline ble_app_target_t ble_parse_app_target(const char *name) {
     if (!strcmp(name, "agent")) return BLE_APP_TARGET_AGENT;
     if (!strcmp(name, "personal")) return BLE_APP_TARGET_PERSONAL;
     if (!strcmp(name, "settings")) return BLE_APP_TARGET_SETTINGS;
+    if (!strcmp(name, "feeds")) return BLE_APP_TARGET_FEEDS;
+    if (!strcmp(name, "files")) return BLE_APP_TARGET_FILES;
     return BLE_APP_TARGET_NONE;
 }
 
