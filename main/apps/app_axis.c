@@ -36,14 +36,14 @@
 
 #define TAG "app_axis"
 
-#define AXIS_TITLE "加速度计 Accel"
-#define AXIS_LAB_TITLE "加速度计诊断 IMU Lab"
-#define AXIS_BTN_LISTEN_LIVE "启用监听 Start Listen"
-#define AXIS_BTN_LISTEN_TAP "启用监听 Start Tap"
-#define AXIS_BTN_LISTEN_ORI "启用监听 Start Orient"
-#define AXIS_BTN_LISTEN_FF "启用失重 Start Fall"
-#define AXIS_BTN_LISTEN_ACT "启用晃动 Start Shake"
-#define AXIS_BTN_ZERO "设为零点 Set Zero"
+#define AXIS_TITLE "加速度计"
+#define AXIS_LAB_TITLE "传感器诊断"
+#define AXIS_BTN_LISTEN_LIVE "启用监听"
+#define AXIS_BTN_LISTEN_TAP "启用监听"
+#define AXIS_BTN_LISTEN_ORI "启用监听"
+#define AXIS_BTN_LISTEN_FF "启用失重"
+#define AXIS_BTN_LISTEN_ACT "启用晃动"
+#define AXIS_BTN_ZERO "设为零点"
 
 // 跟随用的短波形一次连 diff 带扫描只要 50ms，间隔压到刚好盖住一次刷新的耗时。/ FOLLOW DU takes about 50ms; interval is just enough to cover one refresh.
 #define AXIS_UPDATE_INTERVAL_MS 120
@@ -255,8 +255,8 @@ static void axis_draw_btn(uint8_t* framebuffer, EpdRect rect, const char* label,
 }
 
 static const char* const k_view_labels[UI_AXIS_VIEW_COUNT] = {
-    "读数 Live", "设置 Setup", "敲击 Tap", "朝向 Orient",
-    "动作 Event", "波形 FIFO", "自检 Test",
+    "读数", "设置", "敲击", "朝向",
+    "动作", "波形 FIFO", "自检",
 };
 
 // 标签栏按这一页挂上的子集画。/ Draw the tab bar from the subset attached to this page.
@@ -278,7 +278,7 @@ static void draw_axis_block(
 ) {
     char label[48];
     char text[24];
-    snprintf(label, sizeof(label), "%s 轴 Axis　原值 Raw %d", axis, raw);
+    snprintf(label, sizeof(label), "%s 轴　原值 %d", axis, raw);
     snprintf(text, sizeof(text), "%d", value);
 
     ui_text(
@@ -332,10 +332,10 @@ static int axis_disp(int value, int zero, bool zeroed) {
 
 static const char* ui_axis_mode_name(sc7a20h_mode_t mode) {
     switch (mode) {
-        case SC7A20H_MODE_NORMAL: return "正常 Normal";
-        case SC7A20H_MODE_LP: return "低功耗 Low Power";
-        case SC7A20H_MODE_HR: return "高性能 High Res";
-        case SC7A20H_MODE_ENHANCED: return "增强 Enhanced";
+        case SC7A20H_MODE_NORMAL: return "正常";
+        case SC7A20H_MODE_LP: return "低功耗";
+        case SC7A20H_MODE_HR: return "高性能";
+        case SC7A20H_MODE_ENHANCED: return "增强";
         default: return "--";
     }
 }
@@ -346,39 +346,39 @@ static const char* ui_axis_orient_name(sc7a20h_orient_t orient) {
         case SC7A20H_ORIENT_NX: return "X 负向立 -X Up";
         case SC7A20H_ORIENT_PY: return "Y 正向立 +Y Up";
         case SC7A20H_ORIENT_NY: return "Y 负向立 -Y Up";
-        case SC7A20H_ORIENT_PZ: return "屏幕朝上 Face Up";
-        case SC7A20H_ORIENT_NZ: return "屏幕朝下 Face Down";
-        default: return "未判定 Unknown";
+        case SC7A20H_ORIENT_PZ: return "屏幕朝上";
+        case SC7A20H_ORIENT_NZ: return "屏幕朝下";
+        default: return "未判定";
     }
 }
 
 static const char* ui_axis_click_name(uint8_t count) {
     switch (count) {
-        case 0: return "无 None";
-        case 1: return "单击 Single";
-        case 2: return "双击 Double";
-        case 3: return "三击 Triple";
-        default: return "多击 Multi";
+        case 0: return "无";
+        case 1: return "单击";
+        case 2: return "双击";
+        case 3: return "三击";
+        default: return "多击";
     }
 }
 
 static const char* ui_axis_fifo_mode_name(sc7a20h_fifo_mode_t mode) {
     switch (mode) {
-        case SC7A20H_FIFO_BYPASS: return "不缓存 Bypass";
+        case SC7A20H_FIFO_BYPASS: return "不缓存";
         case SC7A20H_FIFO_MODE: return "存满即停 FIFO";
-        case SC7A20H_FIFO_STREAM: return "循环覆盖 Stream";
-        case SC7A20H_FIFO_TRIGGER: return "事件后存 Trigger";
+        case SC7A20H_FIFO_STREAM: return "循环覆盖";
+        case SC7A20H_FIFO_TRIGGER: return "事件后存";
         default: return "--";
     }
 }
 
 static const char* ui_axis_int_route_name(uint8_t mask) {
-    if (mask & SC7A20H_INT1_CLICK) return "敲击 Click";
-    if (mask & SC7A20H_INT1_AOI1) return "朝向 Orient";
-    if (mask & SC7A20H_INT1_AOI2) return "动作 Motion";
-    if (mask & SC7A20H_INT1_DRDY) return "数据就绪 DRDY";
-    if (mask & SC7A20H_INT1_WTM) return "水位 Watermark";
-    return "未连接 None";
+    if (mask & SC7A20H_INT1_CLICK) return "敲击";
+    if (mask & SC7A20H_INT1_AOI1) return "朝向";
+    if (mask & SC7A20H_INT1_AOI2) return "动作";
+    if (mask & SC7A20H_INT1_DRDY) return "数据就绪";
+    if (mask & SC7A20H_INT1_WTM) return "水位";
+    return "未连接";
 }
 
 static void draw_axis_live(uint8_t* framebuffer, const ui_axis_state_t* st) {
@@ -402,10 +402,10 @@ static void draw_axis_live(uint8_t* framebuffer, const ui_axis_state_t* st) {
     snprintf(s, sizeof(s), "%s", sc7a20h_odr_name(st->cfg.odr));
 
     int y = ui_draw_section(
-        framebuffer, UI_CONTENT_TOP, "启用监听后晃动设备 Enable, then tilt"
+        framebuffer, UI_CONTENT_TOP, "启用监听后晃动设备"
     );
-    y = ui_draw_row2(framebuffer, y, "合加速度 Accel", a, "采样 ODR", s);
-    y = ui_draw_row2(framebuffer, y, "俯仰 Pitch", p, "横滚 Roll", r);
+    y = ui_draw_row2(framebuffer, y, "合加速度", a, "采样", s);
+    y = ui_draw_row2(framebuffer, y, "俯仰", p, "横滚", r);
     (void)y;
     const axis_geom_t g = axis_geom();
     draw_axis_block(framebuffer, g.sensor_y[0], x, "X", st->sample.x_raw);
@@ -423,22 +423,22 @@ static void draw_axis_live(uint8_t* framebuffer, const ui_axis_state_t* st) {
 
 static const char* axis_osr_name(uint8_t osr) {
     static const char* const names[] = {
-        "关闭 Off", "2 次 2×", "4 次 4×", "8 次 8×", "16 次 16×", "32 次 32×",
+        "关闭", "2 次 2×", "4 次 4×", "8 次 8×", "16 次 16×", "32 次 32×",
     };
     return osr <= 5 ? names[osr] : "--";
 }
 
 static const char* axis_dlpf_name(uint8_t dlpf) {
     static const char* const names[] = {
-        "关闭 Off", "弱 Weak", "中 Medium", "强 Strong",
+        "关闭", "弱", "中", "强",
     };
     return dlpf <= 3 ? names[dlpf] : "--";
 }
 
 static const char* axis_hpf_name(uint8_t hpf) {
-    if (hpf == 0) return "关闭 Off（含重力 Gravity）";
+    if (hpf == 0) return "关闭（含重力）";
     static const char* const names[] = {
-        "很慢 Slowest", "慢 Slow", "中 Medium", "快 Fast",
+        "很慢", "慢", "中", "快",
     };
     return names[(hpf - 1) & 3];
 }
@@ -446,20 +446,20 @@ static const char* axis_hpf_name(uint8_t hpf) {
 static void draw_axis_cfg(uint8_t* framebuffer, const ui_axis_state_t* st) {
     const sc7a20h_sensor_config_t* c = &st->cfg;
     int y = ui_draw_section(
-        framebuffer, UI_CONTENT_TOP, "更改立即生效 Changes apply now"
+        framebuffer, UI_CONTENT_TOP, "更改立即生效"
     );
-    y = ui_draw_row(framebuffer, y, "输出速率 ODR", sc7a20h_odr_name(c->odr));
-    y = ui_draw_row(framebuffer, y, "量程 Range", sc7a20h_fs_name(c->fs));
-    y = ui_draw_row(framebuffer, y, "功耗模式 Mode", ui_axis_mode_name(c->mode));
-    y = ui_draw_row(framebuffer, y, "过采样 OSR", axis_osr_name(c->osr));
-    y = ui_draw_row(framebuffer, y, "低通 DLPF", axis_dlpf_name(c->dlpf));
-    ui_draw_row(framebuffer, y, "高通 HPF", axis_hpf_name(c->hpf));
+    y = ui_draw_row(framebuffer, y, "输出速率", sc7a20h_odr_name(c->odr));
+    y = ui_draw_row(framebuffer, y, "量程", sc7a20h_fs_name(c->fs));
+    y = ui_draw_row(framebuffer, y, "功耗模式", ui_axis_mode_name(c->mode));
+    y = ui_draw_row(framebuffer, y, "过采样", axis_osr_name(c->osr));
+    y = ui_draw_row(framebuffer, y, "低通", axis_dlpf_name(c->dlpf));
+    ui_draw_row(framebuffer, y, "高通", axis_hpf_name(c->hpf));
 
     static const char* const row0[] = {
-        "更慢 Slow", "更快 Fast", "量程- FS-", "量程+ FS+",
+        "更慢", "更快", "量程- FS-", "量程+ FS+",
     };
     static const char* const row1[] = {
-        "功耗 Mode", "平均 OSR", "低通 DLPF", "高通 HPF",
+        "功耗", "平均", "低通", "高通",
     };
     for (int i = 0; i < 4; i++) {
         axis_draw_btn(framebuffer, axis_grid(i, 4, 0, UI_AXIS_BTN2_Y), row0[i], false);
@@ -471,30 +471,30 @@ static const char* click_axis_name(uint8_t axis) {
     switch (axis) {
         case 0: return "仅 Z 轴";
         case 1: return "仅 XY 轴";
-        default: return "三轴 XYZ";
+        default: return "三轴";
     }
 }
 
 static const char* click_ths_name(uint8_t ths) {
-    if (ths <= 1) return "灵敏 Sensitive";
-    if (ths <= 3) return "适中 Medium";
-    if (ths <= 5) return "较钝 Dull";
-    return "很钝 Deadened";
+    if (ths <= 1) return "灵敏";
+    if (ths <= 3) return "适中";
+    if (ths <= 5) return "较钝";
+    return "很钝";
 }
 
 static void draw_axis_tap(uint8_t* framebuffer, const ui_axis_state_t* st) {
     char n[16];
     snprintf(n, sizeof(n), "%d", st->click_count);
     int y = ui_draw_section(
-        framebuffer, UI_CONTENT_TOP, "启用监听后轻敲机身 Enable, then tap"
+        framebuffer, UI_CONTENT_TOP, "启用监听后轻敲机身"
     );
-    y = ui_draw_row(framebuffer, y, "最近一次 Last", ui_axis_click_name(st->click_last));
-    y = ui_draw_row(framebuffer, y, "已记录 Count", n);
-    y = ui_draw_row(framebuffer, y, "监听轴向 Axis", click_axis_name(st->click_axis));
-    y = ui_draw_row(framebuffer, y, "力度门槛 Threshold", click_ths_name(st->click_ths));
+    y = ui_draw_row(framebuffer, y, "最近一次", ui_axis_click_name(st->click_last));
+    y = ui_draw_row(framebuffer, y, "已记录", n);
+    y = ui_draw_row(framebuffer, y, "监听轴向", click_axis_name(st->click_axis));
+    y = ui_draw_row(framebuffer, y, "力度门槛", click_ths_name(st->click_ths));
     ui_draw_row(
-        framebuffer, y, "状态 Status",
-        st->click_armed ? "监听中 Listening" : "未启用 Idle"
+        framebuffer, y, "状态",
+        st->click_armed ? "监听中" : "未启用"
     );
 
     axis_draw_btn(
@@ -502,9 +502,9 @@ static void draw_axis_tap(uint8_t* framebuffer, const ui_axis_state_t* st) {
         AXIS_BTN_LISTEN_TAP, st->click_armed
     );
     axis_draw_btn(
-        framebuffer, axis_grid(1, 2, 0, UI_AXIS_BTN2_Y), "切换轴向 Axis", false
+        framebuffer, axis_grid(1, 2, 0, UI_AXIS_BTN2_Y), "切换轴向", false
     );
-    static const char* const row1[] = { "更敏 Sens-", "更钝 Sens+", "清除 Clear" };
+    static const char* const row1[] = { "更敏", "更钝", "清除" };
     for (int i = 0; i < 3; i++) {
         axis_draw_btn(framebuffer, axis_grid(i, 3, 0, UI_AXIS_BTN_Y), row1[i], false);
     }
@@ -520,15 +520,15 @@ static void draw_axis_ori(uint8_t* framebuffer, const ui_axis_state_t* st) {
         { "Y+ 正向", SC7A20H_ORIENT_PY },
         { "Y- 负向", SC7A20H_ORIENT_NY },
         { "朝上 Up", SC7A20H_ORIENT_PZ },
-        { "朝下 Down", SC7A20H_ORIENT_NZ },
+        { "朝下", SC7A20H_ORIENT_NZ },
     };
     char ths[24];
     char dur[40];
     snprintf(ths, sizeof(ths), "%u mg", sc7a20h_ths_mg_fs(st->cfg.fs, st->ori_ths));
-    snprintf(dur, sizeof(dur), "连续 %u 次 %u samples", st->ori_dur, st->ori_dur);
+    snprintf(dur, sizeof(dur), "连续 %u 次", st->ori_dur);
 
     int y = ui_draw_section(
-        framebuffer, UI_CONTENT_TOP, "启用监听后缓慢翻转 Enable, then flip"
+        framebuffer, UI_CONTENT_TOP, "启用监听后缓慢翻转"
     );
     for (int i = 0; i < 6; i++) {
         ui_draw_chip(
@@ -537,11 +537,11 @@ static void draw_axis_ori(uint8_t* framebuffer, const ui_axis_state_t* st) {
         );
     }
     y += 2 * (UI_ORI_CHIP_H + UI_ORI_CHIP_GAP) + UI_ORI_CHIP_GAP;
-    y = ui_draw_row(framebuffer, y, "当前朝向 Orient", ui_axis_orient_name(st->orient));
-    y = ui_draw_row(framebuffer, y, "判定门槛 Threshold", ths);
-    y = ui_draw_row(framebuffer, y, "稳定次数 Duration", dur);
+    y = ui_draw_row(framebuffer, y, "当前朝向", ui_axis_orient_name(st->orient));
+    y = ui_draw_row(framebuffer, y, "判定门槛", ths);
+    y = ui_draw_row(framebuffer, y, "稳定次数", dur);
     ui_draw_row(
-        framebuffer, y, "朝向范围 Coverage",
+        framebuffer, y, "朝向范围",
         st->ori_4d ? "四向立放 4D" : "六面朝向 6D"
     );
 
@@ -553,7 +553,7 @@ static void draw_axis_ori(uint8_t* framebuffer, const ui_axis_state_t* st) {
         framebuffer, axis_grid(1, 2, 0, UI_AXIS_BTN2_Y), "四向 4D", st->ori_4d
     );
     static const char* const row1[] = {
-        "门槛- Ths-", "门槛+ Ths+", "更短 Dur-", "更长 Dur+",
+        "门槛-", "门槛+", "更短", "更长",
     };
     for (int i = 0; i < 4; i++) {
         axis_draw_btn(framebuffer, axis_grid(i, 4, 0, UI_AXIS_BTN_Y), row1[i], false);
@@ -562,32 +562,32 @@ static void draw_axis_ori(uint8_t* framebuffer, const ui_axis_state_t* st) {
 
 static void draw_axis_evt(uint8_t* framebuffer, const ui_axis_state_t* st) {
     char n[24];
-    int y = ui_draw_section(framebuffer, UI_CONTENT_TOP, "失重 Freefall");
+    int y = ui_draw_section(framebuffer, UI_CONTENT_TOP, "失重");
     snprintf(n, sizeof(n), "%d", st->ff_count);
-    y = ui_draw_row(framebuffer, y, "次数 Count", n);
+    y = ui_draw_row(framebuffer, y, "次数", n);
     y = ui_draw_row(
-        framebuffer, y, "状态 Status",
-        st->ff_armed ? "监听中 Listening" : "未启用 Idle"
+        framebuffer, y, "状态",
+        st->ff_armed ? "监听中" : "未启用"
     );
 
-    y = ui_draw_section(framebuffer, y + UI_SECTION_GAP, "晃动 Shake");
+    y = ui_draw_section(framebuffer, y + UI_SECTION_GAP, "晃动");
     snprintf(n, sizeof(n), "%d", st->act_count);
-    y = ui_draw_row(framebuffer, y, "次数 Count", n);
+    y = ui_draw_row(framebuffer, y, "次数", n);
     y = ui_draw_row(
-        framebuffer, y, "状态 Status",
-        st->act_armed ? "监听中 Listening" : "未启用 Idle"
+        framebuffer, y, "状态",
+        st->act_armed ? "监听中" : "未启用"
     );
 
     y = ui_draw_section(framebuffer, y + UI_SECTION_GAP, "中断脚 INT1 GPIO1");
     y = ui_draw_row(
-        framebuffer, y, "电平 Level", st->int1_level ? "高 High" : "低 Low"
+        framebuffer, y, "电平", st->int1_level ? "高" : "低"
     );
     snprintf(n, sizeof(n), "%lu", (unsigned long)st->int1_count);
-    y = ui_draw_row(framebuffer, y, "跳变 Edges", n);
-    ui_draw_row(framebuffer, y, "路由 Route", ui_axis_int_route_name(st->int_route));
+    y = ui_draw_row(framebuffer, y, "跳变", n);
+    ui_draw_row(framebuffer, y, "路由", ui_axis_int_route_name(st->int_route));
     ui_text(
         framebuffer, UI_MARGIN, UI_AXIS_BTN2_Y - 36, UI_PX_CAPTION,
-        "INT2 本板未接线 INT2 is not connected", EPD_DRAW_ALIGN_LEFT, false
+        "INT2 本板未接线", EPD_DRAW_ALIGN_LEFT, false
     );
 
     axis_draw_btn(
@@ -598,8 +598,8 @@ static void draw_axis_evt(uint8_t* framebuffer, const ui_axis_state_t* st) {
         framebuffer, axis_grid(1, 2, 0, UI_AXIS_BTN2_Y),
         AXIS_BTN_LISTEN_ACT, st->act_armed
     );
-    axis_draw_btn(framebuffer, axis_grid(0, 2, 0, UI_AXIS_BTN_Y), "切换脚 Route", false);
-    axis_draw_btn(framebuffer, axis_grid(1, 2, 0, UI_AXIS_BTN_Y), "清除 Clear", false);
+    axis_draw_btn(framebuffer, axis_grid(0, 2, 0, UI_AXIS_BTN_Y), "切换脚", false);
+    axis_draw_btn(framebuffer, axis_grid(1, 2, 0, UI_AXIS_BTN_Y), "清除", false);
 }
 
 // FSS 5 位：满 32 组时为 0，EMPTY=0。旁路时 EMPTY=1。/ FSS is 5 bits: 0 when 32 samples are full and EMPTY=0. EMPTY=1 in bypass.
@@ -618,7 +618,7 @@ static void draw_fifo_wave(
     if (st->fifo_n < 2) {
         ui_text_vc(
             framebuffer, box.x + box.width / 2, box.y + box.height / 2,
-            UI_PX_CAPTION, "点读取画出三轴 Tap Read to plot", EPD_DRAW_ALIGN_CENTER, false
+            UI_PX_CAPTION, "点读取画出三轴", EPD_DRAW_ALIGN_CENTER, false
         );
         return;
     }
@@ -648,30 +648,30 @@ static void draw_fifo_wave(
 static void draw_axis_fifo(uint8_t* framebuffer, const ui_axis_state_t* st) {
     char n[56];
     int y = ui_draw_section(
-        framebuffer, UI_CONTENT_TOP, "芯片先缓存再读出 Buffer, then read"
+        framebuffer, UI_CONTENT_TOP, "芯片先缓存再读出"
     );
-    y = ui_draw_row(framebuffer, y, "模式 Mode", ui_axis_fifo_mode_name(st->fifo_mode));
+    y = ui_draw_row(framebuffer, y, "模式", ui_axis_fifo_mode_name(st->fifo_mode));
     snprintf(n, sizeof(n), "%u samples", st->fifo_wtm);
-    y = ui_draw_row(framebuffer, y, "水位 Watermark", n);
+    y = ui_draw_row(framebuffer, y, "水位", n);
     snprintf(n, sizeof(n), "%d/32", axis_fifo_level(&st->fifo_st));
     y = ui_draw_row2(
-        framebuffer, y, "缓存 Stored", n, "精度 Bits",
+        framebuffer, y, "缓存", n, "精度",
         st->fifo_8bit ? "8-bit" : "12-bit"
     );
     {
         const bool full = st->fifo_st.overrun && st->fifo_mode != SC7A20H_FIFO_STREAM;
-        const char* flags = st->fifo_st.empty ? "空 Empty"
+        const char* flags = st->fifo_st.empty ? "空"
             : full && st->fifo_st.wtm ? "有数据 · 到线 · 已满"
             : full ? "有数据 · 已满"
             : st->fifo_st.wtm ? "有数据 · 到线"
-            : "有数据 Data";
-        y = ui_draw_row(framebuffer, y, "状态 Status", flags);
+            : "有数据";
+        y = ui_draw_row(framebuffer, y, "状态", flags);
     }
     draw_fifo_wave(framebuffer, y + 8, st);
 
     static const char* const labels[] = {
-        "换方式 Mode", "少攒 Wtm-", "多攒 Wtm+",
-        "精度 Bits", "读取 Read", "清空 Clear",
+        "换方式", "少攒", "多攒",
+        "精度", "读取", "清空",
     };
     for (int i = 0; i < 6; i++) {
         axis_draw_btn(
@@ -683,28 +683,28 @@ static void draw_axis_fifo(uint8_t* framebuffer, const ui_axis_state_t* st) {
 static void draw_axis_diag(uint8_t* framebuffer, const ui_axis_state_t* st) {
     char v[56];
     int y = ui_draw_section(
-        framebuffer, UI_CONTENT_TOP, "内置自测，请放平 Built-in ST, keep flat"
+        framebuffer, UI_CONTENT_TOP, "内置自测，请放平"
     );
     if (st->busy) {
-        y = ui_draw_row(framebuffer, y, "状态 Status", "采样中 Sampling");
+        y = ui_draw_row(framebuffer, y, "状态", "采样中");
     } else if (st->st_valid) {
         snprintf(
-            v, sizeof(v), "%d mg　%s", st->st.dx_mg, st->st.pass_x ? "正常 Pass" : "偏差 Fail"
+            v, sizeof(v), "%d mg　%s", st->st.dx_mg, st->st.pass_x ? "正常" : "偏差"
         );
-        y = ui_draw_row(framebuffer, y, "X 偏移 Delta", v);
+        y = ui_draw_row(framebuffer, y, "X 偏移", v);
         snprintf(
-            v, sizeof(v), "%d mg　%s", st->st.dy_mg, st->st.pass_y ? "正常 Pass" : "偏差 Fail"
+            v, sizeof(v), "%d mg　%s", st->st.dy_mg, st->st.pass_y ? "正常" : "偏差"
         );
-        y = ui_draw_row(framebuffer, y, "Y 偏移 Delta", v);
+        y = ui_draw_row(framebuffer, y, "Y 偏移", v);
         snprintf(
-            v, sizeof(v), "%d mg　%s", st->st.dz_mg, st->st.pass_z ? "正常 Pass" : "偏差 Fail"
+            v, sizeof(v), "%d mg　%s", st->st.dz_mg, st->st.pass_z ? "正常" : "偏差"
         );
-        y = ui_draw_row(framebuffer, y, "Z 偏移 Delta", v);
+        y = ui_draw_row(framebuffer, y, "Z 偏移", v);
     } else {
-        y = ui_draw_row(framebuffer, y, "状态 Status", "未测 Idle　典型 320/320/430");
+        y = ui_draw_row(framebuffer, y, "状态", "未测　典型 320/320/430");
     }
 
-    y = ui_draw_section(framebuffer, y + UI_SECTION_GAP, "静放噪声 Noise at rest");
+    y = ui_draw_section(framebuffer, y + UI_SECTION_GAP, "静放噪声");
     if (st->stats_valid) {
         snprintf(
             v, sizeof(v), "均 M %d　峰 P %d　散 S %u",
@@ -725,9 +725,9 @@ static void draw_axis_diag(uint8_t* framebuffer, const ui_axis_state_t* st) {
             v, sizeof(v), "%u.%u Hz",
             st->stats.odr_x10 / 10, st->stats.odr_x10 % 10
         );
-        y = ui_draw_row(framebuffer, y, "实测速率 Measured", v);
+        y = ui_draw_row(framebuffer, y, "实测速率", v);
     } else {
-        y = ui_draw_row(framebuffer, y, "状态 Status", "未采集 Idle");
+        y = ui_draw_row(framebuffer, y, "状态", "未采集");
     }
 
     y = ui_draw_section(framebuffer, y + UI_SECTION_GAP, "传感器型号 / IMU IC：SC7A20H");
@@ -735,11 +735,11 @@ static void draw_axis_diag(uint8_t* framebuffer, const ui_axis_state_t* st) {
         const bool ok =
             st->whoami == SC7A20H_WHO_AM_I_VAL && st->version == SC7A20H_VERSION_VAL;
         if (st->whoami == 0 && st->version == 0) {
-            snprintf(v, sizeof(v), "未读 Unread");
+            snprintf(v, sizeof(v), "未读");
         } else {
             snprintf(
                 v, sizeof(v), "%02X / %02X　%s", st->whoami, st->version,
-                ok ? "SC7A20H" : "不符 Mismatch"
+                ok ? "SC7A20H" : "不符"
             );
         }
         y = ui_draw_row(framebuffer, y, "WHO / VER", v);
@@ -751,18 +751,18 @@ static void draw_axis_diag(uint8_t* framebuffer, const ui_axis_state_t* st) {
             st->dump[0], st->dump[1], st->dump[2], st->dump[3],
             st->dump[4], st->dump[5], st->dump[6], st->dump[7]
         );
-        y = ui_draw_row(framebuffer, y, "控制字 CTRL", v);
+        y = ui_draw_row(framebuffer, y, "控制字", v);
         snprintf(
             v, sizeof(v),
             "%02X %02X %02X %02X %02X %02X %02X %02X",
             st->dump[8], st->dump[9], st->dump[10], st->dump[11],
             st->dump[12], st->dump[13], st->dump[14], st->dump[15]
         );
-        ui_draw_row(framebuffer, y, "状态字 STAT", v);
+        ui_draw_row(framebuffer, y, "状态字", v);
     }
 
     static const char* const labels[] = {
-        "自测 Test", "噪声 Noise", "寄存器 Dump", "复位 Reset",
+        "自测 Test", "噪声", "寄存器", "复位",
     };
     for (int i = 0; i < 4; i++) {
         axis_draw_btn(framebuffer, axis_grid(i, 4, 0, UI_AXIS_BTN_Y), labels[i], false);
@@ -776,16 +776,16 @@ static void draw_axis_page(
     char sub[80];
     ui_clear_page(framebuffer);
     static const char* const hints[UI_AXIS_VIEW_COUNT] = {
-        "启用监听后晃动 Enable listen, then tilt",
-        "速率、量程与滤波 ODR, range, filters",
-        "轻敲机身看单击双击 Tap for single or double",
-        "翻转设备查看朝向 Flip to see orientation",
-        "失重、晃动与中断脚 Fall, shake, INT1",
-        "最多缓存 32 组 Buffer up to 32 samples",
-        "放平后测芯片与噪声 Flat: self-test and noise",
+        "启用监听后晃动",
+        "速率、量程与滤波",
+        "轻敲机身看单击双击",
+        "翻转设备查看朝向",
+        "失重、晃动与中断脚",
+        "最多缓存 32 组",
+        "放平后测芯片与噪声",
     };
     if (state->busy) {
-        snprintf(sub, sizeof(sub), "正在采样，请放平 Sampling, keep still");
+        snprintf(sub, sizeof(sub), "正在采样，请放平");
     } else if (state->last_msg[0]) {
         snprintf(sub, sizeof(sub), "%s", state->last_msg);
     } else {
@@ -805,7 +805,6 @@ static void draw_axis_page(
         default: draw_axis_live(framebuffer, state); break;
     }
     draw_axis_tabs(framebuffer, state->view, views, count);
-    ui_draw_menu_handle(framebuffer, false);
 }
 
 typedef struct {
@@ -1062,7 +1061,7 @@ static void axis_handle_hit(int hit) {
         case UI_AXIS_HIT_LIVE_HOLD:
             s_axis_ui.hold = !s_axis_ui.hold;
             axis_sync_power(s_acc);
-            axis_note(s_axis_ui.hold ? "已停止监听 Listen stopped" : "已启用监听 Listen enabled");
+            axis_note(s_axis_ui.hold ? "已停止监听" : "已启用监听");
             break;
         case UI_AXIS_HIT_LIVE_ZERO:
             s_axis_ui.zeroed = !s_axis_ui.zeroed;
@@ -1071,7 +1070,7 @@ static void axis_handle_hit(int hit) {
                 s_axis_ui.zero_y = s_axis_ui.sample.y_mg;
                 s_axis_ui.zero_z = s_axis_ui.sample.z_mg;
             }
-            axis_note(s_axis_ui.zeroed ? "已设为零点 Zero set" : "显示绝对加速度 Absolute");
+            axis_note(s_axis_ui.zeroed ? "已设为零点" : "显示绝对加速度");
             break;
         case UI_AXIS_HIT_CFG_ODR_DEC:
             if (cfg.odr > SC7A20H_ODR_12_5) cfg.odr = (sc7a20h_odr_t)(cfg.odr - 1);
@@ -1101,19 +1100,19 @@ static void axis_handle_hit(int hit) {
             if (sc7a20h_apply_config(s_acc, &cfg) == ESP_OK) {
                 s_axis_ui.cfg = cfg;
                 s_axis_ui.measured_odr_x10 = 0;
-                axis_note("参数已写入 Config written");
+                axis_note("参数已写入");
             } else {
-                axis_note("写入失败 Write failed");
+                axis_note("写入失败");
             }
             break;
         case UI_AXIS_HIT_TAP_ARM:
             s_axis_ui.click_armed = !s_axis_ui.click_armed;
             if (s_axis_ui.click_armed) {
                 axis_apply_click();
-                axis_note("可以敲击机身 Ready to tap");
+                axis_note("可以敲击机身");
             } else {
                 axis_click_stop();
-                axis_note("已停止监听 Listen stopped");
+                axis_note("已停止监听");
             }
             break;
         case UI_AXIS_HIT_TAP_AXIS:
@@ -1136,16 +1135,16 @@ static void axis_handle_hit(int hit) {
             s_axis_ui.click_count = 0;
             s_axis_ui.click_last = 0;
             s_axis_ui.click_src = 0;
-            axis_note("次数已清 Count cleared");
+            axis_note("次数已清");
             break;
         case UI_AXIS_HIT_ORI_ARM:
             s_axis_ui.ori_armed = !s_axis_ui.ori_armed;
             if (s_axis_ui.ori_armed) {
                 axis_ori_apply();
-                axis_note("翻转设备看朝向 Flip the device");
+                axis_note("翻转设备看朝向");
             } else {
                 axis_aoi_off(SC7A20H_AOI1);
-                axis_note("已停止监听 Listen stopped");
+                axis_note("已停止监听");
             }
             break;
         case UI_AXIS_HIT_ORI_4D:
@@ -1171,24 +1170,24 @@ static void axis_handle_hit(int hit) {
             if (s_axis_ui.ff_armed) {
                 s_axis_ui.ff_armed = false;
                 axis_aoi_off(SC7A20H_AOI2);
-                axis_note("已停止监听 Listen stopped");
+                axis_note("已停止监听");
             } else {
                 s_axis_ui.ff_armed = true;
                 s_axis_ui.act_armed = false;
                 sc7a20h_freefall_config(s_acc, 350, 3);
-                axis_note("快速下移或轻抛 Drop or toss");
+                axis_note("快速下移或轻抛");
             }
             break;
         case UI_AXIS_HIT_EVT_ACT:
             if (s_axis_ui.act_armed) {
                 s_axis_ui.act_armed = false;
                 axis_aoi_off(SC7A20H_AOI2);
-                axis_note("已停止监听 Listen stopped");
+                axis_note("已停止监听");
             } else {
                 s_axis_ui.act_armed = true;
                 s_axis_ui.ff_armed = false;
                 sc7a20h_activity_config(s_acc, 160, 2);
-                axis_note("请晃动设备 Shake the device");
+                axis_note("请晃动设备");
             }
             break;
         case UI_AXIS_HIT_EVT_ROUTE:
@@ -1199,7 +1198,7 @@ static void axis_handle_hit(int hit) {
         case UI_AXIS_HIT_EVT_CLR:
             s_axis_ui.ff_count = 0;
             s_axis_ui.act_count = 0;
-            axis_note("次数已清 Count cleared");
+            axis_note("次数已清");
             break;
         case UI_AXIS_HIT_FIFO_MODE:
             s_axis_ui.fifo_mode = (sc7a20h_fifo_mode_t)((s_axis_ui.fifo_mode + 1) & 3);
@@ -1240,8 +1239,8 @@ static void axis_handle_hit(int hit) {
             }
             axis_note(
                 s_axis_ui.fifo_n < 2
-                    ? "缓存还是空的 Buffer still empty"
-                    : "已画出缓存数据 Buffer plotted"
+                    ? "缓存还是空的"
+                    : "已画出缓存数据"
             );
             break;
         }
@@ -1249,7 +1248,7 @@ static void axis_handle_hit(int hit) {
             sc7a20h_fifo_clear(s_acc);
             s_axis_ui.fifo_n = 0;
             sc7a20h_fifo_status(s_acc, &s_axis_ui.fifo_st);
-            axis_note("缓存已清空 Buffer cleared");
+            axis_note("缓存已清空");
             break;
         case UI_AXIS_HIT_DIAG_ST:
             axis_fifo_pause();
@@ -1257,8 +1256,8 @@ static void axis_handle_hit(int hit) {
                 s_axis_ui.st_valid = true;
                 axis_note(
                     s_axis_ui.st.pass_x && s_axis_ui.st.pass_y && s_axis_ui.st.pass_z
-                        ? "芯片自测正常 Self-test pass"
-                        : "自测偏差超范围 Self-test fail"
+                        ? "芯片自测正常"
+                        : "自测偏差超范围"
                 );
             } else {
                 axis_note("自测超时，无新样本");
@@ -1269,15 +1268,15 @@ static void axis_handle_hit(int hit) {
             if (sc7a20h_stats_collect(s_acc, 256, &s_axis_ui.stats) == ESP_OK) {
                 s_axis_ui.stats_valid = true;
                 s_axis_ui.measured_odr_x10 = s_axis_ui.stats.odr_x10;
-                axis_note("噪声已采完 Noise done");
+                axis_note("噪声已采完");
             } else {
-                axis_note("噪声未采到 Noise unread");
+                axis_note("噪声未采到");
             }
             break;
         case UI_AXIS_HIT_DIAG_DUMP:
             if (sc7a20h_dump_regs(s_acc, s_axis_ui.dump, SC7A20H_DUMP_LEN) == ESP_OK) {
                 s_axis_ui.dump_valid = true;
-                axis_note("寄存器已读出 Registers read");
+                axis_note("寄存器已读出");
             }
             sc7a20h_version(s_acc, &s_axis_ui.whoami, &s_axis_ui.version);
             break;
@@ -1290,9 +1289,9 @@ static void axis_handle_hit(int hit) {
                 s_axis_ui.act_armed = false;
                 s_axis_ui.fifo_mode = SC7A20H_FIFO_BYPASS;
                 sc7a20h_version(s_acc, &s_axis_ui.whoami, &s_axis_ui.version);
-                axis_note("芯片已复位 Chip reset");
+                axis_note("芯片已复位");
             } else {
-                axis_note("复位失败 Reset failed");
+                axis_note("复位失败");
             }
             break;
         default:
@@ -1482,7 +1481,7 @@ static app_redraw_t lab_tick(app_ctx_t* ctx) { return tick_tier(ctx, &s_lab_tier
 
 const app_desc_t app_axis = {
     .title = AXIS_TITLE,
-    .detail = "读数与事件 Readings & Events",
+    .detail = "读数与事件",
     .render = demo_render,
     .on_enter = demo_enter,
     .on_exit = exit_tier,
@@ -1493,7 +1492,7 @@ const app_desc_t app_axis = {
 
 const app_desc_t app_axis_lab = {
     .title = AXIS_LAB_TITLE,
-    .detail = "采样参数与自测 Config & Self-test",
+    .detail = "采样参数与自测",
     .render = lab_render,
     .on_enter = lab_enter,
     .on_exit = exit_tier,

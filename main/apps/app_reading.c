@@ -28,7 +28,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
-#define READING_TITLE "阅读测试 Reading"
+#define READING_TITLE "阅读测试"
 #define READING_PX_MIN 36
 #define READING_PX_MAX 72
 #define READING_PX_STEP 4
@@ -315,8 +315,8 @@ static void ensure_layout(int* page) {
 
 static void reading_sub(char* buf, size_t n, int page) {
     snprintf(
-        buf, n, "第 %d / %d 页　Page %d / %d",
-        page + 1, s_page_count, page + 1, s_page_count
+        buf, n, "第 %d / %d 页",
+        page + 1, s_page_count
     );
 }
 
@@ -403,7 +403,6 @@ static void draw_page(uint8_t* fb, int* page) {
     ui_draw_button(fb, ui_bar_rect(0, 3), "DU", false);
     ui_draw_button(fb, ui_bar_rect(1, 3), "GL16", false);
     ui_draw_button(fb, ui_bar_rect(2, 3), "GC16", false);
-    ui_draw_menu_handle(fb, false);
 }
 
 static void prep_task(void* arg) {
@@ -496,27 +495,40 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     kick_next(ctx->leaf);
 }
 
+static void reading_key_hints(app_ctx_t* ctx, ui_key_hints_t* out) {
+    (void)ctx;
+    out->left = "上一页";
+    out->center = "刷新 · 长按桌面";
+    out->right = "下一页";
+}
+
 static bool reading_present(app_ctx_t* ctx, app_redraw_t redraw) {
     if (redraw == APP_REDRAW_DONE) return true;
     if (redraw != APP_REDRAW_PAGE && redraw != APP_REDRAW_FULL) return false;
-    // 从菜单进来时底栏还是「上一页/下一页」，先铺白再出这一页，避免残边。/ Coming from the menu the bar still says Prev/Next; flash white then present this page to avoid leftover edges.
     guard_draw_result(ctx->hl, update_display_white(ctx->hl));
     render(ctx, ctx->fb);
+    ui_key_hints_t hints = { 0 };
+    reading_key_hints(ctx, &hints);
+    ui_draw_key_hints(ctx->fb, &hints);
     guard_draw_result(ctx->hl, update_display_from_white(ctx->hl));
     return true;
 }
 
-static app_redraw_t turn_page(app_ctx_t* ctx, int kind) {
+static app_redraw_t turn_page_dir(app_ctx_t* ctx, int kind, int dir) {
     ensure_prep();
     lock_draw();
     ensure_layout(&ctx->leaf);
-    ctx->leaf = (ctx->leaf + 1) % s_page_count;
+    ctx->leaf = (ctx->leaf + dir + s_page_count) % s_page_count;
     const bool hit = apply_page(ctx->fb, ctx->leaf);
     unlock_draw();
     ESP_LOGI(TAG, "turn %s %d/%d", hit ? "hit" : "miss", ctx->leaf + 1, s_page_count);
     kick_next(ctx->leaf);
     guard_draw_result(ctx->hl, refresh_turn(ctx->hl, kind));
     return APP_REDRAW_DONE;
+}
+
+static app_redraw_t turn_page(app_ctx_t* ctx, int kind) {
+    return turn_page_dir(ctx, kind, 1);
 }
 
 static app_redraw_t apply_size_delta(app_ctx_t* ctx, int dir) {
@@ -585,14 +597,28 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
     return APP_REDRAW_NONE;
 }
 
+static app_redraw_t on_key(app_ctx_t* ctx, int key) {
+    if (key == UI_KEY_1) {
+        ctx->key_handled = true;
+        return turn_page_dir(ctx, READING_GL16, -1);
+    }
+    if (key == UI_KEY_3) {
+        ctx->key_handled = true;
+        return turn_page_dir(ctx, READING_GL16, 1);
+    }
+    return APP_REDRAW_NONE;
+}
+
 const app_desc_t app_reading = {
     .title = READING_TITLE,
-    .detail = "正文翻页对照 Reading Page Turn",
-    .enter_full = true,
+    .detail = "正文翻页对照",
+    .owns_keys = true,
     .render = render,
     .present = reading_present,
     .on_enter = on_enter,
     .on_exit = reading_on_exit,
     .on_touch = on_touch,
+    .on_key = on_key,
+    .key_hints = reading_key_hints,
     .on_tick = on_tick,
 };

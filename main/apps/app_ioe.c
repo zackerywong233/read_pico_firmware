@@ -26,7 +26,7 @@
 #include "ui_menu.h"
 
 #define TAG "app_ioe"
-#define IOE_TITLE "扩展口 IOE"
+#define IOE_TITLE "扩展口"
 #define IOE_POLL_MS 50
 #define IOE_IDLE_MS 400
 #define IOE_CFG0_EXPECT 0x64
@@ -68,11 +68,11 @@ static bool pin_high(uint8_t port, int bit) {
 }
 
 static const char* ioe_level(bool high) {
-    return high ? "高 High" : "低 Low";
+    return high ? "高" : "低";
 }
 
 static const char* ioe_sd(bool high) {
-    return high ? "未插入 Missing" : "已插入 Inserted";
+    return high ? "未插入" : "已插入";
 }
 
 static void ioe_dir_text(char* buf, size_t n, uint8_t cfg) {
@@ -81,7 +81,7 @@ static void ioe_dir_text(char* buf, size_t n, uint8_t cfg) {
         return;
     }
     if (cfg == 0) {
-        snprintf(buf, n, "%02X　全出 Out", cfg);
+        snprintf(buf, n, "%02X　全出", cfg);
         return;
     }
     int pos = snprintf(buf, n, "%02X　入 In", cfg);
@@ -93,7 +93,7 @@ static void ioe_dir_text(char* buf, size_t n, uint8_t cfg) {
 }
 
 static void ioe_inv_text(char* buf, size_t n, uint8_t inv) {
-    snprintf(buf, n, inv == 0 ? "%02X　不反 None" : "%02X　反 Inv", inv);
+    snprintf(buf, n, inv == 0 ? "%02X　不反" : "%02X　反", inv);
 }
 
 static void draw_page(uint8_t* framebuffer, const read_pico_status_t* status) {
@@ -116,7 +116,7 @@ static void draw_page(uint8_t* framebuffer, const read_pico_status_t* status) {
     );
     ui_draw_header(framebuffer, IOE_TITLE, sub);
 
-    ui_draw_section(framebuffer, g.in_y, "输入 Inputs");
+    ui_draw_section(framebuffer, g.in_y, "输入");
     int y = g.in_y + UI_SEC_HEAD;
     y = ui_draw_row2(
         framebuffer, y,
@@ -127,7 +127,7 @@ static void draw_page(uint8_t* framebuffer, const read_pico_status_t* status) {
         framebuffer, y, "P0.6 SD_CD", ioe_sd(pin_high(in0, IOE_BIT_SD_CD)), NULL, NULL
     );
 
-    ui_draw_section(framebuffer, g.out_y, "输出 Outputs");
+    ui_draw_section(framebuffer, g.out_y, "输出");
     y = g.out_y + UI_SEC_HEAD;
     y = ui_draw_row2(
         framebuffer, y,
@@ -144,11 +144,11 @@ static void draw_page(uint8_t* framebuffer, const read_pico_status_t* status) {
         "P0.7 TP_RST", ioe_level(pin_high(out0, IOE_BIT_TP_RST)), NULL, NULL
     );
 
-    ui_draw_section(framebuffer, g.cfg_y, "芯片配置 Config");
+    ui_draw_section(framebuffer, g.cfg_y, "芯片配置");
     y = g.cfg_y + UI_SEC_HEAD;
     ioe_dir_text(left, sizeof(left), cfg0);
     if (cfg1 == 0xFF) {
-        snprintf(right, sizeof(right), "%02X　未接 Unused", cfg1);
+        snprintf(right, sizeof(right), "%02X　未接", cfg1);
     } else {
         ioe_dir_text(right, sizeof(right), cfg1);
     }
@@ -163,8 +163,7 @@ static void draw_page(uint8_t* framebuffer, const read_pico_status_t* status) {
     snprintf(right, sizeof(right), "%02X", IOE_CFG0_EXPECT);
     ui_draw_row2(framebuffer, y, "INT#", left, "期望 CFG", right);
 
-    ui_draw_button(framebuffer, g.tp_rst, "复位触摸 Reset TP", rst_low);
-    ui_draw_menu_handle(framebuffer, false);
+    ui_draw_button(framebuffer, g.tp_rst, "复位触摸", rst_low);
 }
 
 static bool status_changed(const read_pico_status_t* a, const read_pico_status_t* b) {
@@ -226,7 +225,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
 
 const app_desc_t app_ioe = {
     .title = IOE_TITLE,
-    .detail = "Port-0 电平与中断 Pin Levels & IRQ",
+    .detail = "Port-0 电平与中断",
     .render = render,
     .on_enter = on_enter,
     .on_touch = on_touch,

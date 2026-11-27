@@ -33,3 +33,9 @@ esp_err_t book_epub_load_image(book_epub_t *book, size_t index, const char *refe
 uint32_t book_epub_total_bytes(const book_epub_t *book);
 /// 该章之前所有 spine 原始 HTML 字节累计值。/ Sum of source HTML bytes preceding this chapter in the spine.
 uint32_t book_epub_chapter_byte_offset(const book_epub_t *book, size_t index);
+/// 从 EPUB 提取元数据（书名/作者）与封面图片原始字节（JPEG/PNG）；不解析 spine。调用方 free(*encoded_out)。
+/// Extract OPF metadata (title/author) and cover image bytes (JPEG/PNG) without loading the spine; caller frees *encoded_out.
+esp_err_t book_epub_extract_cover(const char *path,
+                                  char *title_out, size_t title_cap,
+                                  char *author_out, size_t author_cap,
+                                  uint8_t **encoded_out, size_t *encoded_len_out);

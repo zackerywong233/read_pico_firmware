@@ -28,6 +28,9 @@ book_progress_watch_t* book_progress_watch_create(const char* path);
 bool book_progress_watch_invalidated(const book_progress_watch_t* watch);
 /// 移除并释放监视；不可与遗忘并发。/ Remove and free a watch; never run concurrently with forget.
 void book_progress_watch_destroy(book_progress_watch_t* watch);
+/// 原子标记匹配路径的待保存监视失效，防止旧缓存覆盖外部恢复的进度。
+/// Atomically invalidate matching pending watches so stale caches cannot overwrite externally restored progress.
+void book_progress_invalidate_watch(const char* path);
 
 typedef struct {
     /// 文件原始字节数。/ Original file size in bytes.

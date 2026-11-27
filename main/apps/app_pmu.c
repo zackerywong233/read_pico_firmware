@@ -115,47 +115,47 @@ typedef struct {
 } pmu_hit_band_t;
 
 static const char* const k_tab_labels[UI_PMU_VIEW_COUNT] = {
-    "信息 Info", "事件 Event", "配置 Config", "动作 Action",
+    "信息", "事件", "配置", "动作",
 };
 
 static const char* const k_info_btn[] = {
-    "读取 Read", "关机 Off", "复位 Reset", "下载 DL",
+    "读取", "关机", "复位", "下载 DL",
 };
 static const int k_info_ids[] = {
     UI_PMU_HIT_READ, UI_PMU_HIT_OFF, UI_PMU_HIT_RST, UI_PMU_HIT_DL,
 };
 
-static const char* const k_evt_btn[] = { "确认 Ack", "清事件 Clear", "清诊断 Diag" };
+static const char* const k_evt_btn[] = { "确认", "清事件", "清诊断" };
 static const int k_evt_ids[] = {
     UI_PMU_HIT_ACK, UI_PMU_HIT_EVT_CLR, UI_PMU_HIT_DIAG_CLR,
 };
 
 static const char* const k_cfg_btn[] = {
-    "来电开机 AC On", "按键 Key", "充灯 ChgLED", "低电通知 LowSOC",
+    "来电开机 AC On", "按键", "充灯", "低电通知",
 };
 static const int k_cfg_ids[] = {
     UI_PMU_HIT_CFG_WAKE, UI_PMU_HIT_CFG_KEY, UI_PMU_HIT_CFG_LED, UI_PMU_HIT_CFG_SOC,
 };
 
 static const char* const k_led_btn[] = {
-    "关 Off", "红 Red", "白 White", "红白 Both", "清除 Clear",
+    "关", "红", "白", "红白", "清除",
 };
 static const int k_led_ids[] = {
     UI_PMU_HIT_LED_OFF, UI_PMU_HIT_LED_RED, UI_PMU_HIT_LED_WHT,
     UI_PMU_HIT_LED_BOTH, UI_PMU_HIT_LED_CLR,
 };
 
-static const char* const k_cmd_btn[] = { "连通 Ping", "采电池 Sample", "就绪 Ready" };
+static const char* const k_cmd_btn[] = { "连通", "采电池", "就绪" };
 static const int k_cmd_ids[] = {
     UI_PMU_HIT_PING, UI_PMU_HIT_SAMPLE, UI_PMU_HIT_READY,
 };
 
-static const char* const k_tim_btn[] = { "读时间 Time", "对时 Sync", "读闹钟 Alarm" };
+static const char* const k_tim_btn[] = { "读时间", "对时", "读闹钟" };
 static const int k_tim_ids[] = {
     UI_PMU_HIT_TIME_GET, UI_PMU_HIT_TIME_SYNC, UI_PMU_HIT_ALARM_GET,
 };
 
-static const char* const k_al_btn[] = { "关闹钟 Off", "10 秒 10s", "60 秒 60s" };
+static const char* const k_al_btn[] = { "关闹钟", "10 秒 10s", "60 秒 60s" };
 static const int k_al_ids[] = {
     UI_PMU_HIT_ALARM_OFF, UI_PMU_HIT_ALARM_10, UI_PMU_HIT_ALARM_60,
 };
@@ -233,63 +233,63 @@ static int pmu_hit_bands(
 
 static const char* power_text(uint8_t state) {
     switch (state) {
-        case PMU_PWR_OFF: return "关机 Off";
-        case PMU_PWR_POWERING_ON: return "上电中 Powering";
-        case PMU_PWR_BOOT_WAIT: return "等启动 Boot";
-        case PMU_PWR_RUNNING: return "运行中 Running";
-        case PMU_PWR_SHUTDOWN_PENDING: return "关机中 Stopping";
-        case PMU_PWR_RESETTING: return "复位中 Resetting";
-        case PMU_PWR_DOWNLOAD_MODE: return "下载 Download";
-        case PMU_PWR_FAULT: return "故障 Fault";
-        case PMU_PWR_SOFT_SLEEP: return "软睡眠 Sleep";
-        default: return "未知 Unknown";
+        case PMU_PWR_OFF: return "关机";
+        case PMU_PWR_POWERING_ON: return "上电中";
+        case PMU_PWR_BOOT_WAIT: return "等启动";
+        case PMU_PWR_RUNNING: return "运行中";
+        case PMU_PWR_SHUTDOWN_PENDING: return "关机中";
+        case PMU_PWR_RESETTING: return "复位中";
+        case PMU_PWR_DOWNLOAD_MODE: return "下载";
+        case PMU_PWR_FAULT: return "故障";
+        case PMU_PWR_SOFT_SLEEP: return "软睡眠";
+        default: return "未知";
     }
 }
 
 static const char* status_text(uint16_t status) {
     switch (status) {
         case PMU_STATUS_OK: return "成功 OK";
-        case PMU_STATUS_ACCEPTED: return "已受理 Ack";
-        case PMU_STATUS_BUSY: return "忙 Busy";
-        case PMU_STATUS_BAD_CRC: return "校验错 CRC";
-        case PMU_STATUS_BAD_MAGIC: return "魔数错 Magic";
-        case PMU_STATUS_BAD_LENGTH: return "长度错 Len";
-        case PMU_STATUS_UNSUPPORTED_VERSION: return "版本不支持 Ver";
-        case PMU_STATUS_UNKNOWN_COMMAND: return "未知命令 Cmd";
-        case PMU_STATUS_INVALID_ARGUMENT: return "参数错 Arg";
-        case PMU_STATUS_SEQUENCE_CONFLICT: return "序号冲突 Seq";
-        case PMU_STATUS_STALE_SESSION: return "会话过期 Sess";
+        case PMU_STATUS_ACCEPTED: return "已受理";
+        case PMU_STATUS_BUSY: return "忙";
+        case PMU_STATUS_BAD_CRC: return "校验错";
+        case PMU_STATUS_BAD_MAGIC: return "魔数错";
+        case PMU_STATUS_BAD_LENGTH: return "长度错";
+        case PMU_STATUS_UNSUPPORTED_VERSION: return "版本不支持";
+        case PMU_STATUS_UNKNOWN_COMMAND: return "未知命令";
+        case PMU_STATUS_INVALID_ARGUMENT: return "参数错";
+        case PMU_STATUS_SEQUENCE_CONFLICT: return "序号冲突";
+        case PMU_STATUS_STALE_SESSION: return "会话过期";
         case PMU_STATUS_NOT_SUPPORTED: return "不支持 N/S";
-        case PMU_STATUS_INVALID_STATE: return "状态错 State";
+        case PMU_STATUS_INVALID_STATE: return "状态错";
         case PMU_STATUS_NOT_ARMED: return "未就绪 N/A";
-        case PMU_STATUS_TOKEN_EXPIRED: return "令牌过期 Tok";
-        case PMU_STATUS_PERMISSION_DENIED: return "无权限 Deny";
-        default: return "错误 Error";
+        case PMU_STATUS_TOKEN_EXPIRED: return "令牌过期";
+        case PMU_STATUS_PERMISSION_DENIED: return "无权限";
+        default: return "错误";
     }
 }
 
 static const char* event_text(uint8_t type) {
     switch (type) {
-        case PMU_EVT_KEY_DOWN: return "按下 Down";
+        case PMU_EVT_KEY_DOWN: return "按下";
         case PMU_EVT_KEY_UP: return "抬起 Up";
-        case PMU_EVT_KEY_SHORT: return "短按 Short";
-        case PMU_EVT_KEY_LONG: return "长按 Long";
-        case PMU_EVT_KEY_FORCE_OFF: return "强制关机 Force";
-        case PMU_EVT_CHARGE_STATE_CHANGED: return "充电变化 Charge";
-        case PMU_EVT_BATTERY_SAMPLE_READY: return "电池采样 Sample";
-        case PMU_EVT_BATTERY_LOW: return "电池低压 Low";
-        case PMU_EVT_BATTERY_CRITICAL: return "电池危压 Crit";
-        case PMU_EVT_BATTERY_SOC_LOW: return "电量低 SOC";
-        case PMU_EVT_ALARM_FIRED: return "闹钟 Alarm";
-        case PMU_EVT_HOST_STARTED: return "主机已起 Started";
-        case PMU_EVT_HOST_READY: return "主机就绪 Ready";
-        case PMU_EVT_SHUTDOWN_REQUESTED: return "请求关机 Off req";
-        case PMU_EVT_HOST_RESET_PERFORMED: return "主机复位 Reset";
-        case PMU_EVT_COMMAND_COMPLETED: return "命令完成 Done";
-        case PMU_EVT_CONFIG_RECOVERED: return "配置恢复 Recovered";
-        case PMU_EVT_CW_RESET: return "电源复位 PMU rst";
-        case PMU_EVT_OVERFLOW: return "溢出 Overrun";
-        default: return "事件 Event";
+        case PMU_EVT_KEY_SHORT: return "短按";
+        case PMU_EVT_KEY_LONG: return "长按";
+        case PMU_EVT_KEY_FORCE_OFF: return "强制关机";
+        case PMU_EVT_CHARGE_STATE_CHANGED: return "充电变化";
+        case PMU_EVT_BATTERY_SAMPLE_READY: return "电池采样";
+        case PMU_EVT_BATTERY_LOW: return "电池低压";
+        case PMU_EVT_BATTERY_CRITICAL: return "电池危压";
+        case PMU_EVT_BATTERY_SOC_LOW: return "电量低";
+        case PMU_EVT_ALARM_FIRED: return "闹钟";
+        case PMU_EVT_HOST_STARTED: return "主机已起";
+        case PMU_EVT_HOST_READY: return "主机就绪";
+        case PMU_EVT_SHUTDOWN_REQUESTED: return "请求关机";
+        case PMU_EVT_HOST_RESET_PERFORMED: return "主机复位";
+        case PMU_EVT_COMMAND_COMPLETED: return "命令完成";
+        case PMU_EVT_CONFIG_RECOVERED: return "配置恢复";
+        case PMU_EVT_CW_RESET: return "电源复位";
+        case PMU_EVT_OVERFLOW: return "溢出";
+        default: return "事件";
     }
 }
 
@@ -309,17 +309,10 @@ static void fmt_uptime(char* out, size_t n, uint32_t ms) {
 
 static const char* alarm_text(uint8_t mode) {
     switch (mode) {
-        case 1: return "单次 Once";
-        case 2: return "循环 Repeat";
-        default: return "关 Off";
+        case 1: return "单次";
+        case 2: return "循环";
+        default: return "关";
     }
-}
-
-static void pmu_wr_u32le(uint8_t* p, uint32_t v) {
-    p[0] = (uint8_t)v;
-    p[1] = (uint8_t)(v >> 8);
-    p[2] = (uint8_t)(v >> 16);
-    p[3] = (uint8_t)(v >> 24);
 }
 
 static void draw_pmu_tabs(uint8_t* framebuffer, int view) {
@@ -348,14 +341,14 @@ static void draw_pmu_flags(uint8_t* framebuffer, int y, uint32_t flags) {
         const char* label;
         uint32_t bit;
     } items[8] = {
-        { "有效 Valid", PMU_STATUS_BATTERY_VALID },
-        { "低压 Low", PMU_STATUS_BATTERY_LOW },
-        { "危压 Crit", PMU_STATUS_BATTERY_CRITICAL },
-        { "充电 Chg", PMU_STATUS_CHARGING_ACTIVE },
+        { "有效", PMU_STATUS_BATTERY_VALID },
+        { "低压", PMU_STATUS_BATTERY_LOW },
+        { "危压", PMU_STATUS_BATTERY_CRITICAL },
+        { "充电", PMU_STATUS_CHARGING_ACTIVE },
         { "供电 USB", PMU_STATUS_CHARGE_PIN_HIGH },
-        { "按键 Key", PMU_STATUS_KEY_PRESSED },
+        { "按键", PMU_STATUS_KEY_PRESSED },
         { "使能 EN", PMU_STATUS_HOST_EN_HIGH },
-        { "启动 Boot", PMU_STATUS_HOST_BOOT_LOW },
+        { "启动", PMU_STATUS_HOST_BOOT_LOW },
     };
     for (int i = 0; i < 8; i++) {
         ui_draw_chip(
@@ -369,14 +362,14 @@ static void draw_pmu_info(uint8_t* framebuffer, const pmu_snapshot_t* s, const p
     char line[48];
     char aux[48];
     if (!s->present) {
-        int y = ui_draw_section(framebuffer, g->body_y, "电源芯片 Chip");
+        int y = ui_draw_section(framebuffer, g->body_y, "电源芯片");
         ui_text(
-            framebuffer, UI_MARGIN, y, UI_PX_BODY, "无应答 No reply",
+            framebuffer, UI_MARGIN, y, UI_PX_BODY, "无应答",
             EPD_DRAW_ALIGN_LEFT, false
         );
         ui_text(
             framebuffer, UI_MARGIN, y + UI_ROW_H, UI_PX_BODY,
-            "深睡时请短按电源键 Short-press power",
+            "深睡时请短按电源键",
             EPD_DRAW_ALIGN_LEFT, false
         );
         pmu_draw_grid(framebuffer, 4, 1, g->bar_y, k_info_btn, NULL);
@@ -384,30 +377,30 @@ static void draw_pmu_info(uint8_t* framebuffer, const pmu_snapshot_t* s, const p
     }
 
     // 电压电量充电在电源页。这里只留原始 ADC、MCU 温度和协议态。/ Voltage, SOC, and charge are on the power page. Here: raw ADC, MCU temperature, and protocol state.
-    int y = ui_draw_section(framebuffer, g->body_y, "采样 Sample");
+    int y = ui_draw_section(framebuffer, g->body_y, "采样");
     int t = s->mcu_temp_centi;
     snprintf(line, sizeof(line), "%u", s->battery_raw);
     snprintf(aux, sizeof(aux), "%d.%02d ℃", t / 100, (t < 0 ? -t : t) % 100);
-    ui_draw_row2(framebuffer, y, "原始 Raw", line, "MCU 温度 Temp", aux);
+    ui_draw_row2(framebuffer, y, "原始", line, "MCU 温度", aux);
 
-    y = ui_draw_section(framebuffer, g->info_status_y, "运行状态 Status");
+    y = ui_draw_section(framebuffer, g->info_status_y, "运行状态");
     snprintf(line, sizeof(line), "%u", s->pending_events);
     y = ui_draw_row2(
-        framebuffer, y, "电源 Power", power_text(s->power_state),
-        "待处理 Pending", line
+        framebuffer, y, "电源", power_text(s->power_state),
+        "待处理", line
     );
     snprintf(line, sizeof(line), "%04X", (uint16_t)s->fault_flags);
     fmt_uptime(aux, sizeof(aux), s->uptime_ms);
-    ui_draw_row2(framebuffer, y, "故障 Fault", line, "运行 Up", aux);
+    ui_draw_row2(framebuffer, y, "故障", line, "运行 Up", aux);
 
-    y = ui_draw_section(framebuffer, g->info_ident_y, "标识 Identity");
+    y = ui_draw_section(framebuffer, g->info_ident_y, "标识");
     if (s->uid_ok) {
         size_t o = 0;
         for (int i = 0; i < PMU_CHIP_UID_LEN && o + 2 < sizeof(line); i++) {
             o += (size_t)snprintf(line + o, sizeof(line) - o, "%02X", s->uid[i]);
         }
     } else {
-        snprintf(line, sizeof(line), "未读到 No data");
+        snprintf(line, sizeof(line), "未读到");
     }
     y = ui_draw_row2(framebuffer, y, "PMU UID", line, NULL, NULL);
     snprintf(
@@ -415,11 +408,11 @@ static void draw_pmu_info(uint8_t* framebuffer, const pmu_snapshot_t* s, const p
         status_text(s->last_cmd_status), s->last_cmd_seq
     );
     ui_draw_row2(
-        framebuffer, y, "上次命令 Last", line, "校验 Check",
-        s->identity_ok && s->status_ok ? "正常 OK" : "未读到 No data"
+        framebuffer, y, "上次命令", line, "校验",
+        s->identity_ok && s->status_ok ? "正常 OK" : "未读到"
     );
 
-    y = ui_draw_section(framebuffer, g->info_flags_y, "状态位 Flags");
+    y = ui_draw_section(framebuffer, g->info_flags_y, "状态位");
     draw_pmu_flags(framebuffer, y, s->flags);
 
     pmu_draw_grid(framebuffer, 4, 1, g->bar_y, k_info_btn, NULL);
@@ -429,41 +422,41 @@ static void draw_pmu_evt(uint8_t* framebuffer, const pmu_snapshot_t* s, const pm
     char line[48];
     char aux[48];
 
-    int y = ui_draw_section(framebuffer, g->body_y, "队列 Queue");
+    int y = ui_draw_section(framebuffer, g->body_y, "队列");
     snprintf(line, sizeof(line), "%u", s->pending_events);
     ui_draw_row2(
-        framebuffer, y, "待处理 Pending", line,
-        "预览 Peek", s->event_ok ? "有 Yes" : "无 No"
+        framebuffer, y, "待处理", line,
+        "预览", s->event_ok ? "有" : "无 No"
     );
 
-    y = ui_draw_section(framebuffer, g->evt_latest_y, "最近事件 Latest");
+    y = ui_draw_section(framebuffer, g->evt_latest_y, "最近事件");
     if (s->event_ok) {
         snprintf(line, sizeof(line), "#%u　%s", s->event.event_id, event_text(s->event.type));
         snprintf(aux, sizeof(aux), "%u", s->event.severity);
-        y = ui_draw_row2(framebuffer, y, "事件 Event", line, "级别 Sev", aux);
+        y = ui_draw_row2(framebuffer, y, "事件", line, "级别", aux);
         snprintf(line, sizeof(line), "%lu ms", (unsigned long)s->event.timestamp_ms);
         snprintf(aux, sizeof(aux), "%lu / %u", (unsigned long)s->event.arg0, s->event.arg1);
-        ui_draw_row2(framebuffer, y, "时刻 Time", line, "参数 Args", aux);
+        ui_draw_row2(framebuffer, y, "时刻", line, "参数", aux);
     } else {
         ui_text(
-            framebuffer, UI_MARGIN, y + 12, UI_PX_BODY, "事件队列为空 Queue empty",
+            framebuffer, UI_MARGIN, y + 12, UI_PX_BODY, "事件队列为空",
             EPD_DRAW_ALIGN_LEFT, false
         );
     }
 
-    y = ui_draw_section(framebuffer, g->evt_diag_y, "诊断计数 Diagnostics");
+    y = ui_draw_section(framebuffer, g->evt_diag_y, "诊断计数");
     snprintf(line, sizeof(line), "%u", s->diag_i2c_rx);
     snprintf(aux, sizeof(aux), "%u", s->diag_i2c_recov);
-    y = ui_draw_row2(framebuffer, y, "接收 Rx", line, "总线恢复 Recov", aux);
+    y = ui_draw_row2(framebuffer, y, "接收 Rx", line, "总线恢复", aux);
     snprintf(line, sizeof(line), "%u", s->diag_crc);
     snprintf(aux, sizeof(aux), "%u", s->diag_bad_len);
-    y = ui_draw_row2(framebuffer, y, "校验错 CRC", line, "长度错 Len", aux);
+    y = ui_draw_row2(framebuffer, y, "校验错", line, "长度错", aux);
     snprintf(line, sizeof(line), "%u", s->diag_unknown);
     snprintf(aux, sizeof(aux), "%u", s->diag_overflow);
-    y = ui_draw_row2(framebuffer, y, "未知命令 Cmd", line, "溢出 Over", aux);
+    y = ui_draw_row2(framebuffer, y, "未知命令", line, "溢出", aux);
     snprintf(line, sizeof(line), "%u / %u", s->diag_sleep, s->diag_adc);
     snprintf(aux, sizeof(aux), "%u", s->diag_host_rst);
-    ui_draw_row2(framebuffer, y, "睡眠 / 采样 Sleep/ADC", line, "主机复位 Rst", aux);
+    ui_draw_row2(framebuffer, y, "睡眠 / 采样", line, "主机复位", aux);
 
     pmu_draw_grid(framebuffer, 3, 1, g->bar_y, k_evt_btn, NULL);
 }
@@ -473,40 +466,40 @@ static void draw_pmu_cfg(uint8_t* framebuffer, const pmu_snapshot_t* s, const pm
     char aux[48];
     const pmu_config_t* c = &s->config;
     if (!s->config_ok) {
-        int y = ui_draw_section(framebuffer, g->body_y, "配置 Config");
+        int y = ui_draw_section(framebuffer, g->body_y, "配置");
         ui_text(
-            framebuffer, UI_MARGIN, y + 10, UI_PX_BODY, "未读到配置 No data",
+            framebuffer, UI_MARGIN, y + 10, UI_PX_BODY, "未读到配置",
             EPD_DRAW_ALIGN_LEFT, false
         );
     } else {
         int y = ui_draw_section(framebuffer, g->body_y, "电压阈值 mV");
         snprintf(line, sizeof(line), "%u", c->low_mv);
         snprintf(aux, sizeof(aux), "%u", c->critical_mv);
-        y = ui_draw_row2(framebuffer, y, "低压 Low", line, "危压 Crit", aux);
+        y = ui_draw_row2(framebuffer, y, "低压", line, "危压", aux);
         snprintf(line, sizeof(line), "%u", c->full_mv);
         snprintf(aux, sizeof(aux), "%u", c->forced_off_mv);
-        y = ui_draw_row2(framebuffer, y, "满电 Full", line, "强制关机 Force", aux);
+        y = ui_draw_row2(framebuffer, y, "满电", line, "强制关机", aux);
         snprintf(line, sizeof(line), "%u", c->hysteresis_mv);
         snprintf(aux, sizeof(aux), "%u %%", c->low_soc_threshold);
-        ui_draw_row2(framebuffer, y, "回差 Hyst", line, "低电量 SOC", aux);
+        ui_draw_row2(framebuffer, y, "回差", line, "低电量", aux);
 
         y = ui_draw_section(framebuffer, g->cfg_key_y, "按键 ms");
         snprintf(line, sizeof(line), "%u", c->key_debounce_ms);
         snprintf(aux, sizeof(aux), "%u", c->key_long_ms);
-        y = ui_draw_row2(framebuffer, y, "消抖 Debounce", line, "长按 Long", aux);
+        y = ui_draw_row2(framebuffer, y, "消抖", line, "长按", aux);
         snprintf(line, sizeof(line), "%u", c->key_force_event_ms);
         snprintf(aux, sizeof(aux), "%u", c->key_power_on_ms);
-        y = ui_draw_row2(framebuffer, y, "强制事件 Force", line, "开机 On", aux);
+        y = ui_draw_row2(framebuffer, y, "强制事件", line, "开机 On", aux);
         snprintf(line, sizeof(line), "%u", c->key_force_off_ms);
-        ui_draw_row2(framebuffer, y, "强制关机 Off", line, NULL, NULL);
+        ui_draw_row2(framebuffer, y, "强制关机", line, NULL, NULL);
 
-        y = ui_draw_section(framebuffer, g->cfg_to_y, "超时 Timeout");
+        y = ui_draw_section(framebuffer, g->cfg_to_y, "超时");
         snprintf(line, sizeof(line), "%u", c->host_boot_timeout_ms);
         snprintf(aux, sizeof(aux), "%u", c->shutdown_timeout_ms);
-        y = ui_draw_row2(framebuffer, y, "启动 Boot", line, "关机 Off", aux);
+        y = ui_draw_row2(framebuffer, y, "启动", line, "关机", aux);
         snprintf(line, sizeof(line), "%u", c->led_override_timeout_ms);
         snprintf(aux, sizeof(aux), "%lu", (unsigned long)c->generation);
-        ui_draw_row2(framebuffer, y, "灯超时 LED", line, "代数 Gen", aux);
+        ui_draw_row2(framebuffer, y, "灯超时 LED", line, "代数", aux);
     }
     bool on[] = {
         s->config_ok && c->wake_on_charge,
@@ -520,15 +513,15 @@ static void draw_pmu_cfg(uint8_t* framebuffer, const pmu_snapshot_t* s, const pm
 static void draw_pmu_act(uint8_t* framebuffer, const pmu_snapshot_t* s, const pmu_geom_t* g) {
     char line[48];
     char aux[48];
-    int y = ui_draw_section(framebuffer, g->body_y, "时间与闹钟 Time");
+    int y = ui_draw_section(framebuffer, g->body_y, "时间与闹钟");
     snprintf(line, sizeof(line), "%lu", (unsigned long)s->unix_sec);
     y = ui_draw_row2(
-        framebuffer, y, "对时 Sync",
-        s->time_ok && s->time_synced ? "已对时 Synced" : "未对时 Unset",
+        framebuffer, y, "对时",
+        s->time_ok && s->time_synced ? "已对时" : "未对时",
         "Unix", line
     );
     snprintf(aux, sizeof(aux), "%lu s", (unsigned long)s->alarm_remain);
-    ui_draw_row2(framebuffer, y, "闹钟 Alarm", alarm_text(s->alarm_mode), "剩余 Left", aux);
+    ui_draw_row2(framebuffer, y, "闹钟", alarm_text(s->alarm_mode), "剩余", aux);
 
     bool led_on[5] = { 0 };
     uint8_t led = s->led_state & 0x03;
@@ -546,13 +539,13 @@ static void draw_pmu_page(uint8_t* framebuffer, const ui_pmu_state_t* state) {
     ui_clear_page(framebuffer);
     if (s->present) {
         snprintf(
-            line, sizeof(line), "固件 FW %u.%u.%u　协议 Proto %u.%u　%s",
+            line, sizeof(line), "固件 %u.%u.%u　协议 %u.%u　%s",
             s->fw_major, s->fw_minor, s->fw_patch,
             s->proto_major, s->proto_minor,
             state->last_msg[0] ? state->last_msg : status_text(s->last_op_status)
         );
     } else {
-        snprintf(line, sizeof(line), "CW32 无应答 No reply");
+        snprintf(line, sizeof(line), "CW32 无应答");
     }
     ui_draw_header(framebuffer, PMU_TITLE, line);
 
@@ -563,7 +556,6 @@ static void draw_pmu_page(uint8_t* framebuffer, const ui_pmu_state_t* state) {
         default: draw_pmu_info(framebuffer, s, &g); break;
     }
     draw_pmu_tabs(framebuffer, state->view);
-    ui_draw_menu_handle(framebuffer, false);
 }
 
 static int pmu_hit_test(uint16_t x, uint16_t y, int view, const pmu_geom_t* g) {
@@ -627,16 +619,15 @@ static void pmu_cfg_set(uint16_t cmd, const uint8_t* p, size_t n, const char* no
 }
 
 static void pmu_alarm_set(uint8_t mode, uint32_t secs, const char* note) {
-    uint8_t buf[5] = { mode };
-    pmu_wr_u32le(&buf[1], secs);
-    read_pico_pmu_cmd(PMU_CMD_ALARM_SET, buf, 5);
-    read_pico_pmu_cmd(PMU_CMD_ALARM_GET, NULL, 0);
+    if (mode == 0 && secs < 10) secs = 10;
+    (void)read_pico_pmu_alarm_set(mode, secs);
+    (void)read_pico_pmu_alarm_get();
     pmu_note(note);
 }
 
 // 和锁屏关机同一函数：停外设、卸屏轨、刷 SD，再 REQUEST_OFF → SHUTDOWN_READY；只有失败才返回。/ Same function as lock-then-off: park peripherals, drop rails, sync SD, then REQUEST_OFF → SHUTDOWN_READY; returns only on failure.
 static void pmu_host_off(void) {
-    if (app_enter_host_sleep(APP_SLEEP_OFF) != ESP_OK) pmu_note("关机失败 Off fail");
+    if (app_enter_host_sleep(APP_SLEEP_OFF) != ESP_OK) pmu_note("关机失败");
 }
 
 // 先通知 PMU 主机要重启，再由 ESP 自己复位，不让 PMU 拉 EN。/ Tell the PMU the host will reboot, then ESP resets itself; do not let the PMU pull EN.
@@ -666,7 +657,7 @@ static void pmu_handle_hit(int hit) {
         case UI_PMU_HIT_READ:
             read_pico_pmu_refresh();
             (void)read_pico_pmu_uid_get(NULL);
-            pmu_note("读取 Read");
+            pmu_note("读取");
             break;
         case UI_PMU_HIT_OFF:
             pmu_host_off();
@@ -680,18 +671,18 @@ static void pmu_handle_hit(int hit) {
         case UI_PMU_HIT_ACK: {
             const pmu_snapshot_t* s = read_pico_pmu_get();
             if (s->event_ok) read_pico_pmu_event_ack(s->event.event_id);
-            pmu_note("确认 Ack");
+            pmu_note("确认");
             break;
         }
         case UI_PMU_HIT_EVT_CLR:
             read_pico_pmu_cmd(PMU_CMD_EVENTS_CLEAR_ALL, NULL, 0);
             read_pico_pmu_poll();
-            pmu_note("清事件 Clear");
+            pmu_note("清事件");
             break;
         case UI_PMU_HIT_DIAG_CLR:
             read_pico_pmu_cmd(PMU_CMD_CLEAR_DIAGNOSTICS, NULL, 0);
             read_pico_pmu_refresh();
-            pmu_note("清诊断 Diag");
+            pmu_note("清诊断");
             break;
         case UI_PMU_HIT_CFG_WAKE:
             buf[0] = read_pico_pmu_get()->config.wake_on_charge ? 0 : 1;
@@ -699,21 +690,21 @@ static void pmu_handle_hit(int hit) {
             break;
         case UI_PMU_HIT_CFG_KEY:
             buf[0] = read_pico_pmu_get()->config.key_raw_events ? 0 : 1;
-            pmu_cfg_set(PMU_CMD_CONFIG_SET_KEY_EVENTS, buf, 1, "按键 Key");
+            pmu_cfg_set(PMU_CMD_CONFIG_SET_KEY_EVENTS, buf, 1, "按键");
             break;
         case UI_PMU_HIT_CFG_LED:
             buf[0] = read_pico_pmu_get()->config.charge_led ? 0 : 1;
-            pmu_cfg_set(PMU_CMD_CONFIG_SET_CHARGE_LED, buf, 1, "充灯 ChgLED");
+            pmu_cfg_set(PMU_CMD_CONFIG_SET_CHARGE_LED, buf, 1, "充灯");
             break;
         case UI_PMU_HIT_CFG_SOC:
             if (read_pico_pmu_get()->config.low_soc_enable) {
                 buf[0] = 0;
-                pmu_cfg_set(PMU_CMD_CONFIG_SET_LOW_SOC_NOTIFY, buf, 1, "低电通知 LowSOC");
+                pmu_cfg_set(PMU_CMD_CONFIG_SET_LOW_SOC_NOTIFY, buf, 1, "低电通知");
             } else {
                 buf[0] = 1;
                 buf[1] = 50;
                 buf[2] = 0;
-                pmu_cfg_set(PMU_CMD_CONFIG_SET_LOW_SOC_NOTIFY, buf, 3, "低电通知 LowSOC");
+                pmu_cfg_set(PMU_CMD_CONFIG_SET_LOW_SOC_NOTIFY, buf, 3, "低电通知");
             }
             break;
         case UI_PMU_HIT_LED_OFF:
@@ -727,37 +718,36 @@ static void pmu_handle_hit(int hit) {
             break;
         case UI_PMU_HIT_LED_CLR:
             read_pico_pmu_cmd(PMU_CMD_LED_OVERRIDE_CLEAR, NULL, 0);
-            pmu_note("清除 Clear");
+            pmu_note("清除");
             break;
         case UI_PMU_HIT_PING:
             read_pico_pmu_cmd(PMU_CMD_PING, NULL, 0);
-            pmu_note("连通 Ping");
+            pmu_note("连通");
             break;
         case UI_PMU_HIT_SAMPLE:
             read_pico_pmu_cmd(PMU_CMD_BATTERY_SAMPLE, NULL, 0);
-            pmu_note("采电池 Sample");
+            pmu_note("采电池");
             break;
         case UI_PMU_HIT_READY:
             read_pico_pmu_cmd(PMU_CMD_HOST_READY, buf, 1);
-            pmu_note("就绪 Ready");
+            pmu_note("就绪");
             break;
         case UI_PMU_HIT_TIME_GET:
             read_pico_pmu_cmd(PMU_CMD_TIME_GET, NULL, 0);
-            pmu_note("读时间 Time");
+            pmu_note("读时间");
             break;
         case UI_PMU_HIT_TIME_SYNC: {
-            pmu_wr_u32le(buf, pmu_unix_now());
-            read_pico_pmu_cmd(PMU_CMD_TIME_SYNC, buf, 4);
+            (void)read_pico_pmu_time_sync(pmu_unix_now());
             read_pico_pmu_cmd(PMU_CMD_TIME_GET, NULL, 0);
-            pmu_note("对时 Sync");
+            pmu_note("对时");
             break;
         }
         case UI_PMU_HIT_ALARM_GET:
-            read_pico_pmu_cmd(PMU_CMD_ALARM_GET, NULL, 0);
-            pmu_note("读闹钟 Alarm");
+            (void)read_pico_pmu_alarm_get();
+            pmu_note("读闹钟");
             break;
         case UI_PMU_HIT_ALARM_OFF:
-            pmu_alarm_set(0, 0, "关闹钟 Off");
+            pmu_alarm_set(0, 0, "关闹钟");
             break;
         case UI_PMU_HIT_ALARM_10:
             pmu_alarm_set(1, 10, "闹钟 10s");
@@ -773,7 +763,7 @@ static void pmu_handle_hit(int hit) {
 static void on_enter(app_ctx_t* ctx) {
     read_pico_pmu_refresh();
     (void)read_pico_pmu_uid_get(NULL);
-    snprintf(s_pmu_ui.last_msg, sizeof(s_pmu_ui.last_msg), "已打开 Open");
+    snprintf(s_pmu_ui.last_msg, sizeof(s_pmu_ui.last_msg), "已打开");
     s_last_poll_ms = ctx->now_ms;
 }
 
@@ -817,7 +807,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
 
 const app_desc_t app_pmu = {
     .title = PMU_TITLE,
-    .detail = "协议状态与命令 Protocol Status & Commands",
+    .detail = "协议状态与命令",
     .render = render,
     .on_enter = on_enter,
     .on_touch = on_touch,

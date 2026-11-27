@@ -7,6 +7,17 @@
  */
 #include "transfer_ui_test_env.h"
 #include "../main/apps/app_transfer.c"
+
+const app_desc_t app_focus = { .title = "专注时钟 Focus" };
+static app_focus_status_t test_focus = { .running = false, .duration_min = 25, .completed_count = 3 };
+void app_focus_get_status(app_focus_status_t* out) { *out = test_focus; }
+bool app_focus_remote_start(int minutes) {
+    if (minutes != 15 && minutes != 25 && minutes != 45) return false;
+    test_focus.running = true; test_focus.is_break = false; test_focus.duration_min = (uint16_t)minutes;
+    test_focus.remaining_sec = (uint32_t)minutes * 60U;
+    return true;
+}
+void app_focus_remote_stop(void) { test_focus.running = false; test_focus.remaining_sec = 0; }
 #include <assert.h>
 static void tap(app_ctx_t* ctx, EpdRect rect) {
     ui_gesture_event_t ev = {.type = UI_GESTURE_PRESS, .x0 = rect.x + 2, .y0 = rect.y + 2, .x = rect.x + 2, .y = rect.y + 2};
@@ -107,10 +118,17 @@ int main(void) {
     test_configured = true;
     enter_networks();
     network_ui_tick(&ctx);
-    tap(&ctx, network_control_rect(9));
-    assert(s_network_page == 1);
-    tap(&ctx, network_control_rect(7));
-    assert(s_network_page == 0);
+    ui_key_hints_t hints = {0};
+    transfer_key_hints(&ctx, &hints);
+    assert(strcmp(hints.left, "返回") == 0 && strcmp(hints.right, "下一页") == 0);
+    assert(on_key(&ctx, UI_KEY_3) == APP_REDRAW_PAGE && s_network_page == 1);
+    transfer_key_hints(&ctx, &hints);
+    assert(strcmp(hints.left, "上页 · 长按返回") == 0 && hints.right == NULL);
+    assert(on_key(&ctx, UI_KEY_1) == APP_REDRAW_PAGE && s_network_page == 0);
+    ui_gesture_event_t swipe = {.type = UI_GESTURE_SWIPE_L, .x0 = 500, .y0 = 600, .x = 200, .y = 600};
+    assert(on_gesture(&ctx, &swipe) == APP_REDRAW_PAGE && s_network_page == 1);
+    swipe.type = UI_GESTURE_SWIPE_R;
+    assert(on_gesture(&ctx, &swipe) == APP_REDRAW_PAGE && s_network_page == 0);
     tap(&ctx, network_control_rect(0));
     assert(s_view == TRANSFER_PASSWORD && !s_password[0]);
     tap(&ctx, password_control_rect(46));
@@ -147,7 +165,9 @@ int main(void) {
     network_ui_tick(&ctx);
     tap(&ctx, network_control_rect(0));
     tap(&ctx, password_control_rect(0));
-    tap(&ctx, password_control_rect(44));
+    transfer_key_hints(&ctx, &hints);
+    assert(strcmp(hints.left, "取消") == 0 && hints.right == NULL);
+    assert(on_key(&ctx, UI_KEY_1) == APP_REDRAW_PAGE);
     assert(s_view == TRANSFER_NETWORKS && !s_password[0]);
     test_scan_count = 0;
     tap(&ctx, network_control_rect(8));
@@ -156,11 +176,30 @@ int main(void) {
     test_scan_error = ESP_FAIL;
     tap(&ctx, network_control_rect(8));
     network_ui_tick(&ctx);
-    assert(!s_network_count && s_network_message[0]);
+    assert(!s_network_count && strstr(s_network_message, "FFFF") != NULL);
+    // 传书页进入时独占射频（BLE 关闭），退出后释放。
+    // Entering the page takes the radio (BLE off); leaving releases it.
+    test_scan_error = ESP_OK;
+    test_scan_count = 3;
+    {
+        app_ctx_t c2 = {.fb = &fb};
+        int holds = test_ble_hold_calls, rels = test_ble_release_calls;
+        on_enter(&c2);
+        assert(test_ble_held && test_ble_hold_calls == holds + 1);
+        int scans_before = test_scan_calls;
+        tap(&c2, network_control_rect(8));
+        enter_networks();
+        network_ui_tick(&c2);
+        assert(test_scan_calls == scans_before + 1 && s_network_count == 3 && test_ble_held);
+        transfer_on_exit(&c2);
+        assert(!test_ble_held && test_ble_release_calls == rels + 1);
+    }
     tap(&ctx, network_control_rect(6));
     assert(s_view == TRANSFER_HOME && s_start_pending && s_mode == READ_PICO_TRANSFER_MODE_STA);
+    transfer_key_hints(&ctx, &hints);
+    assert(strcmp(hints.left, "停止并返回") == 0 && hints.right == NULL);
     int stops_before = test_stop_count;
-    tap(&ctx, control_rect(2));
+    assert(on_key(&ctx, UI_KEY_1) == APP_REDRAW_NONE);
     assert(test_stop_count == stops_before + 1 && !s_start_pending);
     assert(ctx.request_return && ctx.request_app == NULL);
     on_enter(&ctx);
@@ -185,5 +224,188 @@ int main(void) {
     s_root.is_flash = true;
     app_transfer.on_media_lost(&ctx);
     assert(test_stop_count == stops_before + 1);
+
+    // 配套接口回调：设置延迟同步与远程空闲切换存储。/ Companion callbacks: deferred settings sync and remote idle storage switch.
+    on_enter(&ctx);
+    on_tick(&ctx);
+    assert(test_last_cfg.settings_get_cb && test_last_cfg.settings_set_cb);
+    assert(test_last_cfg.storage_info_cb && test_last_cfg.storage_switch_cb);
+    read_pico_device_settings_t got_settings = {0};
+    assert(test_last_cfg.settings_get_cb(&got_settings, test_last_cfg.settings_ctx));
+    assert(got_settings.book_px == 48 && got_settings.timezone_min == 480);
+    got_settings.book_px = 56;
+    got_settings.timezone_min = 0;
+    got_settings.charge_led = false;
+    int apply_before = test_runtime_apply_calls;
+    assert(test_last_cfg.settings_set_cb(&got_settings, test_last_cfg.settings_ctx) == ESP_OK);
+    assert(test_runtime_apply_calls == apply_before);
+    on_tick(&ctx);
+    assert(test_runtime_apply_calls == apply_before + 1);
+    assert(test_settings.book_px == 56 && test_settings.timezone_min == 0 && !test_settings.charge_led);
+
+    s_storage_info.flash_available = true;
+    s_storage_info.sd_available = true;
+    test_busy = true;
+    stops_before = test_stop_count;
+    assert(test_last_cfg.storage_switch_cb(true, test_last_cfg.storage_ctx));
+    on_tick(&ctx);
+    assert(test_stop_count == stops_before);
+    test_busy = false;
+    assert(on_tick(&ctx) == APP_REDRAW_PAGE);
+    assert(test_stop_count == stops_before + 1 && s_start_pending);
+    on_tick(&ctx);
+    assert(!s_start_pending);
+
+    // 对时延迟写入、字体切换、看板统计与 PIN 复位。/ Deferred time sync, font select, dashboard stats and PIN reset.
+    assert(test_last_cfg.time_get_cb && test_last_cfg.time_set_cb);
+    assert(test_last_cfg.font_select_cb && test_last_cfg.dashboard_stats_cb);
+    read_pico_time_info_t tinfo = {0};
+    assert(test_last_cfg.time_get_cb(&tinfo, test_last_cfg.time_ctx) && tinfo.time_valid);
+    int time_calls_before = test_time_set_calls;
+    assert(test_last_cfg.time_set_cb(1763729999U, true, 540, test_last_cfg.time_ctx) == ESP_OK);
+    assert(test_time_set_calls == time_calls_before);
+    on_tick(&ctx);
+    assert(test_time_set_calls == time_calls_before + 1 && test_utc_time == 1763729999U && test_settings.timezone_min == 540);
+    assert(test_last_cfg.font_select_cb("/sdcard/fonts/New.ttf", test_last_cfg.font_ctx) == ESP_OK);
+    assert(!strcmp(test_settings.font_path, "/sdcard/fonts/New.ttf"));
+    read_pico_dashboard_stats_t dstats = {0};
+    assert(test_last_cfg.dashboard_stats_cb(&dstats, test_last_cfg.dashboard_ctx));
+    assert(dstats.total_reading_sec == 3661U && dstats.has_last_book && dstats.last_book_percent == 42 && dstats.has_excerpt);
+    assert(test_pin_reset_calls > 0 && test_pmu_poll_calls > 0);
+
+    // BLE 远程启动/切模式/停止钩子：上传忙时拒绝切换和停止，空闲时正常切换与返回。
+    // BLE remote start/switch/stop hooks: refuse while busy, switch mode and request return when idle.
+    app_transfer_set_preferred_mode(READ_PICO_TRANSFER_MODE_STA);
+    on_enter(&ctx);
+    assert(s_mode == READ_PICO_TRANSFER_MODE_STA && s_start_pending);
+    on_tick(&ctx);
+    assert(!s_start_pending);
+    test_busy = true;
+    assert(!app_transfer_remote_switch_mode(READ_PICO_TRANSFER_MODE_AP));
+    assert(!app_transfer_remote_stop(&ctx));
+    test_busy = false;
+    assert(app_transfer_remote_switch_mode(READ_PICO_TRANSFER_MODE_AP));
+    assert(s_mode == READ_PICO_TRANSFER_MODE_AP && s_start_pending);
+    ctx.request_return = false;
+    assert(app_transfer_remote_stop(&ctx));
+    assert(ctx.request_return && !s_start_pending);
+
+    // 传书页收到 /webopen 链接时应排队并自动请求切入网页阅读页。
+    // Transfer page receiving a /webopen URL queues it and requests switching to app_web.
+    on_enter(&ctx);
+    on_tick(&ctx);
+    ctx.request_app = NULL;
+    snprintf(test_pending_webopen, sizeof(test_pending_webopen), "https://example.com/article");
+    test_queued_web_url[0] = 0;
+    on_tick(&ctx);
+    assert(ctx.request_app == &app_web);
+    assert(strcmp(test_queued_web_url, "https://example.com/article") == 0);
+
+    // 图书进度、笔记与阅读统计恢复回调验证。
+    // Book progress, notes and reading stats restore callback checks.
+    assert(test_last_cfg.book_progress_cb && test_last_cfg.book_progress_set_cb &&
+           test_last_cfg.book_notes_set_cb && test_last_cfg.dashboard_stats_set_cb &&
+           test_last_cfg.webmarks_list_cb &&
+           test_last_cfg.webmarks_upsert_cb && test_last_cfg.webmarks_delete_cb &&
+           test_last_cfg.focus_get_cb && test_last_cfg.focus_ctrl_cb);
+    read_pico_book_progress_t bp = {0};
+    assert(test_last_cfg.book_progress_cb("/sdcard/books/prog.txt", 1024, &bp, test_last_cfg.book_progress_ctx));
+    assert(bp.has_progress && bp.percent == 65 && bp.chapter == 2 && bp.byte_off == 512 && bp.px == 48);
+
+    // 恢复进度：省略 px 时回退设备默认字号，失效旧 watch，并更新 last_book_path。
+    // Restore progress: omitted px falls back to book_px, invalidates stale watch, and updates last_book_path.
+    int inv_before = test_watch_invalidations;
+    read_pico_book_progress_t bp_in = { .percent = 77, .chapter = 4, .byte_off = 2048, .px = 0 };
+    read_pico_book_progress_t bp_out = {0};
+    assert(test_last_cfg.book_progress_set_cb("/sdcard/books/restored.epub", 4096, &bp_in, true, &bp_out, test_last_cfg.book_progress_ctx) == ESP_OK);
+    assert(test_watch_invalidations == inv_before + 1);
+    assert(bp_out.has_progress && bp_out.percent == 77 && bp_out.chapter == 4 && bp_out.byte_off == 2048 && bp_out.px == test_settings.book_px && bp_out.order == 13);
+    assert(!strcmp(test_last_book_path, "/sdcard/books/restored.epub"));
+
+    // 恢复书签与摘录，以及空数组清空。
+    // Restore bookmarks and excerpts, plus empty-array clearing.
+    const char* sample_ex = "生命本身就是奇迹";
+    read_pico_book_note_item_t note_items[2] = {
+        { .is_excerpt = false, .chapter = 1, .byte_off = 128, .percent = 10, .text = NULL, .text_len = 0 },
+        { .is_excerpt = true, .chapter = 3, .byte_off = 900, .percent = 45, .text = sample_ex, .text_len = strlen(sample_ex) },
+    };
+    assert(test_last_cfg.book_notes_set_cb("/sdcard/books/restored.epub", 4096, note_items, 2, test_last_cfg.book_notes_ctx) == ESP_OK);
+    assert(test_saved_note_bookmarks == 1 && test_saved_note_excerpts == 1 && !strcmp(test_saved_excerpt_copy, sample_ex));
+    int forget_before = test_notes_forget_calls;
+    assert(test_last_cfg.book_notes_set_cb("/sdcard/books/restored.epub", 4096, NULL, 0, test_last_cfg.book_notes_ctx) == ESP_OK);
+    assert(test_notes_forget_calls == forget_before + 1 && test_saved_note_bookmarks == 0 && test_saved_note_excerpts == 0);
+
+    // 恢复累计阅读统计：merge 模式保留更大时长与已有条目；replace 模式覆盖并支持清除。
+    // Restore reading stats: merge keeps larger total and existing records; replace overwrites and clears.
+    read_pico_stats_restore_t st_merge = {
+        .merge = true,
+        .has_total_reading_sec = true, .total_reading_sec = 1000U,
+        .has_last_book = true, .last_book_title = "旧书.txt", .last_book_percent = 10,
+        .has_excerpt = true, .clear_excerpt = true,
+    };
+    read_pico_dashboard_stats_t st_out = {0};
+    assert(test_last_cfg.dashboard_stats_set_cb(&st_merge, &st_out, test_last_cfg.dashboard_ctx) == ESP_OK);
+    assert(st_out.total_reading_sec == 3661U && st_out.has_last_book && !strcmp(st_out.last_book_title, "三体.epub") && st_out.has_excerpt);
+    assert(st_out.has_last_book_path && !strcmp(st_out.last_book_path, "/sdcard/books/restored.epub"));
+
+    read_pico_stats_restore_t st_replace = {
+        .merge = false,
+        .has_total_reading_sec = true, .total_reading_sec = 9000U,
+        .has_last_book = true, .last_book_title = "新书.epub", .last_book_percent = 80,
+        .has_excerpt = true, .clear_excerpt = true,
+    };
+    assert(test_last_cfg.dashboard_stats_set_cb(&st_replace, &st_out, test_last_cfg.dashboard_ctx) == ESP_OK);
+    assert(st_out.total_reading_sec == 9000U && st_out.has_last_book && !strcmp(st_out.last_book_title, "新书.epub") &&
+           st_out.last_book_percent == 80 && !st_out.has_excerpt);
+
+    read_pico_stats_restore_t st_merge_fill = {
+        .merge = true,
+        .has_total_reading_sec = true, .total_reading_sec = 12000U,
+        .has_excerpt = true, .excerpt_title = "新书.epub", .excerpt_text = "补全摘录",
+    };
+    assert(test_last_cfg.dashboard_stats_set_cb(&st_merge_fill, &st_out, test_last_cfg.dashboard_ctx) == ESP_OK);
+    assert(st_out.total_reading_sec == 12000U && st_out.has_excerpt && !strcmp(st_out.excerpt_text, "补全摘录"));
+    assert(test_last_cfg.webmarks_upsert_cb("示例", "https://example.com", test_last_cfg.webmarks_ctx) == ESP_OK);
+    read_pico_webmark_t wm[4];
+    assert(test_last_cfg.webmarks_list_cb(wm, 4, test_last_cfg.webmarks_ctx) == 1);
+    assert(strcmp(wm[0].url, "https://example.com") == 0);
+    assert(test_last_cfg.webmarks_delete_cb("https://example.com", test_last_cfg.webmarks_ctx) == ESP_OK);
+    assert(test_last_cfg.webmarks_list_cb(wm, 4, test_last_cfg.webmarks_ctx) == 0);
+    read_pico_focus_status_t fs = {0};
+    assert(test_last_cfg.focus_get_cb(&fs, test_last_cfg.focus_ctx) && !fs.running && fs.completed_count == 3);
+    ctx.request_app = NULL;
+    assert(test_last_cfg.focus_ctrl_cb(true, 45, test_last_cfg.focus_ctx) == ESP_OK);
+    on_tick(&ctx);
+    assert(ctx.request_app == &app_focus && test_focus.running && test_focus.duration_min == 45);
+
+    // 经局域网 POST /transfer/stop 延迟 120 ms 停服并返回，确保 HTTP 200 响应发出后再释放射频。
+    // LAN POST /transfer/stop waits 120 ms before stopping and returning so HTTP 200 flushes first.
+    assert(test_last_cfg.stop_request_cb != NULL);
+    ctx.request_return = false;
+    ctx.now_ms = 5000;
+    stops_before = test_stop_count;
+    assert(test_last_cfg.stop_request_cb(test_last_cfg.stop_request_ctx));
+    on_tick(&ctx);
+    assert(!ctx.request_return && test_stop_count == stops_before);
+    ctx.now_ms = 5080;
+    on_tick(&ctx);
+    assert(!ctx.request_return && test_stop_count == stops_before);
+    ctx.now_ms = 5120;
+    on_tick(&ctx);
+    assert(ctx.request_return && test_stop_count == stops_before + 1);
+
+    // 回归：管理已保存网络视图 TRANSFER_SAVED 必须正确渲染且 KEY1 逐级返回。
+    // Regression: TRANSFER_SAVED must render the saved Wi-Fi screen and KEY1 backs out step by step.
+    on_enter(&ctx);
+    on_tick(&ctx);
+    s_view = TRANSFER_SAVED;
+    test_last_header[0] = 0;
+    render(&ctx, ctx.fb);
+    assert(!strcmp(test_last_header, "已保存 WiFi"));
+    assert(on_key(&ctx, UI_KEY_1) == APP_REDRAW_PAGE && s_view == TRANSFER_NETWORKS);
+    assert(on_key(&ctx, UI_KEY_1) == APP_REDRAW_PAGE && s_view == TRANSFER_HOME);
+    ctx.request_return = false;
+    assert(on_key(&ctx, UI_KEY_1) == APP_REDRAW_NONE && ctx.request_return);
+
     puts("transfer_ui_host_test: PASS");
 }

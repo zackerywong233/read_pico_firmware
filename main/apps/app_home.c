@@ -22,7 +22,7 @@
 #include "ui_kit.h"
 #include "ui_menu.h"
 
-#define HOME_TITLE "概览 Overview"
+#define HOME_TITLE "设备概览"
 #define HOME_ABOUT_ZH \
     "此设备为墨水屏开发板。你可以自行编写固件，也可以使用社区生态已适配的开源固件。"
 #define HOME_ABOUT_EN \
@@ -54,19 +54,19 @@ static EpdRect s_dm_rect;
 static bool s_have_dm;
 
 static const char* charge_text(const pmu_snapshot_t* s) {
-    if (!s->status_ok) return "未读到 No data";
+    if (!s->status_ok) return "未读到";
     switch (s->charge_state) {
-        case PMU_CHARGE_NOT_CHARGING: return "未充电 Idle";
-        case PMU_CHARGE_CHARGING: return "充电中 Charging";
-        case PMU_CHARGE_FULL_INFERRED: return "已满 Full";
-        case PMU_CHARGE_FAULT: return "故障 Fault";
-        default: return "未知 Unknown";
+        case PMU_CHARGE_NOT_CHARGING: return "未充电";
+        case PMU_CHARGE_CHARGING: return "充电中";
+        case PMU_CHARGE_FULL_INFERRED: return "已满";
+        case PMU_CHARGE_FAULT: return "故障";
+        default: return "未知";
     }
 }
 
 static void fmt_battery(char* buf, size_t n, const pmu_snapshot_t* s) {
     if (!s->status_ok) {
-        snprintf(buf, n, "未读到 No data");
+        snprintf(buf, n, "未读到");
         return;
     }
     snprintf(buf, n, "%u.%03u V　%u%%",
@@ -313,14 +313,14 @@ static void draw_status_page(uint8_t* fb) {
         draw_header_mark(fb, &L);
 
         int y = UI_CONTENT_TOP;
-        y = ui_draw_section(fb, y, "供电 Power");
+        y = ui_draw_section(fb, y, "供电");
         fmt_battery(line, sizeof(line), pmu);
-        y = ui_draw_row(fb, y, "电池 Battery", line);
-        y = ui_draw_row(fb, y, "充电 Charge", charge_text(pmu));
+        y = ui_draw_row(fb, y, "电池", line);
+        y = ui_draw_row(fb, y, "充电", charge_text(pmu));
 
-        y = ui_draw_section(fb, y + UI_SECTION_GAP, "固件 Firmware");
+        y = ui_draw_section(fb, y + UI_SECTION_GAP, "固件");
         snprintf(line, sizeof(line), "%s", desc->version);
-        y = ui_draw_row(fb, y, "主机 Host", line);
+        y = ui_draw_row(fb, y, "固件版本", line);
         snprintf(line, sizeof(line), "%s %s", desc->date, desc->time);
         const char* build_label = "构建 UTC 时间";
         int build_px = UI_PX_VALUE;
@@ -337,13 +337,13 @@ static void draw_status_page(uint8_t* fb) {
             );
             y = ui_draw_row(fb, y, "PMU 版本", line);
             snprintf(line, sizeof(line), "%u", pmu->hw_rev);
-            y = ui_draw_row(fb, y, "硬件 Hardware", line);
+            y = ui_draw_row(fb, y, "硬件", line);
         } else {
-            y = ui_draw_row(fb, y, "PMU 版本", "未连上 Offline");
-            y = ui_draw_row(fb, y, "硬件 Hardware", "未连上 Offline");
+            y = ui_draw_row(fb, y, "PMU 版本", "未连上");
+            y = ui_draw_row(fb, y, "硬件", "未连上");
         }
 
-        y = ui_draw_section(fb, y + UI_SECTION_GAP, "说明 About");
+        y = ui_draw_section(fb, y + UI_SECTION_GAP, "说明");
         y = draw_about_para(fb, y, HOME_ABOUT_ZH, L.dm);
         draw_about_para(fb, y + 8, HOME_ABOUT_EN, L.dm);
         if (!L.pass) draw_offline(fb, &L);
@@ -369,7 +369,6 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
 
     ui_clear_page(fb);
     draw_status_page(fb);
-    ui_draw_menu_handle(fb, false);
 }
 
 static bool home_present(app_ctx_t* ctx, app_redraw_t redraw) {
@@ -378,6 +377,8 @@ static bool home_present(app_ctx_t* ctx, app_redraw_t redraw) {
     const bool force_full = (redraw == APP_REDRAW_FULL) && APP_PAGE_FORCE_FULL;
     s_draw = ttf_font_ready() ? HOME_DRAW_NO_MARK : HOME_DRAW_PAGE;
     render(ctx, ctx->fb);
+    ui_key_hints_t hints = { .left = "返回", .center = "刷新 · 长按桌面" };
+    ui_draw_key_hints(ctx->fb, &hints);
     enum EpdDrawError err = force_full
         ? update_display_full(ctx->hl)
         : update_display_mode(ctx->hl, APP_PAGE_REFRESH_MODE);
@@ -407,9 +408,8 @@ static void on_enter(app_ctx_t* ctx) {
 }
 
 const app_desc_t app_home = {
-    .title = "概览 Overview",
-    .detail = "设备识别码与状态 Device Info & Status",
-    .enter_full = true,
+    .title = "设备概览",
+    .detail = "设备识别码与状态",
     .render = render,
     .present = home_present,
     .on_enter = on_enter,

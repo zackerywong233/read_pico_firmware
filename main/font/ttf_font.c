@@ -1783,8 +1783,16 @@ void ttf_set_weight(int wght) {
     current_weight = clamp_weight(wght);
 }
 
+void ttf_font_set_weight(int wght) {
+    current_weight = wght == 0 ? wght_def : clamp_weight(wght);
+}
+
 int ttf_get_weight(void) {
     return current_weight;
+}
+
+bool ttf_font_has_variable_weight(void) {
+    return font_ready && gvar_ready;
 }
 
 int ttf_ascender(int size) {

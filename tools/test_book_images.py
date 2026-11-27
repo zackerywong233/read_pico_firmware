@@ -110,5 +110,48 @@ def main():
     subprocess.run([str(exe),'--expect',str(work/'overshoot.jpg'),str(work/'overshoot.gray')],check=True,env={**os.environ,'UBSAN_OPTIONS':'halt_on_error=1'})
     print('PNG: all 5 row filters, 5 color types, split IDAT, palette and color-key alpha passed')
 
+    # 全屏锁屏壁纸 cover 解码回归：覆盖原尺寸、高分/奇数缩尺、横/竖裁切、小图放大与 stb 回退。
+    # Full-screen wallpaper cover-decode regressions: native size, high-res/odd scale, wide/tall crop, upscaling and stb fallback.
+    def gray_png(w, h, fn, depth=8):
+        def chunk(tag, data):
+            return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
+        rows = []
+        for y in range(h):
+            if depth == 8:
+                rows.append(b'\0' + bytes(fn(x, y) for x in range(w)))
+            else:
+                packed = bytearray()
+                for x in range(0, w, 2):
+                    hi = fn(x, y) & 0x0f
+                    lo = fn(x + 1, y) & 0x0f if x + 1 < w else 0
+                    packed.append((hi << 4) | lo)
+                rows.append(b'\0' + bytes(packed))
+        return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, depth, 0, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(b''.join(rows))) + chunk(b'IEND', b'')
+
+    # 1) 精确 684x1216 PNG 逐像素 1:1 铺满（含四角边界像素验证）
+    native_fn = lambda x, y: (x * 7 + y * 13) % 256
+    (work/'cover-native.png').write_bytes(gray_png(684, 1216, native_fn))
+    (work/'cover-native.gray').write_bytes(bytes(native_fn(x, y) for y in range(1216) for x in range(684)))
+    subprocess.run([str(exe), '--cover-expect', str(work/'cover-native.png'), '684', '1216', str(work/'cover-native.gray')], check=True, env={**os.environ, 'UBSAN_OPTIONS': 'halt_on_error=1'})
+
+    # 2) 横图 PNG（32x16 -> 裁切中心 9 列，x in [11, 20)）等比铺满 684x1216
+    (work/'cover-wide.png').write_bytes(gray_png(32, 16, lambda x, y: 200 if 11 <= x < 20 else 10))
+    subprocess.run([str(exe), '--cover', str(work/'cover-wide.png'), '684', '1216', '200'], check=True, env={**os.environ, 'UBSAN_OPTIONS': 'halt_on_error=1'})
+
+    # 3) 超长竖图 PNG（16x64 -> 裁切中心 28 行，y in [18, 46)）等比铺满 684x1216
+    (work/'cover-tall.png').write_bytes(gray_png(16, 64, lambda x, y: 180 if 18 <= y < 46 else 20))
+    subprocess.run([str(exe), '--cover', str(work/'cover-tall.png'), '684', '1216', '180'], check=True, env={**os.environ, 'UBSAN_OPTIONS': 'halt_on_error=1'})
+
+    # 4) 4-bit PNG 触发 stb_image 回退路径并居中裁切铺满 684x1216（0x0a 扩展为 0xaa = 170）
+    (work/'cover-stb.png').write_bytes(gray_png(32, 16, lambda x, y: 0x0a if 11 <= x < 20 else 0x01, depth=4))
+    subprocess.run([str(exe), '--cover', str(work/'cover-stb.png'), '684', '1216', '170'], check=True, env={**os.environ, 'UBSAN_OPTIONS': 'halt_on_error=1'})
+
+    # 5) 多种尺寸基线 JPEG（含原尺寸、高分 9:16、4K 横裁、长竖裁、奇数降采样、小图放大）铺满 684x1216
+    for name, w, h in [('native', 684, 1216), ('hd916', 1080, 1920), ('4k', 3000, 4000), ('tall', 1080, 2400), ('odd', 2001, 3003), ('tiny', 9, 17)]:
+        p = work / f'cover-{name}.jpg'
+        p.write_bytes(gray_jpeg(w, h))
+        subprocess.run([str(exe), '--cover', str(p), '684', '1216', '128'], check=True, env={**os.environ, 'UBSAN_OPTIONS': 'halt_on_error=1'})
+    print('Cover decode: native 684x1216, wide/tall crop, upscaling, odd JPEG scale and stb fallback passed')
+
 if __name__ == '__main__':
     main()

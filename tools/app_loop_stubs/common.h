@@ -53,4 +53,5 @@ int read_pico_sd_get_info(read_pico_sd_info_t*);
 void read_pico_sd_start_probe(void);
 
 int epd_rotated_display_width(void);
+void epd_fill_rect(EpdRect, uint8_t, uint8_t*);
 void epd_fill_triangle(int,int,int,int,int,int,uint8_t,uint8_t*);

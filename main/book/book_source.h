@@ -1,10 +1,12 @@
 /*
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
- * 中文：单实例 TXT/EPUB 书源与章节进度接口。
- * English: Singleton TXT/EPUB source and chapter progress interface.
- * 冻结：正文由调用方释放；不依赖 UI。
- * Frozen: The caller frees loaded text; no UI dependencies.
+ * 中文：单实例 TXT/EPUB/Markdown/CBZ 书源与章节进度接口。
+ * English: Singleton TXT/EPUB/Markdown/CBZ source and chapter progress interface.
+ * 决策变更：TXT、EPUB、Markdown 与 CBZ 共用单实例书源入口。
+ * Decision change: TXT, EPUB, Markdown and CBZ share one singleton source interface.
+ * 冻结：正文及块表由调用方释放；不依赖 UI。
+ * Frozen: The caller frees loaded text and blocks; no UI dependencies.
  */
 #pragma once
 #include <stddef.h>
@@ -14,6 +16,8 @@
 typedef enum {
     BOOK_KIND_TXT, ///< 文本 / Plain text
     BOOK_KIND_EPUB, ///< EPUB 容器 / EPUB container
+    BOOK_KIND_MD, ///< Markdown 文本 / Markdown text
+    BOOK_KIND_CBZ, ///< CBZ 漫画 / CBZ comic
 } book_kind_t;
 /// 打开并替换当前书源。/ Open and replace the current source.
 esp_err_t book_open(const char *path);
@@ -39,3 +43,9 @@ uint32_t book_total_bytes(void);
 uint32_t book_chapter_byte_offset(size_t i);
 /// 当前类型；关闭时默认 TXT。/ Current kind, defaulting to TXT when closed.
 book_kind_t book_kind(void);
+/// CBZ 全屏漫读总页数（非 CBZ 返回 0）。/ Total fullscreen comic pages for CBZ (0 for other formats).
+size_t book_comic_page_count(void);
+/// 全屏适配解码一页 CBZ 漫画（支持 4x4 Bayer 有序抖动）；调用方 free(*pixels)。
+/// Decode one fullscreen CBZ comic page with optional 4x4 Bayer dithering; caller frees *pixels.
+esp_err_t book_comic_load_page(size_t page_index, uint16_t max_w, uint16_t max_h, bool dither,
+                               uint8_t **pixels, uint16_t *width, uint16_t *height);

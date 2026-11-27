@@ -9,6 +9,7 @@
 #include "book_source.h"
 #include <stdbool.h>
 #include <stdio.h>
+#include "html_text.h"
 #define BOOK_CHAPTER_MAX 2048
 #define BOOK_CHAPTER_BYTES_MAX (96 * 1024)
 typedef struct {
@@ -27,3 +28,33 @@ typedef struct {
 esp_err_t book_txt_open(book_txt_t *book, const char *path);
 /// 加载一章并转为 UTF-8。/ Load a chapter as UTF-8.
 esp_err_t book_txt_load(book_txt_t *book, size_t i, char **utf8, size_t *len);
+
+typedef struct book_md book_md_t;
+esp_err_t book_md_open(const char *path, book_md_t **out);
+void book_md_close(book_md_t *book);
+size_t book_md_chapter_count(const book_md_t *book);
+esp_err_t book_md_chapter_title(const book_md_t *book, size_t i, char *buf, size_t cap);
+esp_err_t book_md_load(const book_md_t *book, size_t i, html_text_t *out);
+uint32_t book_md_total_bytes(const book_md_t *book);
+uint32_t book_md_chapter_offset(const book_md_t *book, size_t i);
+
+typedef struct book_cbz book_cbz_t;
+esp_err_t book_cbz_open(const char *path, book_cbz_t **out);
+void book_cbz_close(book_cbz_t *book);
+size_t book_cbz_chapter_count(const book_cbz_t *book);
+esp_err_t book_cbz_chapter_title(const book_cbz_t *book, size_t i, char *buf, size_t cap);
+esp_err_t book_cbz_load(const book_cbz_t *book, size_t i, html_text_t *out);
+esp_err_t book_cbz_load_image(book_cbz_t *book, size_t chapter, const char *reference,
+                              uint8_t **pixels, uint16_t *width, uint16_t *height);
+uint32_t book_cbz_total_bytes(const book_cbz_t *book);
+uint32_t book_cbz_chapter_offset(const book_cbz_t *book, size_t i);
+/// 提取 CBZ 自然排序首页图片原始字节作为封面；调用方 free(*encoded_out)。
+/// Extract raw bytes of the naturally-first image page in a CBZ as cover; caller frees *encoded_out.
+esp_err_t book_cbz_extract_cover(const char *path, uint8_t **encoded_out, size_t *encoded_len_out);
+/// CBZ 总图片页数（用于全屏连翻漫读）。/ Total CBZ image pages for fullscreen manga mode.
+size_t book_cbz_page_count(const book_cbz_t *book);
+/// 全屏适配解码单页 CBZ 漫画，支持可选 4x4 Bayer 有序抖动。
+/// Decode one CBZ manga page fitted to max_w x max_h with optional 4x4 Bayer dithering.
+esp_err_t book_cbz_decode_page(book_cbz_t *book, size_t page_index,
+                               uint16_t max_w, uint16_t max_h, bool dither,
+                               uint8_t **pixels, uint16_t *w, uint16_t *h);

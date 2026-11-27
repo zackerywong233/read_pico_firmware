@@ -22,8 +22,8 @@
 #include "ui_kit.h"
 #include "ui_menu.h"
 
-#define TOUCH_TITLE "触摸 Touch"
-#define TOUCH_SLEEP_BTN "触摸屏睡眠 Touchscreen Sleep"
+#define TOUCH_TITLE "触摸测试"
+#define TOUCH_SLEEP_BTN "触摸屏睡眠"
 #define TOUCH_UPDATE_INTERVAL_MS 15
 #define TAP_SLEEP_MS 10000
 #define TAP_SLEEP_S (TAP_SLEEP_MS / 1000)
@@ -117,9 +117,9 @@ static bool touch_point_visible(const cst836u_point_t* pt) {
 }
 
 static const char* touch_event_name(uint8_t event) {
-    if (event == 0) return "按下 Press";
-    if (event == 1) return "抬起 Release";
-    if (event == 2) return "移动 Move";
+    if (event == 0) return "按下";
+    if (event == 1) return "抬起";
+    if (event == 2) return "移动";
     return "---";
 }
 
@@ -247,7 +247,6 @@ static int draw_touch_point_row(
 
 static void draw_chrome(uint8_t* framebuffer) {
     ui_draw_button(framebuffer, ui_bar_rect(0, 1), TOUCH_SLEEP_BTN, s_asleep);
-    ui_draw_menu_handle(framebuffer, false);
 }
 
 // 进页残留不当成触点：状态抬起、点位清空，缩略图也不画圆。/ Stale enter-page coords are not a hit: force released, clear points, and draw no dots on the thumbnail.
@@ -277,24 +276,24 @@ static void draw_touch_page(
     if (info != NULL) {
         snprintf(
             line, sizeof(line),
-            "控制器 Controller CST836U　固件 Firmware %02X", info->fw
+            "控制器 CST836U　固件 %02X", info->fw
         );
     } else {
-        snprintf(line, sizeof(line), "控制器 Controller CST836U");
+        snprintf(line, sizeof(line), "控制器 CST836U");
     }
     int y = ui_draw_header(framebuffer, TOUCH_TITLE, line);
 
     if (s_asleep) {
-        y = ui_draw_section(framebuffer, y, "深度睡眠 Deep Sleep");
+        y = ui_draw_section(framebuffer, y, "深度睡眠");
         ui_text(
             framebuffer, UI_MARGIN, y, UI_PX_BODY,
-            "芯片已停止响应总线 Chip stopped responding",
+            "芯片已停止响应总线",
             EPD_DRAW_ALIGN_LEFT, false
         );
         y += UI_ROW_H;
         snprintf(
             line, sizeof(line),
-            "%d 秒后自动复位 Auto-reset after %d s", TAP_SLEEP_S, TAP_SLEEP_S
+            "%d 秒后自动复位", TAP_SLEEP_S
         );
         ui_text(
             framebuffer, UI_MARGIN, y, UI_PX_BODY, line,
@@ -304,17 +303,17 @@ static void draw_touch_page(
         return;
     }
 
-    y = ui_draw_section(framebuffer, y, "触点 Touch Points");
+    y = ui_draw_section(framebuffer, y, "触点");
     y = ui_draw_row(
-        framebuffer, y, "状态 Status",
-        touch->touched ? "按下 Pressed" : "抬起 Released"
+        framebuffer, y, "状态",
+        touch->touched ? "按下" : "抬起"
     );
     snprintf(line, sizeof(line), "%u", touch->count);
-    y = ui_draw_row(framebuffer, y, "点数 Count", line);
+    y = ui_draw_row(framebuffer, y, "点数", line);
     y = draw_touch_point_row(framebuffer, y, 0, &touch->points[0]);
     draw_touch_point_row(framebuffer, y, 1, &touch->points[1]);
 
-    ui_draw_section(framebuffer, TOUCH_MAP_TOP - UI_SEC_HEAD, "位置 Position");
+    ui_draw_section(framebuffer, TOUCH_MAP_TOP - UI_SEC_HEAD, "位置");
     draw_touch_map(framebuffer, touch);
     draw_chrome(framebuffer);
 }
@@ -537,7 +536,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
 
 const app_desc_t app_touch = {
     .title = TOUCH_TITLE,
-    .detail = "触点跟踪与唤醒 Touch Tracking & Wake",
+    .detail = "触点跟踪与唤醒",
     .render = render,
     .on_enter = on_enter,
     .on_exit = on_leave,

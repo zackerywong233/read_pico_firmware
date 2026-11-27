@@ -14,10 +14,12 @@
 #include "e0470_epaper_waveform.h"
 
 #define FB_BYTES 128
-const EpdWaveform E0470_WAVEFORM = {0}, E0470_FOLLOW_WAVEFORM = {1};
+const EpdWaveform E0470_WAVEFORM = {0}, E0470_FULL_WAVEFORM = {2}, E0470_FOLLOW_WAVEFORM = {1};
 static uint8_t target[FB_BYTES], presented[FB_BYTES];
 static int clocks, powerons, clears, draws, full_draws, safe_clock, prefill;
 static bool white_baseline, correct_target_at_draw;
+static const EpdWaveform* drawn_waveform;
+static bool require_clear = true;
 
 void read_pico_epd_set_pclk(int mhz) { ++clocks; safe_clock = mhz; }
 void read_pico_epd_use_scan(read_pico_epd_scan_t scan) { assert(scan == READ_PICO_EPD_SCAN_FULL); }
@@ -32,7 +34,9 @@ int64_t esp_timer_get_time(void) { return 1000000; }
 void epd_hl_set_all_white(EpdiyHighlevelState* hl) { memset(hl->front_fb, 255, FB_BYTES); }
 void epd_hl_waveform(EpdiyHighlevelState* hl, const EpdWaveform* waveform) { hl->waveform = waveform; }
 static enum EpdDrawError draw(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature, bool full) {
-    assert(mode == MODE_GC16 && temperature == 25 && clears > 0);
+    assert(mode == MODE_GC16 && temperature == 25);
+    if (require_clear) assert(clears > 0);
+    drawn_waveform = hl->waveform;
     ++draws;
     full_draws += full;
     white_baseline = true;
@@ -47,6 +51,16 @@ enum EpdDrawError epd_hl_update_screen(EpdiyHighlevelState* hl, enum EpdDrawMode
 }
 enum EpdDrawError epd_hl_update_screen_full(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature) {
     return draw(hl, mode, temperature, true);
+}
+enum EpdDrawError epd_hl_update_area(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature, EpdRect area) {
+    (void)hl; (void)mode; (void)temperature; (void)area;
+    assert(!"unexpected area update");
+    return EPD_DRAW_OTHER_ERROR;
+}
+enum EpdDrawError epd_hl_update_area_full(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature, EpdRect area) {
+    (void)hl; (void)mode; (void)temperature; (void)area;
+    assert(!"unexpected full area update");
+    return EPD_DRAW_OTHER_ERROR;
 }
 // 与 highlevel.c:142 相同：白后缓冲后，强制整屏推目标前缓冲。
 // Match highlevel.c:142: whiten the back buffer, then force a full update from the target front buffer.
@@ -80,5 +94,17 @@ int main(void) {
         assert(clocks == 1 && safe_clock == DISPLAY_PCLK_SAFE_MHZ && display_pclk_mhz() == DISPLAY_PCLK_SAFE_MHZ);
         assert(powerons == 1 && clears == 1 && prefill == (bulk ? 127 : 32));
     }
-    puts("display underrun: front retained, white back baseline, full GC16 recovery and bulk prefill passed");
+    require_clear = false;
+    draws = full_draws = powerons = 0;
+    drawn_waveform = NULL;
+    assert(update_display_full_with(&hl, &E0470_FULL_WAVEFORM) == EPD_DRAW_SUCCESS);
+    assert(draws == 1 && full_draws == 1 && powerons == 1);
+    assert(drawn_waveform == &E0470_FULL_WAVEFORM && hl.waveform == &E0470_WAVEFORM);
+    drawn_waveform = NULL;
+    assert(update_display_full_with(&hl, NULL) == EPD_DRAW_SUCCESS);
+    assert(drawn_waveform == &E0470_WAVEFORM && hl.waveform == &E0470_WAVEFORM);
+    drawn_waveform = NULL;
+    assert(update_display_full(&hl) == EPD_DRAW_SUCCESS);
+    assert(drawn_waveform == &E0470_WAVEFORM && hl.waveform == &E0470_WAVEFORM);
+    puts("display underrun & full_with: front retained, white back baseline, full GC16 waveform switching and bulk prefill passed");
 }

@@ -279,9 +279,7 @@ int ui_grid_hit(
 }
 
 EpdRect ui_bar_rect(int col, int cols) {
-    const int right = epd_rotated_display_width()
-        - UI_BAR_MARGIN - UI_MENU_BTN_SIZE - UI_GAP;
-    const int avail = right - UI_MARGIN;
+    const int avail = ui_content_width();
     const int w = (avail - (cols - 1) * UI_GAP) / cols;
     return (EpdRect){
         .x = UI_MARGIN + col * (w + UI_GAP),
@@ -511,6 +509,21 @@ void ui_draw_button(
     ui_text_vc(
         framebuffer, rect.x + rect.width / 2, rect.y + rect.height / 2,
         UI_PX_BTN, label, EPD_DRAW_ALIGN_CENTER, false
+    );
+}
+
+void ui_draw_button_disabled(
+    uint8_t* framebuffer, EpdRect rect, const char* label
+) {
+    ui_draw_round_rect(framebuffer, rect, UI_BTN_RADIUS, UI_GRAY_LIGHT);
+    int above = 0;
+    int below = 0;
+    ttf_measure_line_px(UI_PX_BTN, label, &above, &below);
+    ttf_draw_text_px(
+        framebuffer, rect.x + rect.width / 2,
+        rect.y + rect.height / 2 + (above - below) / 2,
+        UI_PX_BTN, label, EPD_DRAW_ALIGN_CENTER,
+        UI_INK_MUTED, UI_INK_WHITE
     );
 }
 

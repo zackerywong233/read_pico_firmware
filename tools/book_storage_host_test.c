@@ -103,5 +103,12 @@ int main(void){
     p.px=37;assert(book_progress_save(sd,&p)==ESP_ERR_INVALID_ARG);p.px=48;p.pct=101;assert(book_progress_save(sd,&p)==ESP_ERR_INVALID_ARG);
     p.pct=83;sequence=UINT32_MAX;int before=commits;
     assert(book_progress_save(sd,&p)==ESP_ERR_INVALID_STATE&&commits==before&&sequence==UINT32_MAX);
+    book_progress_watch_t* w_sd=book_progress_watch_create(sd);
+    book_progress_watch_t* w_fl=book_progress_watch_create(flash);
+    assert(w_sd&&w_fl&&!book_progress_watch_invalidated(w_sd)&&!book_progress_watch_invalidated(w_fl));
+    book_progress_invalidate_watch(sd);
+    assert(book_progress_watch_invalidated(w_sd)&&!book_progress_watch_invalidated(w_fl));
+    book_progress_watch_destroy(w_sd);
+    book_progress_watch_destroy(w_fl);
     puts("book progress: v1/v2, sequence, collision, two roots, NVS-full, partial forget and retry passed");
 }

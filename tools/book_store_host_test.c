@@ -14,6 +14,7 @@
 #include "book_store.h"
 #include "read_pico_sd.h"
 #include "esp_vfs_fat.h"
+#include "esp_partition.h"
 
 static bool sd_mounted;
 static bool sd_invalid_present;
@@ -24,6 +25,8 @@ static bool sd_exists = true, flash_exists = true;
 static bool backup_exists;
 static int backup_mode = S_IFREG, backup_unlink_error, rename_error;
 static char forgotten[BOOK_STORE_PATH_MAX];
+esp_err_t book_notes_forget(const char *path) { (void)path; return ESP_OK; }
+void book_cover_forget(const char *path) { (void)path; }
 static int mock_mkdir(const char* path, mode_t mode) {
     (void)mode;
     errno = sd_mkdir_error && !strncmp(path, "/sdcard/", 8) ? sd_mkdir_error : mkdir_error;
@@ -72,6 +75,14 @@ esp_err_t book_progress_forget(const char* path) {
 #undef unlink
 #undef rename
 
+const esp_partition_t *esp_partition_find_first(int type, int subtype, const char *label) {
+    static const esp_partition_t partition = {.size = 512};
+    (void)type; (void)subtype; (void)label; return &partition;
+}
+esp_err_t esp_partition_read(const esp_partition_t *partition, size_t offset, void *dst, size_t size) {
+    (void)partition; (void)offset; memset(dst, 0xFF, size); return ESP_OK;
+}
+
 esp_err_t read_pico_sd_get_info(read_pico_sd_info_t* out) {
     memset(out, 0, sizeof(*out)); out->mounted = sd_mounted;
     out->present = sd_mounted || sd_invalid_present; return ESP_OK;
@@ -79,7 +90,7 @@ esp_err_t read_pico_sd_get_info(read_pico_sd_info_t* out) {
 esp_err_t esp_vfs_fat_spiflash_mount_rw_wl(const char* path, const char* label,
     const esp_vfs_fat_mount_config_t* config, wl_handle_t* out) {
     assert(!strcmp(path, "/flash") && !strcmp(label, "storage"));
-    assert(config->format_if_mount_failed && config->max_files == 4 && config->allocation_unit_size == 4096);
+    assert(config->max_files == 4 && config->allocation_unit_size == 4096);
     ++mount_calls; if (!mount_error) *out = 1; return mount_error;
 }
 esp_err_t esp_vfs_fat_info(const char* path, uint64_t* total, uint64_t* free_bytes) {

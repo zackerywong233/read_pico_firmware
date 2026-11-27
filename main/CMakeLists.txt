@@ -1,17 +1,26 @@
 set(main_requires
     read_pico
+    read_pico_ble
     read_pico_transfer
     read_pico_search
     espressif__qrcode
+    espressif__mqtt
+    espressif__mdns
+    espressif__cjson
+    esp_event
     continuous_du
     e0470_epaper_waveform
     read_pico_pmu
     fatfs
     wear_levelling
     bootloader_support
+    app_update
     spi_flash
     heap
     nvs_flash
+    esp_http_client
+    esp-tls
+    mbedtls
     esp_hw_support
     esp_rom
     esp_driver_gpio
@@ -21,29 +30,57 @@ set(main_requires
 idf_component_register(
     SRCS
         "app_main.c"
+        "ble_service.c"
+        "ota_update.c"
+        "ambient_sync.c"
+        "ambient_sync_runtime.c"
         "display.c"
         "sleep.c"
         "settings.c"
+        "reading_stats.c"
+        "time_sync.c"
+        "web_bookmarks.c"
+        "files_ops.c"
+        "feeds_store.c"
         "app/app_loop.c"
         "app/app_registry.c"
         "ui/ui_kit.c"
+        "ui/ui_icons.c"
         "ui/ui_gesture.c"
         "ui/ui_wifi_qr.c"
         "ui/datamatrix.c"
         "ui/ui_menu.c"
+        "ui/ui_quick_menu.c"
+        "ui/ui_time_edit.c"
+        "ui/ui_heatmap.c"
         "apps/app_home.c"
+        "apps/app_personal.c"
+        "apps/app_pico_home.c"
+        "apps/app_onboarding.c"
+        "apps/app_files.c"
+        "apps/app_settings.c"
         "apps/app_refresh.c"
         "apps/app_reading.c"
         "apps/app_book.c"
         "apps/app_transfer.c"
+        "apps/app_web.c"
+        "apps/app_agent.c"
+        "apps/app_feeds.c"
+        "apps/app_sketch.c"
+        "apps/app_focus.c"
         "book/book_store.c"
+        "book/book_cover.c"
         "book/book_progress.c"
+        "book/book_notes.c"
         "book/book_source.c"
         "book/book_txt.c"
+        "book/book_md.c"
+        "book/book_cbz.c"
         "book/book_epub.c"
         "book/book_image.c"
         "book/vendor/tjpgd.c"
         "book/zip_reader.c"
+        "book/xml_tok.c"
         "book/html_text.c"
         "book/book_layout.c"
         "book/gbk.c"

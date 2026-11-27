@@ -1,4 +1,4 @@
-# Read Pico Demo Firmware
+# Read Pico Firmware · Pico OS
 
 **Languages:** [English](./README.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja-JP.md)
 
@@ -10,15 +10,14 @@
 ![Target](https://img.shields.io/badge/target-ESP32--S3-E7352C?style=for-the-badge&logo=espressif&logoColor=white)
 
 Read Pico is an ESP32-S3 development board in the Read series with a 4.7" monochrome e-paper panel,
-made by Shenzhen MindReset Technology Co., Ltd. for developers building open-source
-e-paper firmware. This repository contains the factory firmware shipped with the board.
+made by Shenzhen MindReset Technology Co., Ltd. This repository provides Pico OS, the firmware
+that runs on the board, featuring a 3-page 24-app 3×3 grid launcher, a 5-step interactive first-run
+Onboarding Guide, a top pull-down Quick Control Menu, and native apps for books, Wi-Fi/BLE companion
+transfer, OPDS/RSS feeds, web reading, TF file management, sketch pad, Pomodoro clock, dashboard,
+Agent inbox, and unified system settings.
 
-The firmware provides separate demo and diagnostic pages for the display, touch,
-accelerometer, power, keys, TF card, fonts, sleep and wake. Use them to check the
-hardware and as reference implementations for your own firmware.
-
-The board support, PMU protocol host and chip drivers are independent components
-that can be reused. This is a hardware demo, not a finished reader product.
+The board support package, lightweight BLE companion service, PMU protocol host and chip drivers
+remain reusable foundations for extending Pico OS.
 
 Agent-facing layout, `app_desc_t` contract, glossary and comment style are in
 [AGENTS.md](AGENTS.md).
@@ -44,6 +43,8 @@ Agent-facing layout, `app_desc_t` contract, glossary and comment style are in
 
 ## Build & Flash
 
+For the first move to the dual OTA partition layout, install through the [browser flasher](https://zackerywong233.github.io/read_pico_firmware/) over USB and select erase flash. This rebuilds the partition table and 7 MB internal storage; files on the TF card remain untouched. Later versions can be installed over Wi-Fi from Settings → System Update. See [browser flashing](docs/WEB_FLASHER.md).
+
 Requires ESP-IDF v6.1. `components/read_pico/read_pico_flash_hpm.c` depends on
 `esp_flash_chips/spi_flash_override.h`, which is available only in v6.
 
@@ -68,31 +69,22 @@ The panel VCOM is calibrated at the factory and stored in the PMU. The firmware
 reads it once at boot to configure the driver; it is neither stored locally nor
 user-editable.
 
-## Pages
+## Pico OS Apps & Interaction
 
-The function menu lists pages in the order defined in
-[main/app/app_registry.c](main/app/app_registry.c).
+On first boot, Pico OS opens a 5-step interactive Onboarding Guide covering timezone/clock calibration and core gestures before entering the 3-page 3×3 grid launcher (all 24 apps and hardware diagnostics laid out as `9 + 9 + 6` beneath a live clock and battery status bar). Pulling down from the top screen edge on any non-PMU-exclusive page (or tapping the Home status bar) opens the Quick Control Menu overlay to toggle BLE, global mute, charge LED, pickup wake, auto-sleep, and lock-screen saver style, adjust live reader font size, refresh profile, HUD bars, and orientation, or trigger full GC16 refresh, lock, and Wi-Fi transfer without leaving the current page.
 
-| Page | Content |
+| App | Content |
 | --- | --- |
-| Overview | Boot I2C scan, IDs, battery and charging status, build time |
-| EPD Refresh | Full-screen GC16, partial DU, 16-gray and fast 8-gray ladders, each with measured refresh time |
-| Reading | Built-in text, DU / GL16 / GC16 page turns, font size adjustment in the header |
-| Touch | Two-point tracking with continuous DU, full-page settle on lift, deep sleep and automatic wake |
-| Accel | Live three-axis readings and tilt, tap count, orientation |
-| IMU Lab | Sampling parameters and self-test |
-| Power | Battery voltage, level and charging status; EPD rails, temperature, faults and read-only SY7636A configuration |
-| PMU | Protocol status, events, configuration and commands |
-| Power Key | `key_raw_events`, press/release levels and DOWN/UP/SHORT/LONG events |
-| Sleep | Light sleep with key or pickup wake, deep sleep and power off |
-| Storage | TF card capacity and mount status, remount, format and buzzer |
-| Font | Select TTF files from the card, preview typesetting and cycle font weight |
-| IOE | Port-0 levels and interrupts, touch-reset pulse from the bottom bar |
-| Device | Device probes and command ACKs; power-cut items are recorded in the backend only |
-| Books | UTF-8 / GBK TXT and EPUB from TF or internal storage, chapters, font size and per-book progress; swipe to turn, hold text for TOC and hold a shelf row for details, progress reset or confirmed deletion; filter storage sources, sort by name or recent reading, and search by pinyin, initials or English; single-book actions use a popup, while management supports batch selection, progress reset/deletion and rescan; experimental shake-to-turn defaults off. EPUB navigation supports NCX and nav documents. |
-| Transfer | Device hotspot or existing WiFi, with browser TXT/EPUB upload and complete TTF font uploads to TF; TF card preferred, internal storage limited to 1 MB per file. Scan the hotspot QR to join, or select a 2.4 GHz network and enter its password on the touchscreen. Web provisioning remains available. The browser lists and searches books in the current upload destination, confirms replacement or deletion, and supports upload cancellation and retry. Saved WiFi can be forgotten on the device. Leaving the page stops networking. |
+| Books | UTF-8 / GBK `TXT`, `EPUB`, `MD`, and `CBZ` manga from TF or internal storage; Recent Reading card, 3×2 cover grid / compact list, multi-condition filtering, 4 sort modes, pinyin search, and batch management; adjustable size, weight, line spacing, margins, paragraph gap, 2-em indent, and independent top/bottom HUD bars; long-press sentence excerpts and toolbar progress-bar seeking. |
+| Transfer & Companion | Upload books and TF `.ttf` fonts over SoftAP or existing Wi-Fi via browser or Companion LAN HTTP API v2, paired with the `ReadPico-XXXX` BLE control channel for Wi-Fi-free time sync, Wi-Fi provisioning, reading progress/notes/stats backup & restore, web bookmarks, and feed configuration. |
+| Web Reader & Feeds | Read statically extracted HTTP/HTTPS articles (with LAN browser clipping and synced bookmarks), browse multi-level OPDS 1.2 catalogs with streaming book downloads, and read cached RSS 2.0 / Atom 1.0 feeds. |
+| Files, Sketch & Focus | Standalone TF card file manager with safety guardrails, image wallpaper preview, and text preview; continuous-DU handwritten sketch pad with upright PNG export; desk clock and 15/25/45-minute foreground Pomodoro timer. |
+| Dashboard, Agent & Settings | Personal Dashboard with date/time, battery, recent book, 26-week reading heatmap, personal note, 5 lock-screen styles, and scheduled PMU wake sync; MQTT/TLS Agent Inbox for paginated text and HTTPS saver images; unified Settings with Network/Time, Display/Reading, Sleep/Saver, Power/Alerts, Onboarding replay, Reset Preferences, and Wi-Fi OTA. |
+| Diagnostics (Pages 2–3) | Device Overview, Self-Test, Sleep/Wake, Storage & Buzzer, Font Picker, Power, EPD Refresh, Touch, Built-in Reading, Accelerometer, IMU Lab, PMU Protocol, Key Test, and IO Expander. |
 
-In Books, KEY1 / KEY2 / KEY3 select previous page / toolbar / next page. The toolbar includes full refresh. Hold KEY2 for 500 ms to open the demo menu. Other pages retain KEY2 full GC16 refresh and KEY3 menu. Menu rows select on release; slide away to cancel.
+Agent messages use one MQTT JSON object: `{"type":"text","title":"Title","text":"Body"}` or `{"type":"image","url":"https://example.com/image.jpg"}`. Configure the broker, username, password and exact topic on the device's local transfer page. The password is stored unencrypted on device and is never echoed by the webpage. Image delivery requires a mounted TF card and a valid HTTPS certificate.
+
+Physical keys and the bottom touch key-hint strip share one unified OS contract: short `KEY2` runs a full-screen GC16 refresh and holding `KEY2` (500 ms) returns globally to Home Page 1; short `KEY1` / `KEY3` dispatch to the active page first (turning pages in readers and multi-page lists), with unhandled `KEY1` popping the 8-level navigation stack and holding `KEY1` (500 ms) returning directly to the parent page.
 
 ## Repository Layout
 
@@ -100,7 +92,7 @@ In Books, KEY1 / KEY2 / KEY3 select previous page / toolbar / next page. The too
 main/
   app_main.c        Boot wiring, then app_loop
   app/              App interface (app.h), registry and event loop
-  apps/             One demo per file, exporting only app_desc_t
+  apps/             Pico OS apps and system tools, each exporting app_desc_t
   ui/               ui_kit drawing primitives and layout constants; ui_menu two-level menu
   font/             stb_truetype glyph cache
   factory/          Device self-test and factory VCOM calibration
@@ -116,9 +108,9 @@ assets/             Image sources for main/assets/*.bin
 tools/              Font and image conversion scripts
 ```
 
-To add a demo page, create a file in `main/apps/`, implement the `app_desc_t`
-callbacks you need and add it to the menu table in `main/app/app_registry.c`.
-The main loop stays untouched.
+To add a root app, create a page in `main/apps/` and add it to
+`main/app/app_registry.c`. Add hardware diagnostics to the tool table in
+`main/apps/app_system_tools.c`. The main loop stays untouched.
 
 ## Pinout
 
@@ -144,7 +136,7 @@ The transfer server runs only on its page and stops on exit. It uses local-netwo
 
 Stopping transfer returns to the entry page or menu position. When a mounted TF card becomes unavailable, affected reading/transfer stops and fonts fall back; explicitly remount from the TF page after reinserting it. Removing a card during writes can damage the filesystem. EPUB opens text with image placeholders. Tap a placeholder to load that local JPEG/PNG in a separate, proportionally scaled preview; tap the preview, the return button, or any of the three keys to return to the same text position without repagination. Chapter opening, page turns and prepainting do not decode images. ZIP entries, manifest items and spine chapters are each limited to 32768; OPF/navigation metadata is limited to 4 MiB uncompressed and chapter/image reads to 2 MiB. The ZIP central directory has an 8 MiB limit; title storage has a 1 MiB budget, with numbered fallback titles beyond it. Entries above 4 MiB are rejected even when unused. These are independent memory/resource limits, so chapter count alone does not guarantee acceptance; ZIP64 and books over 32768 entries or chapters are unsupported. Externally replaced files or another card with the same path and file size may still match old reading progress. Pending retries after failed saves are not guaranteed to survive power loss.
 
-Entering Books offers to resume the previous book; staying on the shelf does not open it (KEY1 cancels, KEY3 resumes). The reader parses metadata and the current chapter, then paginates the first two pages or through the saved position. Remaining pagination advances two pages at a time; other chapters load on demand. The page total shows “…” while incomplete; entering the previous chapter at its last page still requires paginating that chapter. Width measurement uses resident font tables without rasterizing a whole chapter. Opening and chapter loading retain waiting hints and visible failure reasons (memory, limits, unsupported format or invalid file).
+Entering Books offers to resume the previous book; staying on the shelf does not open it (KEY1 cancels; tap “Continue” to resume). The reader parses metadata and the current chapter, then paginates the first two pages or through the saved position. Remaining pagination advances two pages at a time; other chapters load on demand. The page total shows “…” while incomplete; entering the previous chapter at its last page still requires paginating that chapter. Width measurement uses resident font tables without rasterizing a whole chapter. Opening and chapter loading retain waiting hints and visible failure reasons (memory, limits, unsupported format or invalid file).
 
 Swipe page turns commit on release at 64 pixels (previously 120); movement beyond the 24-pixel tap tolerance but below the swipe threshold cancels, and an image-placeholder swipe turns the page without loading the image.
 

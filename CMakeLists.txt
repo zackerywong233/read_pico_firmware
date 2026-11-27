@@ -2,6 +2,12 @@
 # CMakeLists in this exact order for cmake to work correctly
 cmake_minimum_required(VERSION 3.22)
 
+# 发布流水线打标签构建时优先使用标签名作为固件版本，其余场景回退到 ESP-IDF 的 git describe。
+# Prefer the GitHub release tag as PROJECT_VER on tagged CI builds; otherwise fall back to ESP-IDF git describe.
+if(NOT DEFINED PROJECT_VER AND DEFINED ENV{GITHUB_REF_NAME} AND "$ENV{GITHUB_REF_NAME}" MATCHES "^v[0-9]")
+    set(PROJECT_VER "$ENV{GITHUB_REF_NAME}")
+endif()
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
 idf_build_set_property(MINIMAL_BUILD ON)

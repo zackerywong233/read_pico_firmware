@@ -67,10 +67,50 @@ static uint8_t png_paeth(int a, int b, int c) {
     return (uint8_t)(pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
 }
 
+typedef struct {
+    unsigned dst_w, dst_h;
+    unsigned crop_x, crop_y, crop_w, crop_h;
+} image_fit_t;
+
+// 统一计算输出尺寸与源图裁切框；cover 模式等比铺满并居中裁切，否则在上限内等比缩放。
+// Compute output dimensions and source crop box; cover mode aspect-fills and center-crops, otherwise fits within bounds.
+static image_fit_t compute_fit(unsigned src_w, unsigned src_h,
+                               unsigned max_w, unsigned max_h, bool cover) {
+    image_fit_t fit = { .crop_w = src_w, .crop_h = src_h };
+    if (cover) {
+        fit.dst_w = max_w;
+        fit.dst_h = max_h;
+        uint64_t lhs = (uint64_t)src_w * max_h;
+        uint64_t rhs = (uint64_t)max_w * src_h;
+        if (lhs > rhs) {
+            unsigned cw = (unsigned)(((uint64_t)src_h * max_w + max_h / 2) / max_h);
+            if (cw < 1) cw = 1;
+            if (cw > src_w) cw = src_w;
+            fit.crop_w = cw;
+            fit.crop_x = (src_w - cw) / 2;
+        } else if (lhs < rhs) {
+            unsigned ch = (unsigned)(((uint64_t)src_w * max_h + max_w / 2) / max_w);
+            if (ch < 1) ch = 1;
+            if (ch > src_h) ch = src_h;
+            fit.crop_h = ch;
+            fit.crop_y = (src_h - ch) / 2;
+        }
+        return fit;
+    }
+    unsigned dw = src_w, dh = src_h;
+    if (dw > max_w) { dh = (unsigned)((uint64_t)dh * max_w / dw); dw = max_w; }
+    if (dh > max_h) { dw = (unsigned)((uint64_t)dw * max_h / dh); dh = max_h; }
+    if (!dw) dw = 1;
+    if (!dh) dh = 1;
+    fit.dst_w = dw;
+    fit.dst_h = dh;
+    return fit;
+}
+
 // 常见8位非交错PNG在解压缓冲内逐行还原，避免再分配一份完整RGB图。
 // Unfilter common 8-bit noninterlaced PNG in place, avoiding a second full RGB image allocation.
-static bool png_decode(const uint8_t* data, size_t len, size_t budget,
-                       uint8_t** pixels, uint16_t* width, uint16_t* height) {
+static bool png_decode(const uint8_t* data, size_t len, unsigned max_w, unsigned max_h, bool cover,
+                       size_t budget, uint8_t** pixels, uint16_t* width, uint16_t* height) {
     if (len < 33 || memcmp(data,"\x89PNG\r\n\x1a\n",8) || png_u32(data+8)!=13 || memcmp(data+12,"IHDR",4)) return false;
     unsigned w=png_u32(data+16), h=png_u32(data+20), type=data[25];
     unsigned channels=type==0 ? 1 : type==2 ? 3 : type==3 ? 1 : type==4 ? 2 : type==6 ? 4 : 0;
@@ -95,12 +135,9 @@ static bool png_decode(const uint8_t* data, size_t len, size_t budget,
         at+=n+12;
     }
     if (!ended || !packed_n || (type==3 && (!palette || trans_n>palette_n))) return false;
-    unsigned dw=w,dh=h;
-    if (dw>648) { dh=dh*648/dw;dw=648; }
-    if (dh>1000) { dw=dw*1000/dh;dh=1000; }
-    if(!dw)dw=1;
-    if(!dh)dh=1;
-    if((size_t)dw*dh>budget)return false;
+    image_fit_t fit = compute_fit(w, h, max_w, max_h, cover);
+    unsigned dw = fit.dst_w, dh = fit.dst_h;
+    if((uint64_t)dw*dh>budget)return false;
     size_t row_n=(size_t)w*channels, raw_n=(row_n+1)*h;
     uint8_t* packed=image_alloc(packed_n);
     uint8_t* raw=image_alloc(raw_n);
@@ -129,28 +166,37 @@ static bool png_decode(const uint8_t* data, size_t len, size_t budget,
             unsigned add=filter==0 ? 0 : filter==1 ? a : filter==2 ? b : filter==3 ? (a+b)/2 : png_paeth(a,b,c);
             row[x]=(uint8_t)(row[x]+add);
         }
-        if(dy>=dh || (uint64_t)dy*h/dh!=y)continue;
-        for(unsigned x=0;x<dw;++x) {
-            const uint8_t* p=row+(size_t)((uint64_t)x*w/dw)*channels;
-            unsigned gray=0,alpha=255;
-            if(type==0 || type==4) {
-                gray=p[0];
-                if(type==4)alpha=p[1];
-                else if(trans && p[0]==png_u16(trans))alpha=0;
-            } else if(type==3) {
-                unsigned index=p[0];
-                if(index>=palette_n)goto done;
-                const uint8_t* color=palette+index*3;
-                gray=(77u*color[0]+150u*color[1]+29u*color[2])>>8;
-                if(index<trans_n)alpha=trans[index];
+        bool row_rendered = false;
+        unsigned rendered_dy = 0;
+        while(dy<dh && fit.crop_y+(uint64_t)dy*fit.crop_h/dh==y) {
+            if (row_rendered) {
+                memcpy(out + (size_t)dy * dw, out + (size_t)rendered_dy * dw, dw);
             } else {
-                gray=(77u*p[0]+150u*p[1]+29u*p[2])>>8;
-                if(type==6)alpha=p[3];
-                else if(trans && p[0]==png_u16(trans) && p[1]==png_u16(trans+2) && p[2]==png_u16(trans+4))alpha=0;
+                for(unsigned x=0;x<dw;++x) {
+                    const uint8_t* p=row+(size_t)(fit.crop_x+(uint64_t)x*fit.crop_w/dw)*channels;
+                    unsigned gray=0,alpha=255;
+                    if(type==0 || type==4) {
+                        gray=p[0];
+                        if(type==4)alpha=p[1];
+                        else if(trans && p[0]==png_u16(trans))alpha=0;
+                    } else if(type==3) {
+                        unsigned index=p[0];
+                        if(index>=palette_n)goto done;
+                        const uint8_t* color=palette+index*3;
+                        gray=(77u*color[0]+150u*color[1]+29u*color[2])>>8;
+                        if(index<trans_n)alpha=trans[index];
+                    } else {
+                        gray=(77u*p[0]+150u*p[1]+29u*p[2])>>8;
+                        if(type==6)alpha=p[3];
+                        else if(trans && p[0]==png_u16(trans) && p[1]==png_u16(trans+2) && p[2]==png_u16(trans+4))alpha=0;
+                    }
+                    out[(size_t)dy*dw+x]=(uint8_t)((gray*alpha+255u*(255u-alpha)+127u)/255u);
+                }
+                row_rendered = true;
+                rendered_dy = dy;
             }
-            out[(size_t)dy*dw+x]=(uint8_t)((gray*alpha+255u*(255u-alpha)+127u)/255u);
+            ++dy;
         }
-        ++dy;
 #ifdef ESP_PLATFORM
         if(!(y%32))vTaskDelay(1);
 #endif
@@ -165,7 +211,9 @@ typedef struct {
     const uint8_t* data;
     size_t len, at;
     uint8_t* out;
-    unsigned width, height, scaled_width, scaled_height, blocks;
+    unsigned width, height, scaled_width, scaled_height;
+    unsigned crop_x, crop_y, crop_w, crop_h;
+    unsigned blocks;
 } jpeg_io_t;
 
 static size_t jpeg_read(JDEC* jd, uint8_t* out, size_t count) {
@@ -179,16 +227,32 @@ static int jpeg_write(JDEC* jd, void* bitmap, JRECT* r) {
     jpeg_io_t* io = jd->device;
     if (r->right >= io->scaled_width || r->bottom >= io->scaled_height ||
         r->left > r->right || r->top > r->bottom) return 0;
-    unsigned x0 = ((unsigned)r->left * io->width + io->scaled_width - 1) / io->scaled_width;
-    unsigned x1 = ((unsigned)(r->right + 1) * io->width + io->scaled_width - 1) / io->scaled_width;
-    unsigned y0 = ((unsigned)r->top * io->height + io->scaled_height - 1) / io->scaled_height;
-    unsigned y1 = ((unsigned)(r->bottom + 1) * io->height + io->scaled_height - 1) / io->scaled_height;
+    if ((unsigned)r->right < io->crop_x || (unsigned)r->left >= io->crop_x + io->crop_w ||
+        (unsigned)r->bottom < io->crop_y || (unsigned)r->top >= io->crop_y + io->crop_h) {
+#ifdef ESP_PLATFORM
+        if (!(++io->blocks % 32)) vTaskDelay(1);
+#endif
+        return 1;
+    }
+    unsigned rel_l = (unsigned)r->left > io->crop_x ? (unsigned)r->left - io->crop_x : 0;
+    unsigned rel_r = (unsigned)r->right + 1 - io->crop_x;
+    if (rel_r > io->crop_w) rel_r = io->crop_w;
+    unsigned rel_t = (unsigned)r->top > io->crop_y ? (unsigned)r->top - io->crop_y : 0;
+    unsigned rel_b = (unsigned)r->bottom + 1 - io->crop_y;
+    if (rel_b > io->crop_h) rel_b = io->crop_h;
+    unsigned x0 = (unsigned)(((uint64_t)rel_l * io->width + io->crop_w - 1) / io->crop_w);
+    unsigned x1 = (unsigned)(((uint64_t)rel_r * io->width + io->crop_w - 1) / io->crop_w);
+    unsigned y0 = (unsigned)(((uint64_t)rel_t * io->height + io->crop_h - 1) / io->crop_h);
+    unsigned y1 = (unsigned)(((uint64_t)rel_b * io->height + io->crop_h - 1) / io->crop_h);
     const uint8_t* rgb = bitmap;
-    for (unsigned y = y0; y < y1; ++y) for (unsigned x = x0; x < x1; ++x) {
-        unsigned sx = x * io->scaled_width / io->width - r->left;
-        unsigned sy = y * io->scaled_height / io->height - r->top;
-        const uint8_t* color = rgb + (sy * (r->right - r->left + 1) + sx) * 3;
-        io->out[(size_t)y * io->width + x] = (uint8_t)((77u*color[0]+150u*color[1]+29u*color[2])>>8);
+    unsigned stride = (unsigned)(r->right - r->left + 1);
+    for (unsigned y = y0; y < y1; ++y) {
+        unsigned sy = io->crop_y + (unsigned)((uint64_t)y * io->crop_h / io->height) - r->top;
+        for (unsigned x = x0; x < x1; ++x) {
+            unsigned sx = io->crop_x + (unsigned)((uint64_t)x * io->crop_w / io->width) - r->left;
+            const uint8_t* color = rgb + (sy * stride + sx) * 3;
+            io->out[(size_t)y * io->width + x] = (uint8_t)((77u*color[0]+150u*color[1]+29u*color[2])>>8);
+        }
     }
 #ifdef ESP_PLATFORM
     // 大图也定期让出 CPU，避免空闲任务看门狗饥饿。/ Yield during large images so idle watchdog tasks can run.
@@ -196,8 +260,8 @@ static int jpeg_write(JDEC* jd, void* bitmap, JRECT* r) {
 #endif
     return 1;
 }
-static bool jpeg_decode(const uint8_t* data, size_t len, size_t budget,
-                        uint8_t** pixels, uint16_t* width, uint16_t* height) {
+static bool jpeg_decode(const uint8_t* data, size_t len, unsigned max_w, unsigned max_h, bool cover,
+                        size_t budget, uint8_t** pixels, uint16_t* width, uint16_t* height) {
     void* work = heap_caps_malloc(8192, PSRAM_CAPS);
     if (!work) return false;
     JDEC jd;
@@ -205,16 +269,28 @@ static bool jpeg_decode(const uint8_t* data, size_t len, size_t budget,
     bool ok = false;
     if (jd_prepare(&jd, jpeg_read, work, 8192, &io) != JDR_OK || !jd.width || !jd.height ||
         jd.width > 8192 || jd.height > 8192 || (uint64_t)jd.width * jd.height > 16u * 1024u * 1024u) goto done;
-    io.width = jd.width; io.height = jd.height;
-    if (io.width > 648) { io.height = io.height * 648 / io.width; io.width = 648; }
-    if (io.height > 1000) { io.width = io.width * 1000 / io.height; io.height = 1000; }
-    if (!io.width) io.width = 1;
-    if (!io.height) io.height = 1;
-    if ((size_t)io.width * io.height > budget) goto done;
+    image_fit_t fit = compute_fit(jd.width, jd.height, max_w, max_h, cover);
+    io.width = fit.dst_w; io.height = fit.dst_h;
+    if ((uint64_t)io.width * io.height > budget) goto done;
     unsigned scale = 0;
-    // 阅读插图允许至多两倍放大，优先在 JPEG 解码阶段降采样。/ Allow at most 2x enlargement to reduce work during JPEG decoding.
-    while (scale < 3 && ((unsigned)jd.width >> (scale + 1)) >= (io.width + 1) / 2 && ((unsigned)jd.height >> (scale + 1)) >= (io.height + 1) / 2) ++scale;
+    if (cover) {
+        // 铺满模式优先保清晰度：仅在裁切区仍不小于目标尺寸时才在 JPEG 解码阶段降采样。
+        // Preserve full-screen sharpness in cover mode: only downscale in JPEG decode while the cropped region still covers target size.
+        while (scale < 3 && (fit.crop_w >> (scale + 1)) >= io.width && (fit.crop_h >> (scale + 1)) >= io.height) ++scale;
+    } else {
+        // 阅读插图允许至多两倍放大，优先在 JPEG 解码阶段降采样。/ Allow at most 2x enlargement to reduce work during JPEG decoding.
+        while (scale < 3 && ((unsigned)jd.width >> (scale + 1)) >= (io.width + 1) / 2 && ((unsigned)jd.height >> (scale + 1)) >= (io.height + 1) / 2) ++scale;
+    }
     io.scaled_width = jd.width >> scale; io.scaled_height = jd.height >> scale;
+    if (!io.scaled_width || !io.scaled_height) goto done;
+    if (cover) {
+        image_fit_t scaled_fit = compute_fit(io.scaled_width, io.scaled_height, io.width, io.height, true);
+        io.crop_x = scaled_fit.crop_x; io.crop_y = scaled_fit.crop_y;
+        io.crop_w = scaled_fit.crop_w; io.crop_h = scaled_fit.crop_h;
+    } else {
+        io.crop_x = 0; io.crop_y = 0;
+        io.crop_w = io.scaled_width; io.crop_h = io.scaled_height;
+    }
     io.out = heap_caps_malloc((size_t)io.width * io.height, PSRAM_CAPS);
     if (!io.out) goto done;
     memset(io.out, 255, (size_t)io.width * io.height);
@@ -226,37 +302,88 @@ done:
     return ok;
 }
 
-bool book_image_decode(const uint8_t* data, size_t len, size_t budget,
-                       uint8_t** pixels, uint16_t* width, uint16_t* height) {
+static bool book_image_decode_impl(const uint8_t* data, size_t len,
+                                   unsigned max_w, unsigned max_h, bool cover, size_t budget,
+                                   uint8_t** pixels, uint16_t* width, uint16_t* height) {
     if (!pixels || !width || !height) return false;
     *pixels = NULL; *width = *height = 0;
-    if (!data || !len || len > 2u * 1024u * 1024u || allocated) return false;
-    if (png_decode(data,len,budget,pixels,width,height)) return true;
+    if (!data || !len || len > 2u * 1024u * 1024u || !max_w || !max_h || allocated) return false;
+    if (png_decode(data, len, max_w, max_h, cover, budget, pixels, width, height)) return true;
     // 基线 JPEG 优先使用 MCU 分块缩小；小型渐进 JPEG 仍可走有界完整解码。
     // Prefer MCU-scaled baseline JPEG; bounded full decoding still handles small progressive JPEGs.
-    if (len >= 2 && data[0] == 0xff && data[1] == 0xd8 && jpeg_decode(data, len, budget, pixels, width, height)) return true;
+    if (len >= 2 && data[0] == 0xff && data[1] == 0xd8 &&
+        jpeg_decode(data, len, max_w, max_h, cover, budget, pixels, width, height)) return true;
     int w, h, channels;
     if (!stbi_info_from_memory(data, (int)len, &w, &h, &channels) ||
         w <= 0 || h <= 0 || (uint64_t)w * h > 1024u * 1024u) return false;
-    int dw = w, dh = h;
-    if (dw > 648) { dh = (int)((int64_t)dh * 648 / dw); dw = 648; }
-    if (dh > 1000) { dw = (int)((int64_t)dw * 1000 / dh); dh = 1000; }
-    if (dw < 1) dw = 1;
-    if (dh < 1) dh = 1;
-    size_t size = (size_t)dw * dh;
-    if (size > budget) return false;
+    image_fit_t fit = compute_fit((unsigned)w, (unsigned)h, max_w, max_h, cover);
+    if ((uint64_t)fit.dst_w * fit.dst_h > budget) return false;
+    size_t size = (size_t)fit.dst_w * fit.dst_h;
     uint8_t* gray = stbi_load_from_memory(data, (int)len, &w, &h, &channels, 2);
     if (!gray) return false;
+    if (w <= 0 || h <= 0) { stbi_image_free(gray); return false; }
+    fit = compute_fit((unsigned)w, (unsigned)h, max_w, max_h, cover);
+    if ((uint64_t)fit.dst_w * fit.dst_h != size) { stbi_image_free(gray); return false; }
     uint8_t* out = heap_caps_malloc(size, PSRAM_CAPS);
     if (out) {
-        for (int y = 0; y < dh; ++y) for (int x = 0; x < dw; ++x) {
-            size_t at = ((size_t)((int64_t)y * h / dh) * w + (size_t)((int64_t)x * w / dw)) * 2;
-            unsigned alpha = gray[at + 1];
-            out[(size_t)y * dw + x] = (uint8_t)((gray[at] * alpha + 255u * (255u - alpha) + 127u) / 255u);
+        for (unsigned y = 0; y < fit.dst_h; ++y) {
+            size_t sy = fit.crop_y + (size_t)((uint64_t)y * fit.crop_h / fit.dst_h);
+            for (unsigned x = 0; x < fit.dst_w; ++x) {
+                size_t sx = fit.crop_x + (size_t)((uint64_t)x * fit.crop_w / fit.dst_w);
+                size_t at = (sy * (size_t)w + sx) * 2;
+                unsigned alpha = gray[at + 1];
+                out[(size_t)y * fit.dst_w + x] = (uint8_t)((gray[at] * alpha + 255u * (255u - alpha) + 127u) / 255u);
+            }
         }
     }
     stbi_image_free(gray);
     if (!out) return false;
-    *pixels = out; *width = (uint16_t)dw; *height = (uint16_t)dh;
+    *pixels = out; *width = (uint16_t)fit.dst_w; *height = (uint16_t)fit.dst_h;
+    return true;
+}
+
+bool book_image_decode(const uint8_t* data, size_t len, size_t budget,
+                       uint8_t** pixels, uint16_t* width, uint16_t* height) {
+    return book_image_decode_impl(data, len, 648, 1000, false, budget, pixels, width, height);
+}
+
+bool book_image_decode_cover(const uint8_t* data, size_t len,
+                             uint16_t target_w, uint16_t target_h, size_t budget,
+                             uint8_t** pixels, uint16_t* width, uint16_t* height) {
+    return book_image_decode_impl(data, len, target_w, target_h, true, budget, pixels, width, height);
+}
+
+void book_image_dither_bayer4(uint8_t* pixels, uint16_t width, uint16_t height) {
+    if (!pixels || !width || !height) return;
+    // 4x4 Bayer 阈值矩阵（0..15 归一化到单灰阶步长 17 内的有序抖动偏移）。
+    // 4x4 Bayer threshold matrix normalized across one 4-bit gray step (17).
+    static const uint8_t k_bayer4[4][4] = {
+        {  0,  8,  2, 10 },
+        { 12,  4, 14,  6 },
+        {  3, 11,  1,  9 },
+        { 15,  7, 13,  5 },
+    };
+    for (uint16_t y = 0; y < height; ++y) {
+        uint8_t* row = pixels + (size_t)y * width;
+        const uint8_t* brow = k_bayer4[y & 3u];
+        for (uint16_t x = 0; x < width; ++x) {
+            int v = (int)row[x] + (int)brow[x & 3u] - 8;
+            if (v < 0) v = 0;
+            if (v > 255) v = 255;
+            unsigned level = (unsigned)((v * 15 + 127) / 255);
+            row[x] = (uint8_t)(level * 17u);
+        }
+    }
+}
+
+bool book_image_decode_fit(const uint8_t* data, size_t len,
+                           uint16_t max_w, uint16_t max_h, size_t budget, bool dither,
+                           uint8_t** pixels, uint16_t* width, uint16_t* height) {
+    if (!book_image_decode_impl(data, len, max_w, max_h, false, budget, pixels, width, height)) {
+        return false;
+    }
+    if (dither && *pixels && *width && *height) {
+        book_image_dither_bayer4(*pixels, *width, *height);
+    }
     return true;
 }

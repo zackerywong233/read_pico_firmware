@@ -2,11 +2,11 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * 设备功能自检步骤表。0..GATE_END 是探活，GATE_END+1..CMD_END 是发令看 ACK，
- * 其后是要断电或等人的物理项（只在后台记结果）。
+ * 设备功能自检步骤表。0..GATE_END 是探活，GATE_END+1..CMD_END-1 是发令看 ACK，
+ * CMD_END 及其后是要断电或等人的物理项（只在后台记结果）。
  *
- * Device self-test step IDs. 0..GATE_END are live probes, GATE_END+1..CMD_END
- * are command ACKs, the rest are physical items that cut power or wait
+ * Device self-test step IDs. 0..GATE_END are live probes, GATE_END+1..CMD_END-1
+ * are command ACKs, CMD_END onward are physical items that cut power or wait
  * for a person (results kept in the backend only).
  */
 

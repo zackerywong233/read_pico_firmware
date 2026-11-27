@@ -53,6 +53,11 @@ enum EpdDrawError update_display_from_white_with(
 /// Paint the front buffer white and GC16 the panel back to white.
 enum EpdDrawError update_display_white(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_full(EpdiyHighlevelState* hl);
+/// 使用指定波形做整屏全像素 GC16，刷完恢复默认波形。
+/// Full-pixel GC16 with a given waveform, then restore the default.
+enum EpdDrawError update_display_full_with(
+    EpdiyHighlevelState* hl, const EpdWaveform* waveform
+);
 enum EpdDrawError update_display_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
 );

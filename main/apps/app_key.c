@@ -28,7 +28,7 @@
 #include "ui_menu.h"
 
 #define TAG "app_key"
-#define KEY_TITLE "电源按键 Power Key"
+#define KEY_TITLE "按键测试"
 #define KEY_POLL_MS 50
 #define KEY_LOG_FLUSH_MS 200
 #define KEY_DOT 24
@@ -64,13 +64,13 @@ static int s_area_n;
 
 static void fmt_sub(char* buf, size_t n) {
     if (!s_pmu_ok) {
-        snprintf(buf, n, "未连上 Offline");
+        snprintf(buf, n, "未连上");
         return;
     }
     snprintf(
         buf, n, "raw %s　%s",
-        s_raw ? "开 On" : "关 Off",
-        s_down ? "按下 Down" : "抬起 Up"
+        s_raw ? "开 On" : "关",
+        s_down ? "按下" : "抬起 Up"
     );
 }
 
@@ -137,12 +137,12 @@ static uint8_t age_ink(int i) {
 
 static const char* evt_name(uint8_t type) {
     switch (type) {
-        case PMU_EVT_KEY_DOWN: return "按下 Down";
+        case PMU_EVT_KEY_DOWN: return "按下";
         case PMU_EVT_KEY_UP: return "抬起 Up";
-        case PMU_EVT_KEY_SHORT: return "短按 Short";
-        case PMU_EVT_KEY_LONG: return "长按 Long";
-        case PMU_EVT_KEY_FORCE_OFF: return "强制关机 Force";
-        default: return "事件 Event";
+        case PMU_EVT_KEY_SHORT: return "短按";
+        case PMU_EVT_KEY_LONG: return "长按";
+        case PMU_EVT_KEY_FORCE_OFF: return "强制关机";
+        default: return "事件";
     }
 }
 
@@ -178,7 +178,7 @@ static void draw_events(uint8_t* fb, const key_geom_t* g) {
             snprintf(val, sizeof(val), "%u ms", (unsigned)s_log[i].arg0);
             draw_evt_row(fb, y, evt_name(s_log[i].type), val, age_ink(i));
         } else if (i == 0) {
-            draw_evt_row(fb, y, "记录 Log", "无 None", age_ink(2));
+            draw_evt_row(fb, y, "记录", "无", age_ink(2));
         } else {
             draw_evt_row(fb, y, "", NULL, UI_INK_BLACK);
         }
@@ -204,11 +204,10 @@ static void draw_page(uint8_t* fb) {
     ui_header_skel_t head = ui_header_skel(KEY_TITLE, sub, KEY_DOT);
     ui_draw_header_skel(fb, &head, KEY_TITLE, sub);
     draw_dot(fb, g.dot, s_down);
-    ui_draw_section(fb, g.evt_y, "事件 Events");
+    ui_draw_section(fb, g.evt_y, "事件");
     draw_events(fb, &g);
-    ui_draw_button(fb, g.raw, "原始 Raw", s_raw);
-    ui_draw_button(fb, g.clear, "清空 Clear", false);
-    ui_draw_menu_handle(fb, false);
+    ui_draw_button(fb, g.raw, "原始", s_raw);
+    ui_draw_button(fb, g.clear, "清空", false);
 }
 
 static void push_evt(uint8_t type, uint32_t arg0) {
@@ -336,6 +335,8 @@ static bool key_present(app_ctx_t* ctx, app_redraw_t redraw) {
     if (redraw == APP_REDRAW_NONE || redraw == APP_REDRAW_DONE) return false;
     if (redraw != APP_REDRAW_AREA) {
         draw_page(ctx->fb);
+        ui_key_hints_t hints = { .left = "返回", .center = "刷新 · 长按桌面" };
+        ui_draw_key_hints(ctx->fb, &hints);
         guard_draw_result(
             ctx->hl, update_display_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16)
         );
@@ -353,9 +354,8 @@ static bool key_present(app_ctx_t* ctx, app_redraw_t redraw) {
 
 const app_desc_t app_key = {
     .title = KEY_TITLE,
-    .detail = "原始事件与电平 key_raw_events",
+    .detail = "原始事件与电平",
     .holds_pmu = true,
-    .enter_full = true,
     .render = render,
     .present = key_present,
     .on_enter = key_on_enter,

@@ -16,6 +16,8 @@ static size_t measured_codepoints;
 static size_t measure_calls;
 static int first_draw_px, last_draw_px;
 static size_t image_pixels;
+static char line_log[256][512];
+static size_t line_count;
 void epd_draw_pixel(int x, int y, uint8_t color, uint8_t* fb) {
     (void)color; (void)fb;
     assert(x >= 0 && y >= 0);
@@ -38,6 +40,10 @@ void ttf_draw_text_px(uint8_t* fb, int x, int y, int px, const char* text,
     assert(fg <= 15 && bg <= 15);
     if (!drawn[0]) first_draw_px = px;
     last_draw_px = px;
+    if (line_count < sizeof(line_log) / sizeof(line_log[0])) {
+        snprintf(line_log[line_count], sizeof(line_log[line_count]), "%s", text);
+        ++line_count;
+    }
     assert(strlen(drawn) + strlen(text) < sizeof(drawn));
     strcat(drawn, text);
 }
@@ -141,6 +147,61 @@ int main(void) {
     drawn[0] = 0;
     book_layout_draw_page(&fb, 0, r, 10);
     assert(first_draw_px == 10);
+    // 整词优先换行，超长连字符词仍可按字符折断。
+    // Prefer whole-word wrapping while still breaking overlong hyphenated words by character.
+    r = (EpdRect){0, 0, 60, 120};
+    line_count = 0;
+    assert(book_layout_build("alpha beta", 10, r, 10));
+    drawn[0] = 0;
+    book_layout_draw_page(&fb, 0, r, 10);
+    assert(line_count == 2 && !strcmp(line_log[0], "alpha ") && !strcmp(line_log[1], "beta"));
+    r.width = 40;
+    line_count = 0;
+    assert(book_layout_build("long-word", 9, r, 10));
+    drawn[0] = 0;
+    for (size_t i = 0; i < book_layout_page_count(); ++i) book_layout_draw_page(&fb, i, r, 10);
+    assert(!strcmp(drawn, "long-word") && line_count >= 3);
+    // 标点不落在行首，开括号和前引号不孤立在行尾。
+    // Closing punctuation never starts a line, and opening punctuation never ends one alone.
+    const char punctuation[] = "甲乙，丙甲（乙甲“乙";
+    r = (EpdRect){0, 0, 20, 200};
+    line_count = 0;
+    assert(book_layout_build(punctuation, strlen(punctuation), r, 10));
+    drawn[0] = 0;
+    for (size_t i = 0; i < book_layout_page_count(); ++i) book_layout_draw_page(&fb, i, r, 10);
+    assert(!strcmp(drawn, punctuation));
+    for (size_t i = 0; i < line_count; ++i) {
+        assert(strncmp(line_log[i], "，", strlen("，")) != 0);
+        assert(strncmp(line_log[i], "。", strlen("。")) != 0);
+        size_t n = strlen(line_log[i]);
+        assert(n < strlen("（") || memcmp(line_log[i] + n - strlen("（"), "（", strlen("（")) != 0);
+        assert(n < strlen("“") || memcmp(line_log[i] + n - strlen("“"), "“", strlen("“")) != 0);
+    }
+    // 行高选项和左右边距纯函数按工具栏档位生效。
+    // Line-height options and side margins match the toolbar presets.
+    size_t compact_pages, standard_pages, relaxed_pages;
+    const char metrics_text[] = "甲乙丙丁戊己";
+    r = (EpdRect){0, 0, 20, 29};
+    assert(book_layout_build_blocks_metrics(metrics_text, strlen(metrics_text), NULL, 0, r, 10, 135));
+    compact_pages = book_layout_page_count();
+    assert(book_layout_build_blocks_metrics(metrics_text, strlen(metrics_text), NULL, 0, r, 10, 150));
+    standard_pages = book_layout_page_count();
+    assert(book_layout_build_blocks_metrics(metrics_text, strlen(metrics_text), NULL, 0, r, 10, 175));
+    relaxed_pages = book_layout_page_count();
+    assert(compact_pages <= standard_pages && standard_pages <= relaxed_pages);
+    assert(book_layout_side_margins((EpdRect){0, 10, 100, 50}, 24).x == 24);
+    assert(book_layout_side_margins((EpdRect){0, 10, 100, 50}, 24).width == 52);
+    assert(book_layout_side_margins((EpdRect){0, 10, 40, 50}, 24).width == 0);
+    // 当前章节搜索返回 UTF-8 字节偏移，并忽略 ASCII 大小写。
+    // Chapter search returns UTF-8 byte offsets and ignores ASCII case.
+    const char searchable[] = "Read Pico 读书 read PICO";
+    size_t matches[4] = {0};
+    assert(book_text_search(searchable, strlen(searchable), "pIcO", 0, matches, 4) == 2);
+    assert(matches[0] == 5 && matches[1] == 22);
+    assert(book_text_search(searchable, strlen(searchable), "读书", 0, matches, 4) == 1);
+    assert(matches[0] == 10);
+    assert(book_text_search(searchable, strlen(searchable), "read", 6, matches, 4) == 1);
+    assert(matches[0] == 17);
     // 分批与一次分页的边界相同，第一页不必测量整章。
     // Incremental and eager pagination agree; the first page never measures the whole chapter.
     char chapter[1201]; memset(chapter, 'x', 1200); chapter[1200] = 0;
@@ -200,6 +261,67 @@ int main(void) {
     drawn[0]=0;book_layout_draw_page(&fb,0,r,48);
     assert(strstr(drawn,"标题图") && !strstr(drawn,"重复") && !strstr(drawn,"第 8 节"));
     assert(book_layout_page_count()==before_pages && book_layout_page_start_offset(0)==before_offset);
+
+    // 阶段 3 新增测试：连体标点保护、段首两格缩进、段距、正文坐标命中、智能断句与下划线回显。
+    // Stage 3 tests: punctuation-group protection, 2-em indent, para gap, hit-test, sentence bounds and highlights.
+    const char group_txt[] = "甲乙丙……丁戊——己。”庚";
+    r = (EpdRect){0, 0, 40, 200};
+    line_count = 0;
+    assert(book_layout_build(group_txt, strlen(group_txt), r, 10));
+    drawn[0] = 0;
+    for (size_t i = 0; i < book_layout_page_count(); ++i) book_layout_draw_page(&fb, i, r, 10);
+    assert(strcmp(drawn, group_txt) == 0);
+    // 确保 …… 与 —— 不被跨行拆成单字符。/ Ensure …… and —— never split across lines.
+    for (size_t i = 0; i < line_count; ++i) {
+        size_t n = strlen(line_log[i]);
+        if (n >= 3 && memcmp(line_log[i] + n - 3, "…", 3) == 0) {
+            assert(n >= 6 && memcmp(line_log[i] + n - 6, "……", 6) == 0);
+        }
+        if (n >= 3 && memcmp(line_log[i] + n - 3, "—", 3) == 0) {
+            assert(n >= 6 && memcmp(line_log[i] + n - 6, "——", 6) == 0);
+        }
+    }
+
+    // 段首两格缩进 + 段距档位测试。/ First-line 2-em indent and paragraph gap presets.
+    const char para_txt[] = "甲乙丙丁戊\n己庚辛壬癸";
+    book_layout_opts_t opts = { .para_gap = 2, .first_indent = 1, .justify = true };
+    book_layout_set_opts(&opts);
+    r = (EpdRect){0, 0, 50, 200};
+    assert(book_layout_build(para_txt, strlen(para_txt), r, 10));
+    // 第一行缩进 20px 后只剩 30px（3 字），故每段拆成 2 行。/ First line indented 20px leaves 30px (3 glyphs).
+    size_t hit_off = 999;
+    int hit_y = -1;
+    assert(book_layout_hit_text(0, r, 25, 5, &hit_off, &hit_y));
+    assert(hit_off == 0 && hit_y == 0);
+    assert(book_layout_hit_text(0, r, 35, 5, &hit_off, &hit_y));
+    assert(hit_off == 3);
+
+    // 智能断句与前后扩句、选整段。/ Smart sentence bounds, prev/next expand, paragraph bounds.
+    const char sent_txt[] = "第一句很好。第二句也不错！“第三句呢？”\n新段落开始了。";
+    size_t s0 = 0, s1 = 0;
+    size_t second_pos = strstr(sent_txt, "也不") - sent_txt;
+    assert(book_layout_sentence_bounds(sent_txt, strlen(sent_txt), second_pos, 0, strlen(sent_txt), &s0, &s1));
+    assert(strncmp(sent_txt + s0, "第二句也不错！", s1 - s0) == 0);
+    size_t exp_prev = 0, exp_next = 0;
+    assert(book_layout_expand_prev_sentence(sent_txt, strlen(sent_txt), s0, 0, &exp_prev));
+    assert(exp_prev == 0);
+    assert(book_layout_expand_next_sentence(sent_txt, strlen(sent_txt), s1, strlen(sent_txt), &exp_next));
+    assert(strncmp(sent_txt + s0, "第二句也不错！“第三句呢？”", exp_next - s0) == 0);
+    size_t ps = 0, pe = 0;
+    assert(book_layout_paragraph_bounds(sent_txt, strlen(sent_txt), second_pos, &ps, &pe));
+    assert(ps == 0 && strncmp(sent_txt + ps, "第一句很好。第二句也不错！“第三句呢？”", pe - ps) == 0);
+
+    // 下划线回显与活动选区绘制不破坏正文输出。/ Highlights and underlines draw pixels without corrupting text.
+    book_text_span_t ul = { 0, 6 };
+    book_text_span_t sel = { 3, 9 };
+    book_layout_set_highlights(&ul, 1, &sel);
+    image_pixels = 0;
+    drawn[0] = 0;
+    book_layout_draw_page(&fb, 0, r, 10);
+    assert(image_pixels > 0);
+    book_layout_set_highlights(NULL, 0, NULL);
+    book_layout_set_opts(NULL);
+
     book_layout_free();
     puts("book_layout_host_test: PASS");
 }

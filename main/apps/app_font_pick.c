@@ -26,31 +26,24 @@
 #include "ui_menu.h"
 
 #define TAG "app_font"
-#define FONT_TITLE "字体 Font"
+#define FONT_TITLE "字体管理"
 #define FONT_ROW_H UI_BTN_H
-#define FONT_NAV_H 56
 #define FONT_MIN_LIST 2
 #define FONT_SCORE_ROWS 2
 #define FONT_WGHT_W 96
 #define FONT_WGHT_H 44
 #define FONT_HIT_NONE (-1)
-#define FONT_HIT_PREV (-2)
-#define FONT_HIT_NEXT (-3)
 #define FONT_HIT_COLD (-4)
 #define FONT_HIT_WARM (-5)
 #define FONT_HIT_WGHT (-6)
 
 typedef struct {
     int list_y;
-    int nav_y;
     int sample_y;
     int score_y;
     int per_page;
     int sample_n;
     int spec_w;
-    bool paged;
-    EpdRect prev;
-    EpdRect next;
     EpdRect cold;
     EpdRect warm;
     EpdRect wght;
@@ -80,7 +73,7 @@ static int current_wght(void) {
 
 static void font_sub(char* buf, size_t n) {
     const char* name = ttf_font_display_name();
-    snprintf(buf, n, "当前 %s", name[0] != '\0' ? name : "内建 Built-in");
+    snprintf(buf, n, "当前 %s", name[0] != '\0' ? name : "内建");
 }
 
 static ui_header_skel_t font_head(const char* sub) {
@@ -137,30 +130,19 @@ static font_geom_t font_geom(void) {
     const int sample_h = UI_SEC_HEAD + sample_inner_h(sample_n);
     int budget = content - sample_h - score_h - 2 * UI_SECTION_GAP;
     int per = rows_for(budget);
-    bool paged = leaf_count(per) > 1;
-    if (paged) {
-        per = rows_for(budget - UI_GAP - FONT_NAV_H);
-        paged = leaf_count(per) > 1;
-    }
 
     const int list_h = UI_SEC_HEAD + per * FONT_ROW_H + (per - 1) * UI_GAP;
-    const int nav_y = paged ? UI_CONTENT_TOP + list_h + UI_GAP : 0;
-    const int sample_y = UI_CONTENT_TOP + list_h
-        + (paged ? UI_GAP + FONT_NAV_H : 0) + UI_SECTION_GAP;
+    const int sample_y = UI_CONTENT_TOP + list_h + UI_SECTION_GAP;
     char sub[80];
     font_sub(sub, sizeof(sub));
 
     return (font_geom_t){
         .list_y = UI_CONTENT_TOP,
-        .nav_y = nav_y,
         .sample_y = sample_y,
         .score_y = sample_y + sample_h + UI_SECTION_GAP,
         .per_page = per,
         .sample_n = sample_n,
         .spec_w = ttf_text_width_px(UI_PX_CAPTION, "000") + UI_GAP,
-        .paged = paged,
-        .prev = ui_row_rect(0, 2, nav_y, FONT_NAV_H),
-        .next = ui_row_rect(1, 2, nav_y, FONT_NAV_H),
         .cold = ui_bar_rect(0, 2),
         .warm = ui_bar_rect(1, 2),
         .wght = font_head(sub).accessory,
@@ -177,15 +159,15 @@ static EpdRect font_item_rect(const font_geom_t* g, int row) {
 }
 
 static const char* font_dir_label(const char* path) {
-    if (ttf_font_path_is_builtin(path)) return "内建 Built-in";
+    if (ttf_font_path_is_builtin(path)) return "内建";
     if (strstr(path, "/assets/fonts/") != NULL) return "assets/fonts";
     if (strstr(path, "/fonts/") != NULL) return "fonts";
     return path;
 }
 
 static void font_item(int index, const char** name, const char** dir) {
-    *name = "内建 Built-in";
-    *dir = "内建 Built-in";
+    *name = "内建";
+    *dir = "内建";
     if (index <= 0) return;
     const ttf_font_item_t* item = ttf_font_item(index - 1);
     if (item == NULL) return;
@@ -271,15 +253,19 @@ static void draw_scores(uint8_t* fb, int y) {
         strlcpy(epd, "-", sizeof(epd));
     }
 
-    y = ui_draw_section(fb, y, "成绩 Bench");
-    y = ui_draw_row2(fb, y, "冷启动 Cold", cold, "热启动 Warm", warm);
-    ui_draw_row2(fb, y, "光栅 Raster", rast, "刷屏 EPD", epd);
+    y = ui_draw_section(fb, y, "成绩");
+    y = ui_draw_row2(fb, y, "冷启动", cold, "热启动", warm);
+    ui_draw_row2(fb, y, "光栅", rast, "刷屏", epd);
 }
 
 static void draw_fonts(uint8_t* fb, const font_geom_t* g, int leaf) {
     const int n = font_total();
+    const int leaves = leaf_count(g->per_page);
     const int first = leaf * g->per_page;
-    ui_draw_section(fb, g->list_y, "字体 Fonts");
+    char head[48];
+    if (leaves > 1) snprintf(head, sizeof(head), "字体（%d/%d 页）", leaf + 1, leaves);
+    else snprintf(head, sizeof(head), "字体");
+    ui_draw_section(fb, g->list_y, head);
     for (int row = 0; row < g->per_page; row++) {
         const int index = first + row;
         if (index >= n) break;
@@ -299,10 +285,6 @@ static void draw_fonts(uint8_t* fb, const font_geom_t* g, int leaf) {
             on ? "使用中 On" : dir, EPD_DRAW_ALIGN_RIGHT, false
         );
     }
-    if (!g->paged) return;
-    const int leaves = leaf_count(g->per_page);
-    ui_draw_button(fb, g->prev, "上一页 Prev", leaf > 0);
-    ui_draw_button(fb, g->next, "下一页 Next", leaf + 1 < leaves);
 }
 
 static void draw_page(uint8_t* fb, int leaf, bool time_samples) {
@@ -328,7 +310,7 @@ static void draw_page(uint8_t* fb, int leaf, bool time_samples) {
     ui_draw_header_skel(fb, &head, FONT_TITLE, sub);
     ui_draw_button(fb, g.wght, wght, false);
     draw_fonts(fb, &g, leaf);
-    ui_draw_section(fb, g.sample_y, "排版 Type");
+    ui_draw_section(fb, g.sample_y, "排版");
     if (time_samples) ttf_bench_begin();
     draw_sample_lines(fb, g.sample_y + UI_SEC_HEAD, g.spec_w, g.sample_n);
     if (time_samples) {
@@ -343,9 +325,8 @@ static void draw_page(uint8_t* fb, int leaf, bool time_samples) {
         }
     }
     draw_scores(fb, g.score_y);
-    ui_draw_button(fb, g.cold, "冷启动 Cold", false);
-    ui_draw_button(fb, g.warm, "热启动 Warm", false);
-    ui_draw_menu_handle(fb, false);
+    ui_draw_button(fb, g.cold, "冷启动", false);
+    ui_draw_button(fb, g.warm, "热启动", false);
 }
 
 static int hit_test(uint16_t x, uint16_t y, int leaf) {
@@ -357,10 +338,6 @@ static int hit_test(uint16_t x, uint16_t y, int leaf) {
     if (ui_rect_hit(g.wght, x, y)) return FONT_HIT_WGHT;
     if (ui_rect_hit(g.cold, x, y)) return FONT_HIT_COLD;
     if (ui_rect_hit(g.warm, x, y)) return FONT_HIT_WARM;
-    if (g.paged) {
-        if (ui_rect_hit(g.prev, x, y)) return leaf > 0 ? FONT_HIT_PREV : FONT_HIT_NONE;
-        if (ui_rect_hit(g.next, x, y)) return leaf + 1 < leaves ? FONT_HIT_NEXT : FONT_HIT_NONE;
-    }
 
     const int first = leaf * g.per_page;
     for (int row = 0; row < g.per_page; row++) {
@@ -402,17 +379,17 @@ static app_redraw_t pick(int index) {
     if (font_is_current(index)) return APP_REDRAW_NONE;
     bench_reset();
     if (index == 0) {
-        app_settings_set_font_path("");
-        ttf_font_open_builtin();
+        esp_err_t err = ttf_font_open_builtin();
+        if (err == ESP_OK) app_settings_set_font_path("");
     } else {
         const ttf_font_item_t* item = ttf_font_item(index - 1);
         if (item == NULL) return APP_REDRAW_NONE;
         read_pico_sd_info_t sd = {0};
         read_pico_sd_get_info(&sd);
         if (!sd.present || !sd.mounted) return APP_REDRAW_FULL;
-        app_settings_set_font_path(item->path);
         esp_err_t err = ttf_font_open(item->path);
-        if (err != ESP_OK) {
+        if (err == ESP_OK && !ttf_font_is_builtin()) app_settings_set_font_path(item->path);
+        else {
             ESP_LOGW(TAG, "font switch %s: %s", item->path, esp_err_to_name(err));
         }
     }
@@ -436,14 +413,6 @@ static void font_on_exit(app_ctx_t* ctx) {
 static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
     if (!ttf_font_ready()) return APP_REDRAW_NONE;
     const int hit = hit_test(touch->x, touch->y, ctx->leaf);
-    if (hit == FONT_HIT_PREV) {
-        ctx->leaf--;
-        return APP_REDRAW_PAGE;
-    }
-    if (hit == FONT_HIT_NEXT) {
-        ctx->leaf++;
-        return APP_REDRAW_PAGE;
-    }
     if (hit == FONT_HIT_WGHT) {
         s_wght_i = (s_wght_i + 1) % FONT_WGHT_N;
         bench_reset();
@@ -456,20 +425,34 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
 }
 
 static app_redraw_t on_key(app_ctx_t* ctx, int key) {
+    if (!ttf_font_ready()) return APP_REDRAW_NONE;
+    const font_geom_t g = font_geom();
+    const int leaves = leaf_count(g.per_page);
     if (key == UI_KEY_1 && ctx->leaf > 0) {
         ctx->leaf--;
+        return APP_REDRAW_PAGE;
+    }
+    if (key == UI_KEY_3 && ctx->leaf + 1 < leaves) {
+        ctx->leaf++;
         return APP_REDRAW_PAGE;
     }
     return APP_REDRAW_NONE;
 }
 
+static void key_hints(app_ctx_t* ctx, ui_key_hints_t* out) {
+    const font_geom_t g = font_geom();
+    const int leaves = leaf_count(g.per_page);
+    out->left = ctx->leaf > 0 ? "上页 · 长按返回" : "返回";
+    out->right = (ctx->leaf + 1 < leaves) ? "下一页" : NULL;
+}
+
 const app_desc_t app_font_pick = {
     .title = FONT_TITLE,
-    .detail = "选择、排版与基准 Select, Type & Bench",
-    .enter_full = true,
+    .detail = "选择、排版与基准",
     .render = render,
     .on_enter = on_enter,
     .on_exit = font_on_exit,
     .on_touch = on_touch,
     .on_key = on_key,
+    .key_hints = key_hints,
 };

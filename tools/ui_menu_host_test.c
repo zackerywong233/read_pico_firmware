@@ -1,46 +1,68 @@
 /* SPDX-License-Identifier: Apache-2.0
- * 中文：真实菜单行边界和复原测试。/ English: Real menu row bounds and restoration tests.
+ * 中文：屏下三键命中与底部按键说明带绘制测试。
+ * English: Physical key hit-test and bottom key-hint strip drawing tests.
  */
 #include "ui_menu.h"
 #include "../main/ui/ui_kit.h"
 #include <assert.h>
 #include <stdio.h>
-static app_desc_t items[10];
-static bool selected;
-static int pressed, texts, clears;
-int app_count(void) {return 10;}
-const app_desc_t* app_at(int i) {return i>=0&&i<10?&items[i]:NULL;}
-int app_index_of(const app_desc_t*a) {return (int)(a-items);}
-int epd_rotated_display_width(void) {return 684;}
-void epd_fill_triangle(int a,int b,int c,int d,int e,int f,uint8_t g,uint8_t*h) {(void)a;(void)b;(void)c;(void)d;(void)e;(void)f;(void)g;(void)h;}
-int ui_content_width(void) {return 684-2*UI_MARGIN;}
-EpdRect ui_bar_rect(int col,int cols) {return (EpdRect){UI_MARGIN+col*240,UI_BAR_TOP,480/cols,UI_BAR_H};}
-bool ui_rect_hit(EpdRect r,uint16_t x,uint16_t y) {return x>=r.x&&x<r.x+r.width&&y>=r.y&&y<r.y+r.height;}
-void ui_clear_rect_fast(uint8_t*f,EpdRect r) {(void)f;(void)r;clears++;}
-void ui_clear_page(uint8_t*f) {(void)f;}
-int ui_draw_header(uint8_t*f,const char*t,const char*d) {(void)f;(void)t;(void)d;return 0;}
-void ui_draw_button(uint8_t*f,EpdRect r,const char*t,bool e) {(void)f;(void)r;(void)t;(void)e;}
-void ui_draw_selected_round_rect(uint8_t*f,EpdRect r,int rad) {(void)f;(void)r;(void)rad;}
-void ui_draw_pressed_round_rect(uint8_t*f,EpdRect r,int rad) {(void)f;(void)r;(void)rad;pressed++;}
-void ui_draw_choice_round_rect(uint8_t*f,EpdRect r,int rad,bool on) {(void)f;(void)r;(void)rad;selected=on;}
-void ui_text(uint8_t*f,int x,int y,int p,const char*t,enum EpdFontFlags a,bool i) {(void)f;(void)x;(void)y;(void)p;(void)t;(void)a;(void)i;texts++;}
-void ui_text_vc(uint8_t*f,int x,int y,int p,const char*t,enum EpdFontFlags a,bool i) {ui_text(f,x,y,p,t,a,i);}
+#include <string.h>
+
+static int clears, hairlines, fills, texts;
+static char last_texts[4][64];
+static int last_xs[4];
+
+int epd_rotated_display_width(void) { return 684; }
+void ui_clear_rect_fast(uint8_t* f, EpdRect r) { (void)f; assert(r.y == UI_KEY_HINT_RULE_Y); clears++; }
+void ui_hairline(uint8_t* f, int y, int x, int w, uint8_t c) { (void)f; (void)x; (void)w; (void)c; assert(y == UI_KEY_HINT_RULE_Y); hairlines++; }
+void epd_fill_rect(EpdRect r, uint8_t c, uint8_t* f) { (void)r; (void)c; (void)f; fills++; }
+void ui_text_vc(uint8_t* f, int x, int y, int p, const char* t, enum EpdFontFlags a, bool i) {
+    (void)f; (void)a; (void)i;
+    assert(y == UI_KEY_HINT_TOP + UI_KEY_HINT_H / 2);
+    assert(p == UI_PX_KEY_HINT);
+    if (texts < 4) {
+        snprintf(last_texts[texts], sizeof(last_texts[0]), "%s", t);
+        last_xs[texts] = x;
+    }
+    texts++;
+}
+
 int main(void) {
-    EpdRect r;
-    assert(ui_menu_row_rect(1,1,&r));
-    assert(ui_menu_hit_test(r.x,r.y,1)==9);
-    assert(!ui_menu_row_rect(1,2,&r));
-    assert(!ui_menu_row_rect(-1,0,&r));
-    assert(!ui_menu_row_rect(2,0,&r));
-    assert(!ui_menu_row_rect(0,-1,&r));
-    assert(!ui_menu_row_rect(0,0,NULL));
-    ui_draw_menu_row_pressed(NULL,&items[9],1,1,true);
-    assert(pressed==1&&texts==3&&clears==1);
-    ui_draw_menu_row_pressed(NULL,&items[9],1,1,false);
-    assert(selected&&texts==6&&clears==2);
-    ui_draw_menu_row_pressed(NULL,&items[8],1,1,false);
-    assert(!selected);
-    ui_draw_menu_row_pressed(NULL,&items[8],1,2,true);
-    assert(pressed==1);
-    puts("ui_menu: local row bounds and current selection restoration passed");
+    // 屏下三键坐标命中。/ Physical key hit-test.
+    assert(ui_key_hit_test(80, 1299) == -1);
+    assert(ui_key_hit_test(80, 1300) == UI_KEY_1);
+    assert(ui_key_hit_test(240, 1500) == UI_KEY_2);
+    assert(ui_key_hit_test(400, 1500) == UI_KEY_3);
+    assert(ui_key_hit_test(480, 1500) == -1);
+
+    // 底部按键说明带绘制与隐藏。/ Key hint strip draw and hide.
+    uint8_t fb[16] = {0};
+    ui_key_hints_t h = { .left = "返回", .center = NULL, .right = "下一页", .hidden = false };
+    ui_draw_key_hints(fb, &h);
+    assert(clears == 1 && hairlines == 1 && fills == 2 && texts == 3);
+    assert(strcmp(last_texts[0], "返回") == 0 && last_xs[0] == 114);
+    assert(strcmp(last_texts[1], "刷新 · 长按桌面") == 0 && last_xs[1] == 342);
+    assert(strcmp(last_texts[2], "下一页") == 0 && last_xs[2] == 570);
+
+    h.hidden = true;
+    ui_draw_key_hints(fb, &h);
+    assert(clears == 1 && texts == 3);
+
+    // 底部按键说明带触控命中：三等分对应 KEY1/2/3，空位与隐藏态不命中。
+    // Bottom key-hint touch hit-test: 3 equal columns map to KEY1/2/3; blank cells and hidden strip miss.
+    h.hidden = false;
+    assert(ui_key_hint_hit_test(100, UI_KEY_HINT_RULE_Y - 1, &h) == -1);
+    assert(ui_key_hint_hit_test(100, UI_KEY_HINT_RULE_Y, &h) == UI_KEY_1);
+    assert(ui_key_hint_hit_test(342, UI_KEY_HINT_TOP + 20, &h) == UI_KEY_2);
+    assert(ui_key_hint_hit_test(600, UI_LOCK_HEIGHT - 1, &h) == UI_KEY_3);
+    assert(ui_key_hint_hit_test(600, UI_LOCK_HEIGHT, &h) == -1);
+    ui_key_hints_t h_empty = { .left = NULL, .center = "刷新", .right = "", .hidden = false };
+    assert(ui_key_hint_hit_test(100, UI_KEY_HINT_TOP + 20, &h_empty) == -1);
+    assert(ui_key_hint_hit_test(342, UI_KEY_HINT_TOP + 20, &h_empty) == UI_KEY_2);
+    assert(ui_key_hint_hit_test(600, UI_KEY_HINT_TOP + 20, &h_empty) == -1);
+    h.hidden = true;
+    assert(ui_key_hint_hit_test(100, UI_KEY_HINT_TOP + 20, &h) == -1);
+
+    puts("ui_menu: physical key hit-test and key-hint strip passed");
+    return 0;
 }

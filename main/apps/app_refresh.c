@@ -65,7 +65,7 @@ static void draw_pattern_page(uint8_t* framebuffer, const char* caption) {
     const int inner = width - 2 * UI_MARGIN;
 
     ui_clear_page(framebuffer);
-    int y = ui_draw_header(framebuffer, "刷新图案 Refresh Pattern", caption);
+    int y = ui_draw_header(framebuffer, "刷新图案", caption);
 
     const int bar_h = 240;
     const int step = inner / 16;
@@ -83,7 +83,7 @@ static void draw_pattern_page(uint8_t* framebuffer, const char* caption) {
     }
     y += bar_h + 12;
     ui_text(
-        framebuffer, UI_MARGIN, y, UI_PX_CAPTION, "灰阶 0 到 15 Gray 0 to 15",
+        framebuffer, UI_MARGIN, y, UI_PX_CAPTION, "灰阶 0 到 15",
         EPD_DRAW_ALIGN_LEFT, false
     );
     y += 44;
@@ -144,20 +144,19 @@ static void draw_pattern_page(uint8_t* framebuffer, const char* caption) {
     }
     y += 20 * 6 + 24;
     ui_text(
-        framebuffer, UI_MARGIN, y, 30, "0123456789 文字锐度 Text Sharpness",
+        framebuffer, UI_MARGIN, y, 30, "0123456789 文字锐度",
         EPD_DRAW_ALIGN_LEFT, false
     );
-    ui_draw_menu_handle(framebuffer, false);
 }
 
 static void draw_demo_page(uint8_t* fb) {
     static const char* const names[DEMO_ACT_COUNT] = {
-        "整屏全刷 Full", "局部快刷 Partial", "16 灰阶图 16-Gray", "8 灰阶图 8-Gray",
+        "整屏全刷", "局部快刷", "16 灰阶图", "8 灰阶图",
     };
     char line[48];
     ui_clear_page(fb);
-    int y = ui_draw_header(fb, "墨水屏刷新 EPD Refresh", "刷新耗时 Refresh Timing");
-    y = ui_draw_section(fb, y, "耗时 Timing");
+    int y = ui_draw_header(fb, "屏幕刷新", "刷新耗时");
+    y = ui_draw_section(fb, y, "耗时");
     for (int i = 0; i < DEMO_ACT_COUNT; i++) {
         if (s_demo_ms[i] > 0) {
             snprintf(line, sizeof(line), "%ld ms", (long)s_demo_ms[i]);
@@ -172,13 +171,12 @@ static void draw_demo_page(uint8_t* fb) {
     epd_draw_rect(area, UI_GRAY_BLACK, fb);
     ui_text_vc(
         fb, area.x + area.width / 2, area.y + area.height / 2, UI_PX_SUB,
-        "局部快刷区 Partial Area", EPD_DRAW_ALIGN_CENTER, s_demo_invert
+        "局部快刷区", EPD_DRAW_ALIGN_CENTER, s_demo_invert
     );
 
     for (int i = 0; i < DEMO_ACT_COUNT; i++) {
         ui_draw_button(fb, demo_btn_rect(i), names[i], s_demo_last == i);
     }
-    ui_draw_menu_handle(fb, false);
 }
 
 static void demo_render(app_ctx_t* ctx, uint8_t* fb) {
@@ -249,8 +247,8 @@ static app_redraw_t demo_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
             draw_pattern_page(
                 ctx->fb,
                 hit == DEMO_ACT_GRAY8
-                    ? "8 灰阶 30 相 8-Gray 30P　点按返回 Tap to Return"
-                    : "16 灰阶 36 相 16-Gray 36P　点按返回 Tap to Return"
+                    ? "8 灰阶 30 相　点按返回"
+                    : "16 灰阶 36 相　点按返回"
             );
             s_demo_pattern = true;
             display_hold_white_exit(true);
@@ -270,11 +268,20 @@ static app_redraw_t demo_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
     return APP_REDRAW_DONE;
 }
 
+static app_redraw_t demo_key(app_ctx_t* ctx, int key) {
+    if (key == UI_KEY_1 && s_demo_pattern) {
+        guard_draw_result(ctx->hl, leave_gray_to_demo(ctx));
+        return APP_REDRAW_DONE;
+    }
+    return APP_REDRAW_NONE;
+}
+
 const app_desc_t app_refresh = {
-    .title = "墨水屏刷新 EPD Refresh",
-    .detail = "刷新方式与耗时 Refresh Modes & Timing",
+    .title = "屏幕刷新",
+    .detail = "刷新方式与耗时",
     .render = demo_render,
     .present = demo_present,
     .on_touch = demo_touch,
+    .on_key = demo_key,
     .on_exit = demo_on_exit,
 };

@@ -4,8 +4,8 @@ SPDX-FileCopyrightText: 2026 mindreset
 SPDX-License-Identifier: Apache-2.0
 双模式传书与热点配网表单；服务器决定容量和凭据是否有效。
 Dual-mode upload and AP provisioning form; the server validates capacity and credentials.
-冻结：逐个发送原始文件，不使用 multipart；仅热点显示配网且不自动断网。
-Frozen: send raw files sequentially without multipart; AP-only provisioning never disconnects automatically.
+冻结：逐个发送原始文件，不使用 multipart；仅热点显示最多五组 Wi-Fi 配网；配网不自动断网。
+Frozen: send raw files sequentially without multipart; AP-only provisioning manages up to five Wi-Fi networks and never disconnects automatically. Book notes download an exported Markdown copy.
 -->
 <html lang="zh-CN">
 <meta charset="utf-8">
@@ -13,17 +13,64 @@ Frozen: send raw files sequentially without multipart; AP-only provisioning neve
 <title>小纸 Pico · Read Pico</title>
 <style>
 body{font:17px/1.6 system-ui,sans-serif;max-width:680px;margin:40px auto;padding:0 24px;color:#222;background:#faf9f5}h1{font-size:28px}button,input{font:inherit;max-width:100%}button{padding:8px 16px;margin:8px 8px 0 0}li{overflow-wrap:anywhere;margin:16px 0}.hint{color:#555}progress{width:100%}small{display:block}button:disabled{opacity:.5}
+textarea{width:100%;min-height:100px;box-sizing:border-box;font:13px/1.4 ui-monospace,monospace}a.bookmarklet{display:inline-block;padding:8px 12px;border:1px solid #555;border-radius:6px;color:#222;background:#fff}
 </style>
 <h1>小纸 Pico · WiFi 传书</h1>
-<p class="hint">Read Pico · 保持手机与设备在同一网络。支持 TXT / EPUB；同名图书须明确选择替换或跳过。</p>
+<p class="hint">Read Pico · 保持手机与设备在同一网络。支持 TXT / EPUB / MD / CBZ；同名图书须明确选择替换或跳过。</p>
 <p id="info" role="status">正在查询存储空间…</p>
-<input id="files" aria-label="选择图书" type="file" accept=".txt,.epub" multiple>
+<section id="clipSection" hidden><hr><h2>网页剪藏到 Pico</h2>
+<p class="hint">在书签栏新建书签，把下面的代码粘贴为网址。之后浏览网页时点这个书签，最多剪藏约 64 KiB 正文并保存为 TXT。部分严格 CSP 或 HTTPS 站点可能拦截向局域网 HTTP 的表单提交。Pico 须保持在网页/传书页面且处于唤醒状态，电脑或手机须与它处于同一 WiFi。书签口令在本次开机内有效；设备重启或网络地址变化后，请重新复制并保存书签。</p>
+<p><a id="clipLink" class="bookmarklet" href="#">拖到书签栏：发送到小纸 Pico</a></p>
+<label for="bookmarkletCode">书签网址（也可复制到新书签）</label>
+<textarea id="bookmarkletCode" readonly></textarea>
+<button id="copyBookmarklet" type="button">复制书签代码</button>
+<p id="clipResult" role="status"></p></section>
+<section id="webopenSection" hidden><hr><h2>推送网址到 Pico 直接打开</h2>
+<form id="webopenForm"><label for="webopenUrl">网页地址（http:// 或 https://）</label><br><input id="webopenUrl" type="url" maxlength="255" required><button type="submit">推送网址</button></form><p id="webopenResult" role="status"></p></section>
+<section id="agentSection" hidden><hr><h2>AI Agent · MQTT/TLS</h2>
+<p class="hint">配置 TLS Broker 后，设备在“Agent 收件”页订阅指定主题。配置保存在设备独立 NVS 命名空间；密码不回显。请只在可信网络配置。</p>
+<form id="agentForm">
+<label for="agentUri">Broker 地址（仅 mqtts://）</label><br><input id="agentUri" maxlength="191" placeholder="mqtts://broker.example.com:8883" required><br>
+<label for="agentUser">用户名（可留空）</label><br><input id="agentUser" maxlength="63" autocomplete="off"><br>
+<label for="agentPassword">密码（留空保留已保存密码）</label><br><input id="agentPassword" type="password" maxlength="127" autocomplete="new-password"><br>
+<label for="agentTopic">接收主题（精确主题，不支持 + / #）</label><br><input id="agentTopic" maxlength="159" placeholder="readpico/device/inbox" required><br>
+<label><input id="clearAgentPassword" type="checkbox"> 清除已保存的密码</label><br>
+<button id="saveAgent" type="submit">保存 Agent 配置</button><button id="forgetAgent" type="button">清除配置</button>
+</form><p id="agentResult" role="status"></p>
+<p class="hint">消息格式：JSON text（title、text）或 image（HTTPS url）；仅在设备打开“Agent 收件”且保持唤醒时接收。</p></section>
+<section id="ambientSection" hidden><hr><h2>定时看板</h2>
+<p class="hint">设备深睡时由 PMU 定时唤醒。HTTP 图片最大 2 MiB；鉴权头只写入设备，不回显。</p>
+<form id="ambientForm">
+<label><input id="ambientEnabled" type="checkbox"> 启用定时刷新</label><br>
+<label for="ambientInterval">刷新周期</label><br><select id="ambientInterval"><option>15</option><option>30</option><option>60</option><option>120</option><option>360</option><option>720</option><option>1440</option></select> 分钟<br>
+<label for="ambientQuietStart">免打扰开始 / 结束</label><br><input id="ambientQuietStart" type="number" min="0" max="23">:00 – <input id="ambientQuietEnd" type="number" min="0" max="23">:00<br>
+<label for="ambientSource">内容来源</label><br><select id="ambientSource"><option value="0">HTTP JSON 卡片</option><option value="1">HTTP 图片（TRMNL / PNG / JPEG）</option><option value="2">本地个人看板</option></select><br>
+<label for="ambientUrl">HTTP 地址</label><br><input id="ambientUrl" maxlength="256" type="url"><br>
+<label for="ambientAuth">鉴权请求头（留空保留已保存值）</label><br><input id="ambientAuth" maxlength="256" autocomplete="off"><br>
+<label><input id="ambientClearAuth" type="checkbox"> 清除已保存鉴权头</label><br><button id="saveAmbient" type="submit">保存定时看板</button></form><p id="ambientResult" role="status"></p></section>
+<section id="feedsSection" hidden><hr><h2>订阅书库 · OPDS / RSS</h2>
+<p class="hint">添加 RSS 2.0 / Atom 1.0 或 OPDS 1.2 订阅源（最多 16 个）。密码仅写入设备独立 NVS，绝不回显。</p>
+<ul id="feedsList"></ul>
+<form id="feedsForm">
+<label for="feedName">名称（可选）</label><br><input id="feedName" maxlength="63" placeholder="例如：我的 OPDS 书库"><br>
+<label for="feedUrl">订阅地址（http:// 或 https://）</label><br><input id="feedUrl" type="url" maxlength="255" placeholder="https://example.com/opds" required><br>
+<label for="feedKind">类型</label><br><select id="feedKind"><option value="0">RSS / Atom 资讯</option><option value="1">OPDS 1.2 在线书库</option></select><br>
+<label for="feedUser">用户名（可选）</label><br><input id="feedUser" maxlength="63" autocomplete="off"><br>
+<label for="feedPass">密码（留空保留已保存密码）</label><br><input id="feedPass" type="password" maxlength="127" autocomplete="new-password"><br>
+<label><input id="feedClearAuth" type="checkbox"> 清除已保存认证</label><br>
+<button id="saveFeed" type="submit">保存订阅源</button></form><p id="feedsResult" role="status"></p></section>
+<input id="files" aria-label="选择图书" type="file" accept=".txt,.epub,.md,.cbz" multiple>
 <br><button id="send" disabled>开始上传</button><button id="cancel" disabled>取消当前及剩余队列</button>
 <section><h2>上传字体</h2>
 <p id="fontInfo" class="hint">正在查询字体上传条件…</p>
 <input id="fontFiles" aria-label="选择 TTF 字体" type="file" accept=".ttf" multiple disabled>
 <br><button id="sendFonts" disabled>上传字体</button>
 <p class="hint">请选择有权使用的完整中文 TrueType TTF 字体。上传成功后停止传书，在设备“字体”页选用。字体替换需确认，传书期间设备使用内置字体。</p></section>
+<details><summary>固件升级</summary><section>
+<p class="hint">上传 pico-os-app.bin 更新设备固件。升级期间请保持供电和 Wi-Fi 连接；设备验证成功后会自动重启。</p>
+<input id="firmwareFile" type="file" accept=".bin,application/octet-stream" aria-label="选择 pico-os-app.bin">
+<button id="sendFirmware" type="button">上传固件</button><p id="firmwareResult" role="status"></p>
+</section></details>
 <p class="hint">在设备上停止或离开传书页会中断当前上传；未完成或校验失败的文件不会替换原文件。</p>
 <p id="progressText" role="status"></p><progress id="progress" value="0" max="1"></progress>
 <ul id="results" aria-live="polite"></ul>
@@ -36,12 +83,12 @@ body{font:17px/1.6 system-ui,sans-serif;max-width:680px;margin:40px auto;padding
 <section id="network" hidden>
 <hr><h2>配置已有 WiFi</h2>
 <p class="hint">使用 2.4 GHz WiFi。保存后热点继续工作；请在设备上选择“已有 WiFi”，再把手机连接到同一网络。</p>
-<p id="saved"></p>
+<p id="saved"></p><ul id="savedWifiList"></ul>
 <form id="wifiForm">
 <label for="ssid">网络名称（SSID）</label><br><input id="ssid" name="ssid" maxlength="32" autocomplete="off" required><br>
 <label for="password">WiFi 密码（开放网络留空）</label><br><input id="password" name="password" type="password" maxlength="64" autocomplete="new-password"><br>
 <button id="saveWifi" type="submit">保存网络</button>
-<button id="forgetWifi" type="button">遗忘网络</button>
+<button id="forgetWifi" type="button">遗忘全部网络</button>
 </form><p id="wifiResult" role="status"></p>
 </section>
 <script>
@@ -52,13 +99,47 @@ async function info(){
   $('info').textContent=(policy.mode==='sta'?'已有 WiFi':'设备热点')+' · 图书上传到'+(policy.is_flash?'内置存储':'TF 卡')+' · 剩余 '+size(policy.free_bytes)+' · 图书单文件'+(policy.file_limit?'上限 '+size(policy.file_limit):'不限大小');
   $('fontInfo').textContent=policy.fonts_enabled?'字体保存到 TF 卡 '+policy.font_root+' · 单文件上限 '+size(policy.font_limit):'字体需要 TF 卡；请挂载后重新进入传书。';
   $('fontFiles').disabled=$('sendFonts').disabled=busy||!policy.fonts_enabled;
-  $('network').hidden=policy.mode!=='ap';$('saved').textContent=policy.wifi_configured?'已保存：'+policy.wifi_ssid:'尚未保存网络';
+  $('network').hidden=policy.mode!=='ap';$('saved').textContent=policy.wifi_configured?'已保存 '+(policy.wifi_ssids||[]).length+' 组网络':'尚未保存网络';
+  $('savedWifiList').replaceChildren(...(policy.wifi_ssids||[]).map(name=>{const li=document.createElement('li');li.textContent=name+' ';const b=document.createElement('button');b.type='button';b.textContent='遗忘';b.onclick=()=>forgetWifi(name);li.append(b);return li;}));
+  $('clipSection').hidden=!policy.network_ready||!policy.clip_token;
+  $('webopenSection').hidden=!policy.network_ready;
+  $('agentSection').hidden=!policy.network_ready;
+  $('ambientSection').hidden=!policy.network_ready;
+  $('feedsSection').hidden=!policy.network_ready||!policy.feeds_enabled;
+  if(policy.network_ready){
+    if(policy.feeds_enabled)loadFeeds().catch(e=>$('feedsResult').textContent=e.message);
+    try{
+      const agent=await request('/agent');
+      if(agent.status!==200)throw Error(agent.body.error||'无法读取 Agent 配置');
+      $('agentUri').value=agent.body.uri||'';$('agentUser').value=agent.body.username||'';
+      $('agentTopic').value=agent.body.topic||'';$('agentPassword').value='';
+      $('agentResult').textContent=agent.body.configured?'已配置；密码不回显':'尚未配置。';
+    }catch(e){$('agentResult').textContent=e.message;}
+    try{const ambient=await request('/ambient');if(ambient.status!==200)throw Error(ambient.body.error||'无法读取定时看板配置');const a=ambient.body;$('ambientEnabled').checked=!!a.enabled;$('ambientInterval').value=String(a.interval_min||60);$('ambientQuietStart').value=String(a.quiet_start_h??23);$('ambientQuietEnd').value=String(a.quiet_end_h??7);$('ambientSource').value=String(a.source_type??2);$('ambientUrl').value=a.url||'';$('ambientAuth').value='';$('ambientResult').textContent='配置已读取；鉴权头不会回显。';}catch(e){$('ambientResult').textContent=e.message;}
+  }
+  if(! $('clipSection').hidden){
+    const fields={token:policy.clip_token,title:document.title,url:location.href,text:''};
+    const action=JSON.stringify(policy.url.replace(/\/$/,'')+'/webclip');
+    const data=JSON.stringify(fields);
+    const code=`(()=>{const e=document.querySelector('article')||document.querySelector('main')||document.body;let d=${data},a=Array.from(e.innerText||'');const clip=(s,m)=>{let o='',n=0;for(const c of s){const b=new TextEncoder().encode(c).length;if(n+b>m)break;o+=c;n+=b}return o};d.title=clip(document.title,480);d.url=clip(location.href,2000);d.text=a.join('');while(new TextEncoder().encode(d.text).length>65536||encodeURIComponent(d.text).length>600000){a=a.slice(0,Math.floor(a.length*.8));d.text=a.join('')}const f=document.createElement('form');f.method='POST';f.target='_blank';f.action=${action};for(const [n,v] of Object.entries(d)){const i=document.createElement('input');i.type='hidden';i.name=n;i.value=v;f.append(i)}document.body.append(f);f.submit();f.remove()})()`;
+    const bookmarklet='javascript:'+code;
+    $('clipLink').href=bookmarklet;$('bookmarkletCode').value=bookmarklet;
+  }
 }
+$("sendFirmware").onclick=async()=>{
+  const file=$("firmwareFile").files[0];
+  if(!file){$("firmwareResult").textContent="请先选择 pico-os-app.bin";return;}
+  if(file.name!=="pico-os-app.bin"){ $("firmwareResult").textContent="请选择发布包中的 pico-os-app.bin";return; }
+  if(!confirm("即将写入备用固件分区并重启设备。继续？")||!confirm("请确认设备电量充足或已连接充电器。开始升级？"))return;
+  $("sendFirmware").disabled=true;$("firmwareResult").textContent="正在上传并校验固件…";
+  try{const r=await fetch('/ota',{method:'PUT',headers:{'Content-Type':'application/octet-stream'},body:file});const body=await r.json();if(!r.ok)throw Error(body.error||'升级失败');$("firmwareResult").textContent=body.message||'升级完成，设备即将重启';}
+  catch(e){$("firmwareResult").textContent=e.message;$("sendFirmware").disabled=false;}
+};
 function lock(value){busy=value;$('send').disabled=$('files').disabled=$('searchButton').disabled=$('previous').disabled=$('next').disabled=value;$('fontFiles').disabled=$('sendFonts').disabled=value||!policy?.fonts_enabled;$('cancel').disabled=!value;document.querySelectorAll('[data-mutate]').forEach(b=>b.disabled=value);if(!value){$('previous').disabled=page<=0;$('next').disabled=page+1>=pages;}}
 function button(parent,label,action){const b=document.createElement('button');b.type='button';b.textContent=label;b.dataset.mutate='1';b.disabled=busy;b.onclick=action;parent.append(b);return b;}
 async function request(url,options){const response=await fetch(url,options);let body;try{body=await response.json();}catch(e){throw Error('设备响应无法解析，请检查连接后重试');}return {status:response.status,body};}
 function cleanupButton(row,name){button(row,'重试清理阅读进度',async()=>{if(busy)return;lock(true);try{const r=await request('/books?name='+encodeURIComponent(name)+'&action=retry_progress',{method:'POST'});if(r.status!==200)throw Error(r.body.error||'清理失败');row.textContent=name+'：阅读进度已清理';}catch(e){const note=document.createElement('small');note.textContent=e.message;row.append(note);}finally{lock(false);}});}
-async function loadBooks(){if(new TextEncoder().encode($('search').value).length>64)throw Error('搜索词最多64字节，请缩短后重试');const r=await request('/books?page='+page+'&q='+encodeURIComponent($('search').value));if(r.status!==200)throw Error(r.body.error||'无法读取图书列表');const data=r.body;pages=data.pages;if(page&&page>=pages){page=0;return loadBooks();}$('scope').textContent='仅管理当前上传目标：'+data.root_label+'（'+data.root+'）。另一存储的图书不在此列表中。';$('listState').textContent='共 '+data.total+' 本 · 第 '+(pages?page+1:0)+' / '+pages+' 页';$('books').replaceChildren();for(const item of data.items){const row=document.createElement('li'),title=document.createElement('span'),detail=document.createElement('small');title.textContent=item.name;detail.textContent=size(item.size)+' · '+item.size+' 字节 · '+data.root_label;row.append(title,detail);button(row,'删除',()=>removeBook(item,row));$('books').append(row);}$('previous').disabled=busy||page<=0;$('next').disabled=busy||page+1>=pages;}
+async function loadBooks(){if(new TextEncoder().encode($('search').value).length>64)throw Error('搜索词最多64字节，请缩短后重试');const r=await request('/books?page='+page+'&q='+encodeURIComponent($('search').value));if(r.status!==200)throw Error(r.body.error||'无法读取图书列表');const data=r.body;pages=data.pages;if(page&&page>=pages){page=0;return loadBooks();}$('scope').textContent='仅管理当前上传目标：'+data.root_label+'（'+data.root+'）。另一存储的图书不在此列表中。';$('listState').textContent='共 '+data.total+' 本 · 第 '+(pages?page+1:0)+' / '+pages+' 页';$('books').replaceChildren();for(const item of data.items){const row=document.createElement('li'),title=document.createElement('span'),detail=document.createElement('small');title.textContent=item.name;detail.textContent=size(item.size)+' · '+item.size+' 字节 · '+data.root_label;row.append(title,detail);if(item.has_notes)button(row,'下载笔记 MD',()=>{location.href='/notes?name='+encodeURIComponent(item.name);});button(row,'删除',()=>removeBook(item,row));$('books').append(row);}$('previous').disabled=busy||page<=0;$('next').disabled=busy||page+1>=pages;}
 async function removeBook(item,row){if(busy||!confirm('永久删除当前存储中的图书？\n\n'+item.name+'\n'+size(item.size)+'\n\n此操作不可撤销。'))return;lock(true);try{const r=await request('/books?name='+encodeURIComponent(item.name),{method:'DELETE'});if(r.body.progress_cleanup_failed){const notice=document.createElement('li');notice.textContent=item.name+'：'+r.body.error;$('results').append(notice);cleanupButton(notice,r.body.name||item.name);}else if(r.status!==200)throw Error(r.body.error||'删除失败');page=0;await info();await loadBooks();}catch(e){const note=document.createElement('small');note.textContent=e.message;row.append(note);}finally{lock(false);}}
 function upload(file,overwrite,kind='book'){return new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();activeXHR=xhr;let last=0;xhr.open('PUT',(kind==='font'?'/fonts':'/upload')+'?name='+encodeURIComponent(file.name)+(overwrite?'&overwrite=1':''));xhr.upload.onprogress=e=>{const now=Date.now();if(now-last<250&&e.loaded!==e.total)return;last=now;$('progress').max=e.total||file.size;$('progress').value=e.loaded;$('progressText').textContent=file.name+' · '+size(e.loaded)+' / '+size(e.total||file.size)+(e.loaded===e.total?' · 等待设备保存…':'');};xhr.onload=()=>{activeXHR=null;try{resolve({status:xhr.status,body:JSON.parse(xhr.responseText)});}catch(e){reject(Error('设备响应无法解析，请检查是否已保存'));}};xhr.onerror=()=>{activeXHR=null;reject(Error('网络中断，请检查连接后重试'));};xhr.onabort=()=>{activeXHR=null;reject(Error('已取消；若设备已完成提交，请检查保存结果'));};xhr.send(file);});}
 async function run(items){
@@ -71,7 +152,7 @@ async function run(items){
     try{
       await info();if(cancelled)throw Error('已取消');
       if(font&&!policy.fonts_enabled)throw Error('字体需要 TF 卡，请挂载后重新进入传书');
-      if(!(font?/\.ttf$/i:/\.(txt|epub)$/i).test(file.name))throw Error(font?'字体仅支持 TTF':'图书仅支持 TXT / EPUB');
+      if(!(font?/\.ttf$/i:/\.(txt|epub|md|cbz)$/i).test(file.name))throw Error(font?'字体仅支持 TTF':'图书仅支持 TXT / EPUB / MD / CBZ');
       if(!file.size)throw Error('文件为空');
       const limit=font?policy.font_limit:policy.file_limit;
       if(limit&&file.size>limit)throw Error('超过单文件上限');
@@ -106,7 +187,15 @@ $('previous').onclick=()=>{if(busy||page<=0)return;--page;loadBooks().catch(e=>$
 $('next').onclick=()=>{if(busy||page+1>=pages)return;++page;loadBooks().catch(e=>$('listState').textContent=e.message);};
 info().then(()=>{lock(false);return loadBooks();}).catch(e=>$('info').textContent=e.message+'，请刷新重试。');
 async function configure(method,body){$('saveWifi').disabled=$('forgetWifi').disabled=true;$('wifiResult').textContent='正在保存…';try{const r=await fetch('/wifi',{method,headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const result=await r.json();if(!r.ok)throw Error(result.error||'配置失败');$('password').value='';$('wifiResult').textContent=method==='DELETE'?'已遗忘网络。':'已保存。请在设备上选择“已有 WiFi”；热点暂时保持连接。';await info();}catch(e){$('wifiResult').textContent=e.message;}finally{$('saveWifi').disabled=$('forgetWifi').disabled=false;}}
+async function forgetWifi(ssid){if(!confirm('遗忘已保存的 Wi-Fi 网络？\n\n'+ssid))return;try{const r=await fetch('/wifi?ssid='+encodeURIComponent(ssid),{method:'DELETE'}),data=await r.json();if(!r.ok)throw Error(data.error||'遗忘失败');await info();}catch(e){$('wifiResult').textContent=e.message;}}
 $('wifiForm').onsubmit=e=>{e.preventDefault();const ssid=$('ssid').value,password=$('password').value;if(new TextEncoder().encode(ssid).length>32){$('wifiResult').textContent='SSID 超过32字节，请缩短名称。';return;}configure('POST',{ssid,password});};
 $('forgetWifi').onclick=()=>configure('DELETE');
+$('webopenForm').onsubmit=async e=>{e.preventDefault();$('webopenResult').textContent='正在推送…';try{const r=await request('/webopen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:$('webopenUrl').value.trim()})});if(r.status!==200)throw Error(r.body.error||'推送失败');$('webopenResult').textContent='已推送；Pico 会在网页阅读页直接打开。';}catch(e){$('webopenResult').textContent=e.message;}};
+$('agentForm').onsubmit=async e=>{e.preventDefault();$('saveAgent').disabled=$('forgetAgent').disabled=true;$('agentResult').textContent='正在保存…';try{const body={uri:$('agentUri').value.trim(),username:$('agentUser').value,password:$('agentPassword').value,topic:$('agentTopic').value.trim(),clear_password:$('clearAgentPassword').checked};const r=await request('/agent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.status!==200)throw Error(r.body.error||'保存失败');$('agentPassword').value='';$('clearAgentPassword').checked=false;$('agentResult').textContent='已保存。进入设备“Agent 收件”页后生效。';}catch(e){$('agentResult').textContent=e.message;}finally{$('saveAgent').disabled=$('forgetAgent').disabled=false;}};
+$('ambientForm').onsubmit=async e=>{e.preventDefault();$('saveAmbient').disabled=true;$('ambientResult').textContent='正在保存…';try{const body={enabled:$('ambientEnabled').checked,interval_min:Number($('ambientInterval').value),quiet_start_h:Number($('ambientQuietStart').value),quiet_end_h:Number($('ambientQuietEnd').value),source_type:Number($('ambientSource').value),url:$('ambientUrl').value.trim(),auth_header:$('ambientAuth').value,clear_auth:$('ambientClearAuth').checked};const r=await request('/ambient',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.status!==200)throw Error(r.body.error||'保存失败');$('ambientAuth').value='';$('ambientClearAuth').checked=false;$('ambientResult').textContent='已保存。下次进入深睡时会重新设置 PMU 闹钟。';}catch(e){$('ambientResult').textContent=e.message;}finally{$('saveAmbient').disabled=false;}};
+$('forgetAgent').onclick=async()=>{if(!confirm('清除本设备保存的 MQTT/TLS 配置？'))return;$('saveAgent').disabled=$('forgetAgent').disabled=true;try{const r=await request('/agent',{method:'DELETE'});if(r.status!==200)throw Error(r.body.error||'清除失败');$('agentResult').textContent='配置已清除。';$('agentUri').value=$('agentUser').value=$('agentTopic').value='';$('agentPassword').value='';}catch(e){$('agentResult').textContent=e.message;}finally{$('saveAgent').disabled=$('forgetAgent').disabled=false;}};
+$('copyBookmarklet').onclick=async()=>{try{await navigator.clipboard.writeText($('bookmarkletCode').value);$('clipResult').textContent='已复制；新建书签后粘贴为网址。';}catch(e){$('bookmarkletCode').focus();$('bookmarkletCode').select();$('clipResult').textContent='请复制选中的代码，并粘贴为新书签的网址。';}};
+async function loadFeeds(){const r=await request('/feeds');if(r.status!==200)throw Error(r.body.error||'无法读取订阅源');$('feedsList').replaceChildren(...(r.body.items||[]).map(it=>{const li=document.createElement('li');li.textContent='['+(it.kind===1?'OPDS':'RSS')+'] '+it.name+' · '+it.url+(it.has_password?'（已设密码）':'')+' ';const b=document.createElement('button');b.type='button';b.textContent='删除';b.onclick=async()=>{if(!confirm('删除订阅源？\n\n'+it.name))return;try{const d=await request('/feeds?url='+encodeURIComponent(it.url),{method:'DELETE'});if(d.status!==200)throw Error(d.body.error||'删除失败');$('feedsResult').textContent='已删除订阅源。';await loadFeeds();}catch(e){$('feedsResult').textContent=e.message;}};li.append(b);return li;}));}
+$('feedsForm').onsubmit=async e=>{e.preventDefault();$('saveFeed').disabled=true;$('feedsResult').textContent='正在保存…';try{const body={name:$('feedName').value.trim(),url:$('feedUrl').value.trim(),kind:Number($('feedKind').value),auth_user:$('feedUser').value,auth_pass:$('feedPass').value,clear_auth:$('feedClearAuth').checked};const r=await request('/feeds',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.status!==200)throw Error(r.body.error||'保存失败');$('feedName').value=$('feedUrl').value=$('feedUser').value=$('feedPass').value='';$('feedClearAuth').checked=false;$('feedsResult').textContent='已保存；进入设备“订阅书库”即可浏览。';await loadFeeds();}catch(e){$('feedsResult').textContent=e.message;}finally{$('saveFeed').disabled=false;}};
 </script>
 </html>

@@ -10,9 +10,20 @@
 
 #include "sleep.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <time.h>
+
 #include "app.h"
+#include "ambient_sync.h"
+#include "ble_service.h"
+#include "book_cover.h"
+#include "book_image.h"
+#include "reading_stats.h"
 #include "display.h"
 #include "driver/gpio.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_private/sleep_cpu.h"
 #include "esp_sleep.h"
@@ -24,7 +35,11 @@
 #include "read_pico_buzzer.h"
 #include "read_pico_pmu.h"
 #include "sc7a20h_lab.h"
+#include "read_pico_sd.h"
 #include "settings.h"
+#include "time_sync.h"
+#include "ttf_font.h"
+#include "ui_heatmap.h"
 #include "ui_kit.h"
 
 static const char* TAG = "read_pico";
@@ -38,6 +53,32 @@ extern const uint8_t lock_4bpp_bin_start[] asm("_binary_lock_4bpp_bin_start");
 static cst836u_handle_t s_tp;
 static sc7a20h_handle_t s_acc;
 static bool s_acc_was_on;
+
+static void arm_ambient_alarm_before_sleep(app_sleep_mode_t mode) {
+    app_ambient_settings_t cfg;
+    app_settings_ambient_get(&cfg);
+    if (mode != APP_SLEEP_DEEP || !read_pico_pmu_ready()) return;
+    if (!cfg.enabled) {
+        (void)read_pico_pmu_alarm_set(0, 10);
+        return;
+    }
+    time_t now = 0;
+    if (!app_time_now_utc(&now)) now = time(NULL);
+    uint32_t interval = (uint32_t)cfg.interval_min * 60U;
+    uint32_t delay = interval;
+    if (now >= 946684800) {
+        time_t local_now = now + (time_t)app_settings_timezone_min() * 60;
+        struct tm local;
+        if (gmtime_r(&local_now, &local)) {
+            uint32_t midnight = (uint32_t)local.tm_hour * 3600U +
+                (uint32_t)local.tm_min * 60U + (uint32_t)local.tm_sec;
+            delay = ambient_sync_next_delay(midnight, interval, cfg.quiet_start_h, cfg.quiet_end_h);
+        }
+    }
+    if (delay < 10) delay = 10;
+    if (delay > 2678400U) delay = 2678400U;
+    (void)read_pico_pmu_alarm_set(1, delay);
+}
 
 void app_sleep_bind(cst836u_handle_t tp, sc7a20h_handle_t acc) {
     s_tp = tp;
@@ -55,6 +96,7 @@ bool app_lock_powers_down(void) {
 // 触摸、加速度计都在常开 3V3 上，ESP 浅睡或 EN 拉低都不会断它们的电，必须主动送进最低功耗态。
 // Touch and accelerometer sit on the always-on 3V3; neither light sleep nor EN low cuts them, so park them explicitly.
 static void periph_suspend(bool host_off) {
+    app_ble_suspend();
     if (read_pico_buzzer_score_busy()) (void)read_pico_buzzer_score_stop();
     esp_err_t ioe = read_pico_ioe_sleep(host_off);
     if (ioe != ESP_OK) ESP_LOGW(TAG, "ioe sleep %s", esp_err_to_name(ioe));
@@ -76,6 +118,7 @@ static void periph_resume(void) {
     }
     if (s_acc_was_on) (void)sc7a20h_power_up(s_acc);
     s_acc_was_on = false;
+    app_ble_resume();
 }
 
 static void lock_arm_ioe_wakeup(void) {
@@ -264,6 +307,9 @@ app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
 }
 
 esp_err_t app_enter_host_sleep(app_sleep_mode_t mode) {
+    // 断电前把高精度 ESP32 晶振时钟回写 CW32 RTC，抵消本次清醒期间的 LSI 漂移。
+    // Flush ESP32 crystal time to CW32 RTC before power-down to zero out awake LSI drift.
+    (void)app_time_flush_to_pmu();
     periph_suspend(true);
     pmu_selftest_prepare_powerdown();
     esp_err_t err = mode == APP_SLEEP_OFF
@@ -281,6 +327,239 @@ esp_err_t app_enter_host_sleep(app_sleep_mode_t mode) {
     return err;
 }
 
+static bool load_saver_image(uint16_t target_w, uint16_t target_h,
+                             uint8_t** pixels_out, uint16_t* width_out, uint16_t* height_out) {
+    read_pico_sd_info_t sd = {0};
+    esp_err_t sd_err = read_pico_sd_get_info(&sd);
+    if (!sd.mounted) {
+        if (sd_err != ESP_ERR_NOT_FINISHED) (void)read_pico_sd_start_probe();
+        return false;
+    }
+    static const char* paths[] = {
+        "/sdcard/agent_screensaver.jpg", "/sdcard/agent_screensaver.png",
+        "/sdcard/screensaver.jpg", "/sdcard/screensaver.png"
+    };
+    struct stat stats[sizeof(paths) / sizeof(paths[0])];
+    bool exists[sizeof(paths) / sizeof(paths[0])] = {0};
+    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i)
+        exists[i] = stat(paths[i], &stats[i]) == 0;
+    for (size_t tried = 0; tried < sizeof(paths) / sizeof(paths[0]); ++tried) {
+        size_t best = sizeof(paths) / sizeof(paths[0]);
+        for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+            if (exists[i] && (best == sizeof(paths) / sizeof(paths[0])
+                || stats[i].st_mtime > stats[best].st_mtime)) best = i;
+        }
+        if (best == sizeof(paths) / sizeof(paths[0])) break;
+        exists[best] = false;
+        FILE* f = fopen(paths[best], "rb");
+        if (!f) continue;
+        if (fseek(f, 0, SEEK_END) != 0) { fclose(f); continue; }
+        long size = ftell(f);
+        if (size <= 0 || size > 2 * 1024 * 1024 || fseek(f, 0, SEEK_SET) != 0) {
+            fclose(f);
+            continue;
+        }
+        uint8_t* data = heap_caps_malloc((size_t)size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!data) { fclose(f); return false; }
+        size_t got = fread(data, 1, (size_t)size, f);
+        fclose(f);
+        if (got == (size_t)size) {
+            uint8_t* pixels = NULL;
+            uint16_t width = 0, height = 0;
+            bool valid = book_image_decode_cover(data, got, target_w, target_h,
+                                                 2 * 1024 * 1024, &pixels, &width, &height);
+            heap_caps_free(data);
+            if (valid && pixels && width && height) {
+                *pixels_out = pixels;
+                *width_out = width;
+                *height_out = height;
+                return true;
+            }
+            free(pixels);
+            continue;
+        }
+        heap_caps_free(data);
+    }
+    return false;
+}
+
+static bool draw_saver_image(uint8_t* framebuffer) {
+    const int screen_w = epd_rotated_display_width();
+    const int screen_h = epd_rotated_display_height();
+    if (screen_w < 1 || screen_h < 1) return false;
+    uint8_t* pixels = NULL;
+    uint16_t image_w = 0, image_h = 0;
+    if (!load_saver_image((uint16_t)screen_w, (uint16_t)screen_h,
+                          &pixels, &image_w, &image_h)) return false;
+    ui_clear_page(framebuffer);
+    // 锁屏壁纸已按屏幕尺寸等比居中铺满解码，整屏逐像素铺写无留边。
+    // The wallpaper is decoded with aspect-fill center crop to screen size; paint edge-to-edge without borders.
+    for (int y = 0; y < screen_h; ++y) {
+        size_t sy = (size_t)((int64_t)y * image_h / screen_h);
+        for (int x = 0; x < screen_w; ++x) {
+            size_t sx = (size_t)((int64_t)x * image_w / screen_w);
+            epd_draw_pixel(x, y, pixels[sy * image_w + sx], framebuffer);
+        }
+    }
+    free(pixels);
+    return true;
+}
+
+static bool draw_saver_quote(uint8_t* framebuffer) {
+    char title[128] = {0}, excerpt[320] = {0};
+    if (!reading_stats_get_excerpt(title, sizeof(title), excerpt, sizeof(excerpt))) return false;
+    ui_clear_page(framebuffer);
+    ui_text_vc(framebuffer, UI_LOCK_WIDTH / 2, 260, UI_PX_TITLE,
+               "此刻摘录", EPD_DRAW_ALIGN_CENTER, false);
+    ui_hairline(framebuffer, 330, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
+    ui_text(framebuffer, UI_MARGIN, 390, UI_PX_SECTION, title,
+            EPD_DRAW_ALIGN_LEFT, false);
+    const char* start = excerpt;
+    int y = 470;
+    char wrapped[160];
+    while (*start && y < UI_LOCK_HEIGHT - 220) {
+        if (*start == '\r' || *start == '\n') {
+            if (*start == '\r' && start[1] == '\n') start += 2;
+            else ++start;
+            y += UI_PX_BODY + 18;
+            continue;
+        }
+        const char* p = start;
+        const char* end = start;
+        size_t remaining = strlen(start);
+        while (remaining && *p != '\r' && *p != '\n') {
+            const unsigned char c = (unsigned char)*p;
+            size_t char_len = c < 0x80 ? 1 : c >= 0xc2 && c <= 0xdf ? 2
+                : c >= 0xe0 && c <= 0xef ? 3 : c >= 0xf0 && c <= 0xf4 ? 4 : 1;
+            if (char_len > remaining) char_len = 1;
+            for (size_t i = 1; i < char_len; ++i) {
+                if (((unsigned char)p[i] & 0xc0) != 0x80) { char_len = 1; break; }
+            }
+            const char* next = p + char_len;
+            size_t n = (size_t)(next - start);
+            if (n >= sizeof(wrapped)) break;
+            memcpy(wrapped, start, n);
+            wrapped[n] = '\0';
+            if (ttf_text_width_px(UI_PX_BODY, wrapped) > ui_content_width() && end != start) break;
+            end = next;
+            p = next;
+            remaining -= char_len;
+        }
+        if (end == start) {
+            const unsigned char c = (unsigned char)*start;
+            size_t char_len = c < 0x80 ? 1 : c >= 0xc2 && c <= 0xdf ? 2
+                : c >= 0xe0 && c <= 0xef ? 3 : c >= 0xf0 && c <= 0xf4 ? 4 : 1;
+            size_t remaining_start = strlen(start);
+            if (char_len > remaining_start) char_len = 1;
+            end = start + char_len;
+        }
+        size_t n = (size_t)(end - start);
+        memcpy(wrapped, start, n);
+        wrapped[n] = '\0';
+        ui_text(framebuffer, UI_MARGIN, y, UI_PX_BODY, wrapped, EPD_DRAW_ALIGN_LEFT, false);
+        y += UI_PX_BODY + 18;
+        start = end;
+        if (*start == '\r' && start[1] == '\n') start += 2;
+        else if (*start == '\r' || *start == '\n') ++start;
+    }
+    char line[64];
+    snprintf(line, sizeof(line), "累计阅读 %lu 分钟",
+             (unsigned long)(reading_stats_total_seconds() / 60));
+    ui_text_vc(framebuffer, UI_LOCK_WIDTH / 2, UI_LOCK_HEIGHT - 120,
+               UI_PX_CAPTION, line, EPD_DRAW_ALIGN_CENTER, false);
+    return true;
+}
+
+
+// 当前在读书封面锁屏：优先 40ms 内直读 lock_current.4bpp 缓存，纯文本书回退满屏精装书封。
+// Current-book lockscreen: fast-load lock_current.4bpp (<40ms) or draw a full-screen paperback cover fallback.
+static bool draw_saver_book_cover(uint8_t* framebuffer) {
+    const size_t fb_bytes = (size_t)epd_width() * (size_t)epd_height() / 2;
+    if (book_cover_load_lock_cache(framebuffer, fb_bytes)) {
+        return true;
+    }
+    char book_title[128] = {0};
+    uint8_t pct = 0;
+    if (!ttf_font_ready() || !reading_stats_get_last_book(book_title, sizeof(book_title), &pct) || !book_title[0]) {
+        return false;
+    }
+    // 去掉常见扩展名。/ Strip common file extensions.
+    char* dot = strrchr(book_title, '.');
+    if (dot && dot > book_title && strlen(dot) <= 6) *dot = '\0';
+
+    ui_clear_page(framebuffer);
+    EpdRect outer = { 48, 64, UI_LOCK_WIDTH - 96, UI_LOCK_HEIGHT - 128 };
+    ui_draw_round_rect(framebuffer, outer, 16, UI_GRAY_BLACK);
+    EpdRect inner = ui_inset_rect(outer, 16);
+    ui_draw_round_rect(framebuffer, inner, 10, UI_GRAY_LIGHT);
+    // 书脊装饰线。/ Spine rule.
+    epd_fill_rect((EpdRect){ outer.x + 36, outer.y + 18, 3, outer.height - 36 }, UI_GRAY_LIGHT, framebuffer);
+
+    const int cx = outer.x + 24 + (outer.width - 24) / 2;
+    ui_text_vc(framebuffer, cx, outer.y + 110, UI_PX_CAPTION, "正在阅读", EPD_DRAW_ALIGN_CENTER, false);
+
+    // 居中折行绘制书名（最多 3 行）。/ Centered wrapped title (up to 3 lines).
+    const int max_w = inner.width - 96;
+    const char* p = book_title;
+    int y = outer.y + 340;
+    for (int line = 0; line < 3 && *p; ++line) {
+        char buf[128] = {0};
+        const char* cur = p;
+        const char* best = p;
+        while (*cur) {
+            unsigned char c = (unsigned char)*cur;
+            size_t n = c < 0x80 ? 1 : c >= 0xc2 && c <= 0xdf ? 2 : c >= 0xe0 && c <= 0xef ? 3 : 4;
+            if (n > strlen(cur)) n = 1;
+            size_t len = (size_t)(cur + n - p);
+            if (len >= sizeof(buf)) break;
+            memcpy(buf, p, len);
+            buf[len] = '\0';
+            if (ttf_text_width_px(52, buf) > max_w && best != p) break;
+            cur += n;
+            best = cur;
+        }
+        if (best == p) break;
+        size_t len = (size_t)(best - p);
+        if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+        memcpy(buf, p, len);
+        buf[len] = '\0';
+        ui_text_vc(framebuffer, cx, y, 52, buf, EPD_DRAW_ALIGN_CENTER, false);
+        y += 74;
+        p = best;
+    }
+
+    // 进度条与已读百分比。/ Reading progress bar + percentage.
+    const int bar_w = 340;
+    const int bar_x = cx - bar_w / 2;
+    const int bar_y = outer.y + outer.height - 220;
+    epd_fill_rect((EpdRect){ bar_x, bar_y, bar_w, 10 }, UI_GRAY_LIGHT, framebuffer);
+    epd_fill_rect((EpdRect){ bar_x, bar_y, bar_w * (int)pct / 100, 10 }, UI_GRAY_BLACK, framebuffer);
+    char prog[48];
+    snprintf(prog, sizeof(prog), "已读 %u%%", (unsigned)pct);
+    ui_text_vc(framebuffer, cx, bar_y + 42, UI_PX_CAPTION, prog, EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_vc(framebuffer, cx, outer.y + outer.height - 76, UI_PX_CAPTION, "小纸 Pico", EPD_DRAW_ALIGN_CENTER, false);
+    return true;
+}
+
+// 阅读热力图锁屏：纯 NVS 统计 + 本地时间，不依赖 TF 卡或 Wi-Fi。
+// Reading heatmap lock face: pure NVS stats + local time, independent of SD card and Wi-Fi.
+static bool draw_saver_heatmap(uint8_t* framebuffer) {
+    if (!ttf_font_ready()) return false;
+    struct tm local;
+    uint32_t today_day = 0;
+    if (app_time_now_local(&local, NULL)) {
+        today_day = reading_stats_day_from_ymd(local.tm_year + 1900, local.tm_mon + 1, local.tm_mday);
+    }
+    reading_heatmap_t hm;
+    (void)reading_stats_get_heatmap(today_day, &hm);
+    char book_title[128] = {0};
+    uint8_t pct = 0;
+    bool have_book = reading_stats_get_last_book(book_title, sizeof(book_title), &pct);
+    ui_heatmap_render_lockscreen(framebuffer, &hm, reading_stats_total_seconds(),
+                                 have_book ? book_title : NULL, pct);
+    return true;
+}
+
 void enter_lock_and_sleep(
     EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc
 ) {
@@ -291,7 +570,12 @@ void enter_lock_and_sleep(
     epd_poweron();
     epd_clear();
     epd_hl_set_all_white(hl);
-    ui_draw_full_image(framebuffer, lock_4bpp_bin_start);
+    bool custom = false;
+    if (app_settings_saver_style() == APP_SAVER_IMAGE) custom = draw_saver_image(framebuffer);
+    else if (app_settings_saver_style() == APP_SAVER_QUOTE) custom = draw_saver_quote(framebuffer);
+    else if (app_settings_saver_style() == APP_SAVER_BOOK_COVER) custom = draw_saver_book_cover(framebuffer);
+    else if (app_settings_saver_style() == APP_SAVER_HEATMAP) custom = draw_saver_heatmap(framebuffer);
+    if (!custom) ui_draw_full_image(framebuffer, lock_4bpp_bin_start);
     epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
 
     app_lock_wait_key_idle(800);
@@ -301,6 +585,7 @@ void enter_lock_and_sleep(
     // 主机下电只在失败时返回，退到浅睡，至少外设已停、按键可唤醒。
     // Host power-down returns only on failure; fall back to light sleep with peripherals parked and the key as wake.
     if (mode == APP_SLEEP_OFF || mode == APP_SLEEP_DEEP) {
+        arm_ambient_alarm_before_sleep(mode);
         ESP_LOGW(TAG, "host sleep failed: %s, light sleep", esp_err_to_name(app_enter_host_sleep(mode)));
     }
     epd_poweroff();
